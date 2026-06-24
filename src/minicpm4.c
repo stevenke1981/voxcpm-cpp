@@ -1,0 +1,443 @@
+/* MiniCPM4 transformer implementation using ggml.
+ * Implements: embedding, RMSNorm, RoPE, attention with KV cache,
+ * SwiGLU MLP, and full transformer block.
+ *
+ * Tensor layout convention (following ggml standard):
+ *   weight matrices: ne[0] = in_features, ne[1] = out_features
+ *   ggml_mul_mat(w, x) computes w^T @ x with output shape [out_features, ...]
+ */
+#include "minicpm4.h"
+#include "ggml.h"
+#include "ggml-cpu.h"   /* for ggml_new_i32 / ggml_set_i32_1d */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+/* ---- Config ---- */
+
+void vcpm_minicpm4_config_from_model(vcpm_minicpm4_config * cfg,
+                                     int hidden_size, int n_layers,
+                                     int n_heads, int n_kv_heads,
+                                     int intermediate_size, int head_dim,
+                                     float rms_norm_eps, int rope_theta,
+                                     int max_seq_len, int vocab_size,
+                                     int no_rope) {
+    cfg->hidden_size      = hidden_size;
+    cfg->n_layers         = n_layers;
+    cfg->n_heads          = n_heads;
+    cfg->n_kv_heads       = n_kv_heads;
+    cfg->intermediate_size = intermediate_size;
+    cfg->head_dim         = head_dim;
+    cfg->rms_norm_eps     = rms_norm_eps;
+    cfg->rope_theta       = rope_theta;
+    cfg->max_seq_len      = max_seq_len;
+    cfg->vocab_size       = vocab_size;
+    cfg->no_rope          = no_rope;
+}
+
+/* ---- KV Cache ---- */
+
+int vcpm_kv_cache_init(struct ggml_context * ctx, vcpm_kv_cache * cache,
+                        const vcpm_minicpm4_config * cfg) {
+    if (!ctx || !cache || !cfg) return -1;
+
+    cache->n_layers    = cfg->n_layers;
+    cache->max_seq_len = cfg->max_seq_len;
+
+    cache->layers = (vcpm_kv_cache_unit *)calloc(cfg->n_layers, sizeof(vcpm_kv_cache_unit));
+    if (!cache->layers) return -1;
+
+    for (int i = 0; i < cfg->n_layers; i++) {
+        vcpm_kv_cache_unit * layer = &cache->layers[i];
+
+        /* K cache: [head_dim, n_kv_heads, max_seq_len] */
+        int64_t k_ne[3] = { cfg->head_dim, cfg->n_kv_heads, cfg->max_seq_len };
+        layer->k = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, k_ne[0], k_ne[1], k_ne[2]);
+        if (!layer->k) return -1;
+        ggml_set_name(layer->k, "k_cache");
+
+        /* V cache: [head_dim, n_kv_heads, max_seq_len] */
+        int64_t v_ne[3] = { cfg->head_dim, cfg->n_kv_heads, cfg->max_seq_len };
+        layer->v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, v_ne[0], v_ne[1], v_ne[2]);
+        if (!layer->v) return -1;
+        ggml_set_name(layer->v, "v_cache");
+
+        layer->n_used = 0;
+    }
+
+    return 0;
+}
+
+void vcpm_kv_cache_free(vcpm_kv_cache * cache) {
+    if (!cache) return;
+    free(cache->layers);
+    memset(cache, 0, sizeof(*cache));
+}
+
+/* ---- RMSNorm ---- */
+
+struct ggml_tensor * vcpm_rms_norm(struct ggml_context * ctx,
+                                    struct ggml_tensor * x,
+                                    struct ggml_tensor * weight,
+                                    float eps) {
+    /* ggml_rms_norm: y = x / sqrt(mean(x^2) + eps) */
+    struct ggml_tensor * y = ggml_rms_norm(ctx, x, eps);
+    /* Multiply by weight */
+    return ggml_mul(ctx, y, weight);
+}
+
+/* ---- Embedding ---- */
+
+struct ggml_tensor * vcpm_embed(struct ggml_context * ctx,
+                                struct ggml_tensor * tokens,
+                                struct ggml_tensor * embed_weight) {
+    /* ggml_get_rows: for each token id, fetch the corresponding row from embed_weight */
+    return ggml_get_rows(ctx, embed_weight, tokens);
+}
+
+/* ---- RoPE ---- */
+
+void vcpm_rope(struct ggml_context * ctx, struct ggml_cgraph * graph,
+               struct ggml_tensor * q, struct ggml_tensor * k,
+               int32_t pos, int32_t head_dim, int32_t rope_theta) {
+    /* Create position tensor: a single int32 with the current position */
+    /* For batch size 1, we create a 1-element tensor */
+    struct ggml_tensor * pos_tensor = ggml_new_i32(ctx, pos);
+    ggml_set_name(pos_tensor, "pos");
+
+    /* Apply RoPE to Q and K using Neox mode (as used by LLaMA) */
+    /* n_dims = head_dim (number of dims to rotate) */
+    /* freq_base = rope_theta */
+    /* freq_scale = 1.0f (no scaling) */
+    float freq_scale = 1.0f;
+
+    /* For ggml_rope_ext, the input tensor should have shape [head_dim, n_head, n_tokens] */
+    /* But our q,k are currently [n_tokens, hidden_size] => we need to reshape */
+    /* The reshape/permute is done in the attention function, so here q,k are already
+     * in the right format [head_dim, n_head, n_tokens] */
+
+    GGML_UNUSED(ctx);
+    GGML_UNUSED(graph);
+
+    /* Apply RoPE in-place */
+    /* ggml_rope_ext_inplace(q, pos, freq_factors, n_dims, mode, n_ctx_orig,
+     *                       freq_base, freq_scale, ext_factor, attn_factor,
+     *                       beta_fast, beta_slow) */
+    /* mode = GGML_ROPE_TYPE_NEOX for Neox-style RoPE */
+    ggml_rope_ext_inplace(ctx, q, pos_tensor, NULL,
+                          head_dim, GGML_ROPE_TYPE_NEOX,
+                          0, (float)rope_theta, freq_scale,
+                          0.0f, 1.0f, 0.0f, 0.0f);
+
+    ggml_rope_ext_inplace(ctx, k, pos_tensor, NULL,
+                          head_dim, GGML_ROPE_TYPE_NEOX,
+                          0, (float)rope_theta, freq_scale,
+                          0.0f, 1.0f, 0.0f, 0.0f);
+}
+
+/* ---- Attention ---- */
+
+struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
+                                    struct ggml_cgraph * graph,
+                                    struct ggml_tensor * x,
+                                    struct ggml_tensor * q_w,
+                                    struct ggml_tensor * k_w,
+                                    struct ggml_tensor * v_w,
+                                    struct ggml_tensor * o_w,
+                                    struct ggml_tensor * k_cache,
+                                    struct ggml_tensor * v_cache,
+                                    int32_t * n_cache_used,
+                                    int32_t n_heads, int32_t n_kv_heads,
+                                    int32_t head_dim, int32_t pos,
+                                    int32_t rope_theta, int no_rope) {
+    GGML_UNUSED(n_heads);
+    GGML_UNUSED(n_kv_heads);
+
+    /* x shape: [n_tokens, hidden_size] in ggml's ne layout.
+     * For single token: [hidden_size, 1] => ne[0]=hidden_size, ne[1]=1
+     * For multiple tokens: [hidden_size, n_tokens] => ne[0]=hidden_size, ne[1]=n_tokens */
+
+    int64_t n_tokens = x->ne[1];
+    int64_t hidden_size = x->ne[0];
+
+    /* Project to Q, K, V */
+    /* q = W_q @ x: q shape [hidden_size(=n_heads*head_dim), n_tokens] */
+    struct ggml_tensor * q = ggml_mul_mat(ctx, q_w, x);
+    ggml_set_name(q, "q");
+
+    struct ggml_tensor * k = ggml_mul_mat(ctx, k_w, x);
+    ggml_set_name(k, "k");
+
+    struct ggml_tensor * v = ggml_mul_mat(ctx, v_w, x);
+    ggml_set_name(v, "v");
+
+    /* Reshape Q from [hidden_size, n_tokens] to [head_dim, n_heads, n_tokens] */
+    /* In ggml, ne[0] is the innermost (fastest-changing) dimension */
+    int64_t q_ne[3] = { head_dim, n_heads, n_tokens };
+    struct ggml_tensor * q_reshaped = ggml_reshape_3d(ctx, q, q_ne[0], q_ne[1], q_ne[2]);
+    ggml_set_name(q_reshaped, "q_reshaped");
+
+    int64_t k_ne[3] = { head_dim, n_kv_heads, n_tokens };
+    struct ggml_tensor * k_reshaped = ggml_reshape_3d(ctx, k, k_ne[0], k_ne[1], k_ne[2]);
+    ggml_set_name(k_reshaped, "k_reshaped");
+
+    int64_t v_ne[3] = { head_dim, n_kv_heads, n_tokens };
+    struct ggml_tensor * v_reshaped = ggml_reshape_3d(ctx, v, v_ne[0], v_ne[1], v_ne[2]);
+    ggml_set_name(v_reshaped, "v_reshaped");
+
+    /* Apply RoPE to Q and K */
+    if (!no_rope) {
+        vcpm_rope(ctx, graph, q_reshaped, k_reshaped, pos, head_dim, rope_theta);
+    }
+
+    /* Update KV cache: copy k and v into cache at position pos */
+    /* K_cache shape: [head_dim, n_kv_heads, max_seq_len] */
+    /* We need to copy k_reshaped into the correct position */
+    /* Use ggml_view_3d to get a view of the cache at position pos, then ggml_cpy */
+
+    /* View into K cache at position pos: [head_dim, n_kv_heads, n_tokens] */
+    struct ggml_tensor * k_cache_view = ggml_view_3d(ctx, k_cache,
+                                                      head_dim, n_kv_heads, n_tokens,
+                                                      k_cache->nb[1],
+                                                      k_cache->nb[2],
+                                                      k_cache->nb[2] * pos);
+    ggml_set_name(k_cache_view, "k_cache_view");
+    struct ggml_tensor * k_copied = ggml_cpy(ctx, k_reshaped, k_cache_view);
+    GGML_UNUSED(k_copied);
+
+    /* Same for V cache */
+    struct ggml_tensor * v_cache_view = ggml_view_3d(ctx, v_cache,
+                                                      head_dim, n_kv_heads, n_tokens,
+                                                      v_cache->nb[1],
+                                                      v_cache->nb[2],
+                                                      v_cache->nb[2] * pos);
+    ggml_set_name(v_cache_view, "v_cache_view");
+    struct ggml_tensor * v_copied = ggml_cpy(ctx, v_reshaped, v_cache_view);
+    GGML_UNUSED(v_copied);
+
+    /* Update cache used count */
+    int32_t n_used = *n_cache_used + (int32_t)n_tokens;
+    *n_cache_used = n_used;
+
+    /* Build full K, V from cache for attention computation */
+    /* K_full: [head_dim, n_kv_heads, n_used] */
+    struct ggml_tensor * k_full = ggml_view_3d(ctx, k_cache,
+                                                head_dim, n_kv_heads, n_used,
+                                                k_cache->nb[1],
+                                                k_cache->nb[2],
+                                                0);
+    ggml_set_name(k_full, "k_full");
+
+    struct ggml_tensor * v_full = ggml_view_3d(ctx, v_cache,
+                                                head_dim, n_kv_heads, n_used,
+                                                v_cache->nb[1],
+                                                v_cache->nb[2],
+                                                0);
+    ggml_set_name(v_full, "v_full");
+
+    /* Compute attention scores: S = Q @ K^T / sqrt(head_dim) */
+    /* In ggml, we use ggml_mul_mat which computes: S = Q^T @ K (wait, what?) */
+    /* Actually: ggml_mul_mat(a, b) computes a^T @ b */
+    /* So for scores = Q @ K^T / sqrt(d):
+     * We want: scores[n_heads, n_tokens, n_used] = Q[head_dim, n_heads, n_tokens] @ K[head_dim, n_kv_heads, n_used]^T
+     * 
+     * In ggml, the convention for batched matmul with 3D tensors is complex.
+     * For simplicity in MVP, we use the standard approach:
+     *   scores = ggml_mul_mat(k_full, q_reshaped) 
+     * This gives: [n_used, n_kv_heads, n_tokens] - we need to handle correctly.
+     *
+     * Actually, let's just permute and do the matmul properly.
+     * 
+     * For simplicity: treat Q as 2D [head_dim, n_tokens], K as 2D [head_dim, n_used]
+     * and do per-head matmul.
+     */
+
+    /* Simple approach (batch size 1, single token):
+     * Q: [head_dim, n_heads]
+     * K: [head_dim, n_kv_heads * n_used]  (unrolled)
+     * scores = K^T @ Q = [n_kv_heads * n_used, n_heads]
+     * 
+     * Actually, let me use ggml's built-in attention.
+     * ggml_attn or we can compute directly.
+     */
+
+    /* Simple approach - for MVP with n_tokens=1:
+     * Q: [head_dim, n_heads, 1] -> squeeze to [head_dim, n_heads]
+     * K_full: [head_dim, n_kv_heads, n_used]
+     * 
+     * scores[i,j] = Q[:,i]^T @ K[:,j//n_used, j%n_used]
+     * 
+     * Use ggml_mul_mat:
+     * k_full_2d: [head_dim, n_kv_heads * n_used] -> reshape
+     * q_2d: [head_dim, n_heads]
+     * scores = ggml_mul_mat(k_full_2d, q_2d) = k_full_2d^T @ q_2d
+     *        = [n_kv_heads * n_used, head_dim] @ [head_dim, n_heads]
+     *        = [n_kv_heads * n_used, n_heads]
+     */
+
+    /* Reshape K and V to 2D for matmul */
+    int64_t k_2d_ne[2] = { head_dim, n_kv_heads * n_used };
+    struct ggml_tensor * k_2d = ggml_reshape_2d(ctx, k_full, k_2d_ne[0], k_2d_ne[1]);
+    ggml_set_name(k_2d, "k_2d");
+
+    int64_t v_2d_ne[2] = { head_dim, n_kv_heads * n_used };
+    struct ggml_tensor * v_2d = ggml_reshape_2d(ctx, v_full, v_2d_ne[0], v_2d_ne[1]);
+    ggml_set_name(v_2d, "v_2d");
+
+    /* Reshape Q to 2D */
+    int64_t q_2d_ne[2] = { head_dim, n_heads };
+    struct ggml_tensor * q_2d = ggml_reshape_2d(ctx, q_reshaped, q_2d_ne[0], q_2d_ne[1]);
+    ggml_set_name(q_2d, "q_2d");
+
+    /* Compute scores: S = K^T @ Q / sqrt(head_dim) */
+    /* k_2d: [head_dim, n_kv_heads * n_used], q_2d: [head_dim, n_heads] */
+    /* ggml_mul_mat(k_2d, q_2d) = k_2d^T @ q_2d = [n_kv_heads * n_used, head_dim] @ [head_dim, n_heads] */
+    /* Result: [n_kv_heads * n_used, n_heads] */
+    struct ggml_tensor * scores = ggml_mul_mat(ctx, k_2d, q_2d);
+    ggml_set_name(scores, "scores");
+
+    /* Scale by 1/sqrt(head_dim) */
+    float scale = 1.0f / sqrtf((float)head_dim);
+    scores = ggml_scale(ctx, scores, scale);
+    ggml_set_name(scores, "scores_scaled");
+
+    /* Apply causal mask - not needed for single token (pos is the latest) */
+    /* For multiple tokens or full sequence, add ggml_diag_mask_inf */
+    /* In MVP single-token case, this is a no-op */
+
+    /* Softmax along the key dimension (dim=0) */
+    struct ggml_tensor * attn_probs = ggml_soft_max_ext(ctx, scores, NULL, 1.0f, 0.0f);
+    ggml_set_name(attn_probs, "attn_softmax");
+
+    /* Compute weighted sum: O = V @ attn_probs
+     * V: [head_dim, n_kv_heads * n_used], attn_probs: [n_kv_heads * n_used, n_heads]
+     *
+     * ggml_mul_mat(A, B) = A^T @ B, and does not accept transposed A.
+     * We need A^T @ B = V @ attn_probs, so make A = cont(transpose(V)) = [n_kv*n_used, head_dim].
+     * Then A^T @ B = (V_transposed_contiguous)^T @ attn_probs = V @ attn_probs = [head_dim, n_heads]. */
+    struct ggml_tensor * v_t = ggml_cont(ctx, ggml_transpose(ctx, v_2d));
+    ggml_set_name(v_t, "v_transposed_cont");
+    struct ggml_tensor * attn_out = ggml_mul_mat(ctx, v_t, attn_probs);
+    ggml_set_name(attn_out, "attn_out");
+
+    /* Reshape back to [hidden_size, n_tokens] */
+    struct ggml_tensor * attn_reshaped = ggml_reshape_2d(ctx, attn_out, hidden_size, n_tokens);
+    ggml_set_name(attn_reshaped, "attn_reshaped");
+
+    /* Apply output projection */
+    struct ggml_tensor * out = ggml_mul_mat(ctx, o_w, attn_reshaped);
+    ggml_set_name(out, "attn_output");
+
+    return out;
+}
+
+/* ---- MLP (SwiGLU) ---- */
+
+struct ggml_tensor * vcpm_mlp(struct ggml_context * ctx,
+                              struct ggml_cgraph * graph,
+                              struct ggml_tensor * x,
+                              struct ggml_tensor * gate_w,
+                              struct ggml_tensor * up_w,
+                              struct ggml_tensor * down_w) {
+    GGML_UNUSED(graph);
+
+    /* SwiGLU: output = down_proj @ (silu(gate_proj @ x) * (up_proj @ x)) */
+    struct ggml_tensor * gate = ggml_mul_mat(ctx, gate_w, x);
+    ggml_set_name(gate, "mlp_gate");
+    gate = ggml_silu(ctx, gate);
+    ggml_set_name(gate, "mlp_gate_silu");
+
+    struct ggml_tensor * up = ggml_mul_mat(ctx, up_w, x);
+    ggml_set_name(up, "mlp_up");
+
+    struct ggml_tensor * product = ggml_mul(ctx, gate, up);
+    ggml_set_name(product, "mlp_product");
+
+    struct ggml_tensor * out = ggml_mul_mat(ctx, down_w, product);
+    ggml_set_name(out, "mlp_output");
+
+    return out;
+}
+
+/* ---- Transformer Block ---- */
+
+struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
+                                          struct ggml_cgraph * graph,
+                                          struct ggml_tensor * x,
+                                          const vcpm_minicpm4_layer_weights * w,
+                                          vcpm_kv_cache_unit * cache,
+                                          int32_t n_heads, int32_t n_kv_heads,
+                                          int32_t head_dim, int32_t pos,
+                                          int32_t rope_theta, int no_rope) {
+    /* Pre-attention RMSNorm */
+    struct ggml_tensor * x_norm = vcpm_rms_norm(ctx, x, w->input_layernorm_weight, 1e-6f);
+    ggml_set_name(x_norm, "block_input_norm");
+
+    /* Self-attention */
+    struct ggml_tensor * attn_out = vcpm_attention(ctx, graph, x_norm,
+                                                    w->q_proj_weight,
+                                                    w->k_proj_weight,
+                                                    w->v_proj_weight,
+                                                    w->o_proj_weight,
+                                                    cache->k, cache->v,
+                                                    &cache->n_used,
+                                                    n_heads, n_kv_heads,
+                                                    head_dim, pos,
+                                                    rope_theta, no_rope);
+    ggml_set_name(attn_out, "block_attn_out");
+
+    /* Residual connection */
+    struct ggml_tensor * x_after_attn = ggml_add(ctx, x, attn_out);
+    ggml_set_name(x_after_attn, "block_after_attn");
+
+    /* Post-attention RMSNorm */
+    struct ggml_tensor * x_attn_norm = vcpm_rms_norm(ctx, x_after_attn, w->post_attention_layernorm_weight, 1e-6f);
+    ggml_set_name(x_attn_norm, "block_attn_norm");
+
+    /* MLP */
+    struct ggml_tensor * mlp_out = vcpm_mlp(ctx, graph, x_attn_norm,
+                                             w->gate_proj_weight,
+                                             w->up_proj_weight,
+                                             w->down_proj_weight);
+    ggml_set_name(mlp_out, "block_mlp_out");
+
+    /* Residual connection */
+    struct ggml_tensor * out = ggml_add(ctx, x_after_attn, mlp_out);
+    ggml_set_name(out, "block_output");
+
+    return out;
+}
+
+/* ---- Full Forward ---- */
+
+struct ggml_tensor * vcpm_minicpm4_forward(struct ggml_context * ctx,
+                                            struct ggml_cgraph * graph,
+                                            struct ggml_tensor * x,
+                                            const vcpm_minicpm4_config * cfg,
+                                            const vcpm_minicpm4_weights * w,
+                                            vcpm_kv_cache * cache,
+                                            int32_t pos) {
+    /* x: token embeddings [hidden_size, n_tokens] */
+    struct ggml_tensor * h = x;
+
+    /* Process each layer */
+    for (int i = 0; i < cfg->n_layers; i++) {
+        char name[64];
+        snprintf(name, sizeof(name), "layer_%d_input", i);
+        ggml_set_name(h, name);
+
+        h = vcpm_minicpm4_block(ctx, graph, h, &w->layer_weights[i],
+                                 &cache->layers[i],
+                                 cfg->n_heads, cfg->n_kv_heads,
+                                 cfg->head_dim, pos,
+                                 cfg->rope_theta, cfg->no_rope);
+    }
+
+    /* Final RMSNorm */
+    h = vcpm_rms_norm(ctx, h, w->norm_weight, cfg->rms_norm_eps);
+    ggml_set_name(h, "final_norm_output");
+
+    return h;
+}

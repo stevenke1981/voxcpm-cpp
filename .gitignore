@@ -1,0 +1,26 @@
+# Build output
+build/
+cmake-build-*/
+*.obj
+*.exe
+*.lib
+*.dll
+*.pdb
+*.ilk
+*.exp
+
+# IDE
+.vs/
+.idea/
+*.suo
+*.user
+*.vcxproj.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/

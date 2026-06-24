@@ -1,0 +1,3 @@
+你好，這是 VoxCPM2 C runtime 的第一個測試。
+(Very calm male voice)This is a simple English voice design test.
+今日は音声合成のテストです。

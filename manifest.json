@@ -1,0 +1,29 @@
+{
+  "name": "voxcpm-c-rewrite-docs",
+  "created": "2026-06-25 Asia/Taipei",
+  "purpose": "Implementation documentation and starter skeleton for rewriting VoxCPM2 inference runtime in C with ggml/GGUF.",
+  "files": [
+    "AGENTS.md",
+    "CMakeLists.txt",
+    "README.md",
+    "architecture.md",
+    "c_api.md",
+    "docs/SOURCES.md",
+    "docs/source_analysis.md",
+    "examples/texts.txt",
+    "final.md",
+    "ggml_backend.md",
+    "include/voxcpm.h",
+    "model_conversion.md",
+    "plan.md",
+    "spec.md",
+    "src/ggml_backend.c",
+    "src/main.c",
+    "src/voxcpm.c",
+    "src/wav.c",
+    "test.md",
+    "tests/test_smoke.c",
+    "todos.md",
+    "tools/convert_voxcpm2_to_gguf.py"
+  ]
+}
