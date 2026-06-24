@@ -40,6 +40,9 @@ add_library(voxcpm STATIC
     src/ralm.c
     src/fsq.c
     src/locenc.c
+    src/locdit.c
+    src/cfm_solver.c
+    src/audio_vae.c
 )
 
 target_include_directories(voxcpm
