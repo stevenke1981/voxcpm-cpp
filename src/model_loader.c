@@ -370,3 +370,66 @@ int64_t vcpm_model_tensor_ne(const vcpm_model * model, int tensor_idx, int dim) 
     }
     return t ? t->ne[dim] : 0;
 }
+
+/* ---- Get tensor pointer by name ---- */
+
+struct ggml_tensor * vcpm_model_get_tensor(const vcpm_model * model, const char * name) {
+    if (!model || !model->ggml_ctx || !name) return NULL;
+
+    /* First, check the name lookup cache (linear search is fine for cache size) */
+    for (int i = 0; i < model->tensor_cache_count; i++) {
+        if (strcmp(model->tensor_cache[i].name, name) == 0) {
+            /* Found in cache - walk to the correct tensor */
+            struct ggml_tensor * t = ggml_get_first_tensor(model->ggml_ctx);
+            int count = 0;
+            while (t && count < model->tensor_cache[i].idx) {
+                t = ggml_get_next_tensor(model->ggml_ctx, t);
+                count++;
+            }
+            return t;
+        }
+    }
+
+    /* Cache miss: linear scan through all tensors */
+    struct ggml_tensor * t = ggml_get_first_tensor(model->ggml_ctx);
+    while (t) {
+        if (strcmp(t->name, name) == 0) {
+            return t;
+        }
+        t = ggml_get_next_tensor(model->ggml_ctx, t);
+    }
+    return NULL;
+}
+
+int vcpm_model_cache_tensor(vcpm_model * model, const char * name) {
+    if (!model || !model->ggml_ctx || !name) return -1;
+
+    /* Check if already cached */
+    for (int i = 0; i < model->tensor_cache_count; i++) {
+        if (strcmp(model->tensor_cache[i].name, name) == 0) return 0;
+    }
+
+    if (model->tensor_cache_count >= VCPM_MAX_TENSOR_CACHE) return -1;
+
+    /* Find tensor index */
+    struct ggml_tensor * t = ggml_get_first_tensor(model->ggml_ctx);
+    int idx = 0;
+    while (t) {
+        if (strcmp(t->name, name) == 0) {
+            int ci = model->tensor_cache_count;
+            snprintf(model->tensor_cache[ci].name, sizeof(model->tensor_cache[ci].name), "%s", name);
+            model->tensor_cache[ci].idx = idx;
+            model->tensor_cache_count++;
+            return 0;
+        }
+        t = ggml_get_next_tensor(model->ggml_ctx, t);
+        idx++;
+    }
+    return -1; /* tensor not found */
+}
+
+int vcpm_model_tensor_name(char * buf, size_t buf_size,
+                            const char * prefix, int layer,
+                            const char * suffix) {
+    return snprintf(buf, buf_size, "%s.%d.%s", prefix, layer, suffix);
+}

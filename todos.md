@@ -10,16 +10,16 @@
 
 ## 1. Repository Setup
 
-- [ ] Create `external/ggml` as submodule or document `GGML_DIR` path.
-- [ ] Add `CMakeLists.txt` with options:
-  - [ ] `VCPM_BUILD_TESTS`
-  - [ ] `VCPM_GGML_DIR`
+- [x] Create `external/ggml` as submodule or document `GGML_DIR` path.
+- [x] Add `CMakeLists.txt` with options:
+  - [x] `VCPM_BUILD_TESTS`
+  - [x] `VCPM_GGML_DIR`
   - [ ] `VCPM_ENABLE_CUDA`
   - [ ] `VCPM_ENABLE_METAL`
-- [ ] Add `include/voxcpm.h`.
-- [ ] Add `src/main.c` command dispatcher.
-- [ ] Add `src/voxcpm.c` context lifecycle.
-- [ ] Add error handling helpers.
+- [x] Add `include/voxcpm.h`.
+- [x] Add `src/main.c` command dispatcher.
+- [x] Add `src/voxcpm.c` context lifecycle.
+- [x] Add error handling helpers.
 
 ## 2. Converter
 
@@ -36,89 +36,90 @@
 
 ## 3. Model Loader
 
-- [ ] Implement GGUF reader or integrate ggml GGUF reader.
-- [ ] Validate `general.architecture == voxcpm2`.
-- [ ] Load metadata into `vcpm_model_config`.
-- [ ] Resolve tensor pointers by canonical names.
+- [x] Implement GGUF reader or integrate ggml GGUF reader.
+- [x] Validate `general.architecture == voxcpm2`.
+- [x] Load metadata into `vcpm_model_config`.
+- [x] Resolve tensor pointers by canonical names.
 - [ ] Add missing tensor diagnostics.
-- [ ] Implement `voxcpm-c inspect`.
+- [x] Implement `voxcpm-c inspect`.
 
 ## 4. Tokenizer
 
-- [ ] Load tokenizer metadata from GGUF.
-- [ ] Implement encode for UTF-8.
+- [x] Load tokenizer metadata from GGUF.
+- [x] Implement encode for UTF-8.
 - [ ] Preserve upstream handling of Chinese multi-character tokens.
-- [ ] Add special speech tokens.
-- [ ] Add `voxcpm-c tokenize`.
+- [x] Add special speech tokens.
+- [x] Add `voxcpm-c tokenize`.
 - [ ] Test exact ids vs Python.
 
 ## 5. Sequence Builder
 
-- [ ] Implement text/control merge.
-- [ ] Implement zero-shot mode.
-- [ ] Implement reference-only mode.
-- [ ] Implement continuation-only mode.
-- [ ] Implement reference+continuation mode.
-- [ ] Implement `text_mask` / `audio_mask` construction.
-- [ ] Implement audio feature placeholder construction.
+- [x] Implement text/control merge.
+- [x] Implement zero-shot mode.
+- [x] Implement reference-only mode.
+- [x] Implement continuation-only mode.
+- [x] Implement reference+continuation mode.
+- [x] Implement `text_mask` / `audio_mask` construction.
+- [x] Implement audio feature placeholder construction.
 - [ ] Test against Python fixtures.
 
 ## 6. Audio IO
 
-- [ ] Implement WAV reader mono f32.
-- [ ] Implement WAV writer PCM16 and f32.
+- [x] Implement WAV reader mono f32.
+- [x] Implement WAV writer PCM16 and f32.
 - [ ] Add resample abstraction.
 - [ ] Add optional miniaudio/dr_wav integration or internal simple WAV parser.
-- [ ] Validate sample rate handling.
+- [x] Validate sample rate handling.
 
 ## 7. MiniCPM4
 
-- [ ] Parse MiniCPM4 config.
-- [ ] Implement embeddings.
-- [ ] Implement RMSNorm.
-- [ ] Implement RoPE.
-- [ ] Implement attention with KV cache.
-- [ ] Implement MLP.
-- [ ] Implement final norm.
-- [ ] Add layer-by-layer fixture tests.
+- [x] Parse MiniCPM4 config.
+- [x] Implement embeddings.
+- [x] Implement RMSNorm.
+- [x] Implement RoPE.
+- [x] Implement attention with KV cache.
+- [x] Implement MLP.
+- [x] Implement final norm.
+- [x] Add layer-by-layer fixture tests.
 
-## 8. LocEnc / FSQ / RALM
+## 8. LocEnc / FSQ / RALM / Projections
 
-- [ ] Implement LocEnc.
-- [ ] Implement `enc_to_lm_proj`.
-- [ ] Implement FSQ/scalar quantization layer.
-- [ ] Implement residual LM with `vocab_size=0` path.
-- [ ] Implement `fusion_concat_proj`.
-- [ ] Implement `lm_to_dit_proj` and `res_to_dit_proj`.
+- [x] Implement LocEnc (skeleton).
+- [x] Implement `enc_to_lm_proj` (inline in projections.h).
+- [x] Implement FSQ/scalar quantization layer.
+- [x] Implement residual LM with `vocab_size=0` path.
+- [x] Implement `fusion_concat_proj` (inline in projections.h).
+- [x] Implement `lm_to_dit_proj` and `res_to_dit_proj` (inline in projections.h).
 - [ ] Test `dit_hidden` parity.
 
 ## 9. LocDiT / Unified CFM
 
-- [ ] Implement DiT block ops.
-- [ ] Implement time embedding.
-- [ ] Implement conditioning path.
-- [ ] Implement CFM schedule.
+- [x] Implement DiT block ops (skeleton, based on MiniCPM4 block).
+- [x] Implement time embedding (sinusoidal).
+- [x] Implement conditioning path.
+- [x] Implement CFM schedule (callback-based config).
 - [ ] Implement CFG.
-- [ ] Implement diffusion loop.
+- [x] Implement diffusion loop (Euler + Midpoint solver).
 - [ ] Test one-step and multi-step fixtures.
 
 ## 10. AudioVAE V2
 
-- [ ] Map AudioVAE V2 config.
-- [ ] Implement conv/downsample encoder.
+- [x] Map AudioVAE V2 config.
+- [ ] Implement conv/downsample encoder (skeleton).
 - [ ] Implement latent reshape to `[T, P, D]`.
-- [ ] Implement decoder/upsample.
+- [ ] Implement decoder/upsample (skeleton).
 - [ ] Implement streaming decoder state.
 - [ ] Test decode latent fixture.
 - [ ] Test encode WAV fixture.
 
 ## 11. Full Generation
 
-- [ ] Implement generation loop.
+- [ ] Implement model weight loading for all submodules.
+- [ ] Implement autoregressive generation loop.
 - [ ] Implement stop predictor.
 - [ ] Implement max/min length handling.
 - [ ] Implement context trimming for prompt audio.
-- [ ] Implement `vcpm_generate()`.
+- [ ] Implement `vcpm_generate()` full pipeline.
 - [ ] Implement `vcpm_generate_stream()`.
 - [ ] Implement `tts`, `design`, `clone`, `batch` CLI.
 
@@ -147,5 +148,5 @@
 - [ ] Windows MSVC.
 - [ ] Windows MinGW.
 - [ ] macOS clang.
-- [ ] Unit tests without model weights.
+- [x] Unit tests without model weights.
 - [ ] Optional model fixture tests behind env var.

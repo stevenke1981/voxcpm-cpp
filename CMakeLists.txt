@@ -43,6 +43,7 @@ add_library(voxcpm STATIC
     src/locdit.c
     src/cfm_solver.c
     src/audio_vae.c
+    src/generate.c
 )
 
 target_include_directories(voxcpm
@@ -93,4 +94,9 @@ if(VCPM_BUILD_TESTS)
         ${ggml_SOURCE_DIR}/include)
     target_link_libraries(test_phase5 PRIVATE voxcpm)
     add_test(NAME phase5 COMMAND test_phase5)
+
+    add_executable(test_model_loader_tensors tests/test_model_loader_tensors.c)
+    target_include_directories(test_model_loader_tensors PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_model_loader_tensors PRIVATE voxcpm)
+    add_test(NAME model_loader_tensors COMMAND test_model_loader_tensors)
 endif()

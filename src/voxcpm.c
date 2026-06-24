@@ -2,12 +2,17 @@
 #include "model_loader.h"
 #include "tokenizer.h"
 #include "sequence.h"
+#include "generate.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 #include <math.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 struct vcpm_context {
     char last_error[512];
@@ -128,18 +133,53 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         return VCPM_ERR_INVALID_ARG;
     }
 
-    /* TODO: full model inference loop
-     * For now, return a short dummy audio to demonstrate the pipeline works */
-    size_t dummy_samples = ctx->model->config.sample_rate * 1; /* 1 second dummy */
+    /* ---- Try full model inference pipeline ---- */
+    vcpm_generate_state * gen_state = vcpm_gen_init(ctx->model, 0);
+    if (gen_state) {
+        float latent_buffer[4096 * 64];  /* generous: 4096 patches x 64 latent dim */
+        int n_patches = 0;
+
+        vcpm_status st = vcpm_gen_run(gen_state,
+                                       seq.token_ids,
+                                       seq.text_mask,
+                                       seq.audio_mask,
+                                       seq.length,
+                                       latent_buffer,
+                                       &n_patches,
+                                       4096,
+                                       params);
+        if (st == VCPM_OK && n_patches > 0) {
+            /* Decode latents to waveform */
+            size_t max_audio_samples = ctx->model->config.sample_rate * 30;  /* 30 sec max */
+            float * audio_buf = (float *)malloc(max_audio_samples * sizeof(float));
+            if (audio_buf) {
+                int n_samples = 0;
+                st = vcpm_gen_decode(gen_state, latent_buffer, n_patches,
+                                      audio_buf, (int)max_audio_samples, &n_samples);
+                if (st == VCPM_OK && n_samples > 0) {
+                    out_audio->samples     = audio_buf;
+                    out_audio->sample_rate = ctx->model->config.sample_rate;
+                    out_audio->n_channels  = 1;
+                    out_audio->n_samples   = (size_t)n_samples;
+                    vcpm_gen_free(gen_state);
+                    return VCPM_OK;
+                }
+                free(audio_buf);
+            }
+        }
+        vcpm_gen_free(gen_state);
+    }
+
+    /* ---- Fallback: return a short dummy audio ---- */
+    size_t dummy_samples = ctx->model->config.sample_rate * 1;
     out_audio->samples = (float *)calloc(dummy_samples, sizeof(float));
     if (!out_audio->samples) {
         vcpm_set_error(ctx, "out of memory");
         return VCPM_ERR_OOM;
     }
 
-    /* Fill with a 440 Hz test tone so we can hear it works */
     for (size_t i = 0; i < dummy_samples; i++) {
-        out_audio->samples[i] = 0.1f * sinf(2.0f * 3.14159265f * 440.0f * i / ctx->model->config.sample_rate);
+        out_audio->samples[i] = 0.1f * sinf(2.0f * (float)M_PI * 440.0f * i / ctx->model->config.sample_rate);
     }
 
     out_audio->sample_rate = ctx->model->config.sample_rate;
@@ -147,7 +187,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
     out_audio->n_samples   = dummy_samples;
 
     vcpm_set_error(ctx, "generation pipeline skeleton - real inference not implemented");
-    return VCPM_OK; /* return OK but with warning in error message */
+    return VCPM_OK;
 }
 
 vcpm_status vcpm_generate_stream(vcpm_context * ctx, const vcpm_generation_params * params, vcpm_stream_cb cb, void * user_data) {

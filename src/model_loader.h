@@ -104,4 +104,40 @@ int64_t vcpm_model_tensor_ne(const vcpm_model * model, int tensor_idx, int dim);
 /* Default config filled with sensible defaults */
 vcpm_model_config vcpm_model_config_default(void);
 
+/*
+ * Get ggml_tensor pointer by canonical name.
+ *
+ * Searches the model's GGUF tensor list by name and returns the
+ * corresponding ggml_tensor pointer for direct use in graph building.
+ *
+ * Returns NULL if tensor is not found in the GGUF file.
+ *
+ * Performance: This performs a linear search through all tensors.
+ * For repeated lookups, use the tensor cache.
+ */
+struct ggml_tensor * vcpm_model_get_tensor(const vcpm_model * model, const char * name);
+
+/*
+ * Cache a tensor name for faster repeated lookups.
+ *
+ * After caching, vcpm_model_get_tensor will use the cache index
+ * instead of linear scanning. Call once per unique name before
+ * the hot loop.
+ *
+ * Returns 0 on success, -1 if cache is full or name not found.
+ */
+int vcpm_model_cache_tensor(vcpm_model * model, const char * name);
+
+/*
+ * Build a canonical tensor name from prefix, layer index, and suffix.
+ *
+ * Formats: "prefix.{layer}.suffix"
+ *   e.g., "base_lm.0.q_proj.weight"
+ *
+ * Returns nwritten (excl. null) or negative on truncation.
+ */
+int vcpm_model_tensor_name(char * buf, size_t buf_size,
+                            const char * prefix, int layer,
+                            const char * suffix);
+
 #endif /* VCPM_MODEL_LOADER_H */

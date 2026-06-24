@@ -14,8 +14,7 @@
  *   fusion_concat.weight       Fusion projection (if used)
  */
 
-struct ggml_context;
-struct ggml_tensor;
+#include "ggml.h"
 
 /* Linear projection: y = W^T @ x
  *   weight: [in_features, out_features] (ggml_mul_mat convention)
@@ -29,25 +28,14 @@ static inline struct ggml_tensor * vcpm_linear_proj(
     return ggml_mul_mat(ctx, weight, x);
 }
 
-/* Fusion: add two tensors element-wise with optional projection.
- * For now, simply returns x + y (both must have same shape).
+/* Fusion: add two tensors element-wise.
+ * Both must have the same shape.
  */
 static inline struct ggml_tensor * vcpm_fusion_add(
     struct ggml_context * ctx,
     struct ggml_tensor * x,
     struct ggml_tensor * y) {
     return ggml_add(ctx, x, y);
-}
-
-/* Concat along dimension 0 (rows / hidden dim).
- * x: [X, N], y: [Y, N] → result [X+Y, N]
- * ggml_concat concatenates along ne[0] (first dim) by default.
- */
-static inline struct ggml_tensor * vcpm_concat_dim0(
-    struct ggml_context * ctx,
-    struct ggml_tensor * x,
-    struct ggml_tensor * y) {
-    return ggml_concat(ctx, x, y, 0);
 }
 
 #endif /* VCPM_PROJECTIONS_H */
