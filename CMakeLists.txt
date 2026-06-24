@@ -37,6 +37,9 @@ add_library(voxcpm STATIC
     src/wav.c
     src/ggml_backend.c
     src/minicpm4.c
+    src/ralm.c
+    src/fsq.c
+    src/locenc.c
 )
 
 target_include_directories(voxcpm
@@ -80,4 +83,11 @@ if(VCPM_BUILD_TESTS)
         ${ggml_SOURCE_DIR}/include)
     target_link_libraries(test_minicpm4 PRIVATE voxcpm)
     add_test(NAME minicpm4 COMMAND test_minicpm4)
+
+    add_executable(test_phase5 tests/test_phase5.c)
+    target_include_directories(test_phase5 PRIVATE
+        ${VCPM_TEST_PRIVATE_INCLUDES}
+        ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(test_phase5 PRIVATE voxcpm)
+    add_test(NAME phase5 COMMAND test_phase5)
 endif()
