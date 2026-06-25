@@ -14,6 +14,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <inttypes.h>
+
+static int minicpm_debug_shapes(void) {
+    const char * v = getenv("VCPM_DEBUG_SHAPES");
+    return v && v[0] && strcmp(v, "0") != 0;
+}
+
+static void minicpm_debug_tensor_shape(const char * label, const struct ggml_tensor * t) {
+    if (!minicpm_debug_shapes()) return;
+    if (!t) {
+        fprintf(stderr, "VCPM_DEBUG %s: (null)\n", label);
+        return;
+    }
+    fprintf(stderr, "VCPM_DEBUG %s: [%" PRId64 ", %" PRId64 ", %" PRId64 ", %" PRId64 "] type=%s\n",
+            label, t->ne[0], t->ne[1], t->ne[2], t->ne[3], ggml_type_name(t->type));
+}
 
 /* ---- Config ---- */
 
@@ -84,6 +100,9 @@ struct ggml_tensor * vcpm_rms_norm(struct ggml_context * ctx,
                                     float eps) {
     /* ggml_rms_norm: y = x / sqrt(mean(x^2) + eps) */
     struct ggml_tensor * y = ggml_rms_norm(ctx, x, eps);
+    minicpm_debug_tensor_shape("minicpm.rms.x", x);
+    minicpm_debug_tensor_shape("minicpm.rms.y", y);
+    minicpm_debug_tensor_shape("minicpm.rms.weight", weight);
     /* Multiply by weight */
     return ggml_mul(ctx, y, weight);
 }
@@ -396,6 +415,8 @@ struct ggml_tensor * vcpm_mlp(struct ggml_context * ctx,
     struct ggml_tensor * up = ggml_mul_mat(ctx, up_w, x);
     ggml_set_name(up, "mlp_up");
 
+    minicpm_debug_tensor_shape("minicpm.mlp.gate", gate);
+    minicpm_debug_tensor_shape("minicpm.mlp.up", up);
     struct ggml_tensor * product = ggml_mul(ctx, gate, up);
     ggml_set_name(product, "mlp_product");
 

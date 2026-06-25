@@ -18,6 +18,7 @@ static void usage(void) {
     puts("  voxcpm-c inspect --model model.gguf");
     puts("  voxcpm-c tts --model model.gguf --text \"hello\" --out out.wav");
     puts("  voxcpm-c tokenize --model model.gguf --text \"hello\"");
+    puts("  voxcpm-c clone --model model.gguf --reference-audio ref.wav --text \"hello\" --i-have-consent --out out.wav");
     puts("");
     puts("Options:");
     puts("  --model PATH        GGUF model file (required)");
@@ -31,8 +32,10 @@ static void usage(void) {
     puts("  --threads INT       CPU threads (default: 0 = auto)");
     puts("  --pcm16             Write 16-bit PCM WAV instead of float");
     puts("");
-    puts("Cloning requires --i-have-consent flag.");
-    puts("Voice cloning features must follow ethical guidelines.");
+    puts("Safety:");
+    puts("  AI-generated speech must be disclosed where appropriate.");
+    puts("  Do not impersonate, defraud, or clone a voice without consent.");
+    puts("  Cloning commands require --i-have-consent when implemented.");
 }
 
 static const char * arg_value(int argc, char ** argv, const char * name) {
@@ -200,6 +203,28 @@ static int cmd_tts(int argc, char ** argv) {
     return 0;
 }
 
+static int cmd_clone(int argc, char ** argv) {
+    const char * model = arg_value(argc, argv, "--model");
+    const char * text  = arg_value(argc, argv, "--text");
+    const char * ref   = arg_value(argc, argv, "--reference-audio");
+    const char * out   = arg_value(argc, argv, "--out");
+    if (!model || !text || !ref || !out) {
+        fprintf(stderr, "error: --model, --text, --reference-audio, and --out are required\n");
+        return 2;
+    }
+    if (!arg_flag(argc, argv, "--i-have-consent")) {
+        fprintf(stderr, "error: clone requires --i-have-consent\n");
+        return 2;
+    }
+
+    (void)model;
+    (void)text;
+    (void)ref;
+    (void)out;
+    fprintf(stderr, "error: reference voice cloning is not implemented in this build\n");
+    return 4;
+}
+
 int main(int argc, char ** argv) {
     if (argc < 2) {
         usage();
@@ -218,6 +243,10 @@ int main(int argc, char ** argv) {
 
     if (strcmp(cmd, "tts") == 0) {
         return cmd_tts(argc, argv);
+    }
+
+    if (strcmp(cmd, "clone") == 0) {
+        return cmd_clone(argc, argv);
     }
 
     if (strcmp(cmd, "--help") == 0 || strcmp(cmd, "-h") == 0) {

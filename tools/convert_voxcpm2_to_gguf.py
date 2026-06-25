@@ -212,7 +212,8 @@ def write_gguf_metadata(writer: gguf.GGUFWriter, cfg: dict):
     writer.add_int32("voxcpm.latent_dim", value_from_config(cfg,
                       "scalar_quantization_latent_dim", "vae_latent_dim"))
     writer.add_int32("voxcpm.max_length", value_from_config(cfg, "max_length", "lm_max_position_embeddings"))
-    writer.add_int32("voxcpm.sample_rate", value_from_config(cfg, "vae_sample_rate"))
+    writer.add_int32("voxcpm.sample_rate", value_from_config(cfg,
+                      "vae_out_sample_rate", "vae_sample_rate"))
     writer.add_int32("voxcpm.encode_sample_rate", value_from_config(cfg, "vae_sample_rate"))
 
     # Special tokens
@@ -521,32 +522,33 @@ def main() -> int:
     log.info("Mapped %d safetensors (of %d total)",
              len(mapped), len(weight_map))
 
-    # ---- Load audiovae.pth (optional) ----
+    # ---- Load audiovae.pth (optional, auto-detected in standard HF snapshot) ----
     audiovae_tensors: Dict[str, torch.Tensor] = {}
-    if args.audiovae_pth:
-        av_path = Path(args.audiovae_pth)
-        if av_path.exists():
-            av_raw = load_audiovae_pth(av_path)
-            for upstream_name, tensor in av_raw.items():
-                canonical = canonicalize_audiovae_name(upstream_name)
-                # Convert torch → numpy (bfloat16 → float32 first)
-                if hasattr(tensor, 'dtype') and tensor.dtype == torch.bfloat16:
-                    arr = tensor.cpu().float().numpy()
-                else:
-                    arr = tensor.cpu().numpy()
-                audiovae_tensors[canonical] = arr
-                if canonical not in mapped:
-                    mapped[canonical] = {
-                        "source_name": upstream_name,
-                        "source_file": "audiovae.pth",
-                        "source_shape": list(arr.shape),
-                        "gguf_shape": list(arr.shape),
-                        "dtype": str(arr.dtype),
-                        "quantized": False,
-                    }
-            log.info("Loaded %d tensors from audiovae.pth", len(audiovae_tensors))
-        else:
-            log.warning("audiovae.pth not found: %s", av_path)
+    av_path = Path(args.audiovae_pth) if args.audiovae_pth else (hf_dir / "audiovae.pth")
+    if av_path.exists():
+        av_raw = load_audiovae_pth(av_path)
+        for upstream_name, tensor in av_raw.items():
+            canonical = canonicalize_audiovae_name(upstream_name)
+            # Convert torch → numpy (bfloat16 → float32 first)
+            if hasattr(tensor, 'dtype') and tensor.dtype == torch.bfloat16:
+                arr = tensor.cpu().float().numpy()
+            else:
+                arr = tensor.cpu().numpy()
+            audiovae_tensors[canonical] = arr
+            if canonical not in mapped:
+                mapped[canonical] = {
+                    "source_name": upstream_name,
+                    "source_file": "audiovae.pth",
+                    "source_shape": list(arr.shape),
+                    "gguf_shape": list(arr.shape),
+                    "dtype": str(arr.dtype),
+                    "quantized": False,
+                }
+        log.info("Loaded %d tensors from audiovae.pth", len(audiovae_tensors))
+    elif args.audiovae_pth:
+        log.warning("audiovae.pth not found: %s", av_path)
+    else:
+        log.warning("No audiovae.pth found under HF dir; generated GGUF will not support TTS decode")
 
     # ---- Dry run ----
     if args.dry_run:

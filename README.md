@@ -76,5 +76,11 @@ tests/test_smoke.c
 ```bash
 voxcpm-c tts   --model ./models/voxcpm2-f16.gguf   --text "(young warm female voice)你好，這是 VoxCPM2 C runtime 測試。"   --cfg 2.0   --steps 10   --out output.wav
 
-voxcpm-c clone   --model ./models/voxcpm2-f16.gguf   --text "這是一段聲音複製測試。"   --reference-audio ref_16k.wav   --out clone.wav
+voxcpm-c clone   --model ./models/voxcpm2-f16.gguf   --text "這是一段聲音複製測試。"   --reference-audio ref_16k.wav   --i-have-consent   --out clone.wav
 ```
+
+Current verified baseline:
+
+- `inspect` and `tokenize` work on a minimal synthetic GGUF fixture.
+- No-weight CTest unit tests pass.
+- Full `tts` requires a complete converted VoxCPM2 GGUF; incomplete/mock GGUFs fail with a missing tensor diagnostic instead of dummy audio.

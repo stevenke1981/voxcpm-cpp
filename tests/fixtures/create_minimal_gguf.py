@@ -7,6 +7,8 @@ Creates a tiny GGUF with voxcpm2 architecture metadata and minimal tensors.
 
 import numpy as np
 from gguf import GGUFWriter
+from pathlib import Path
+import argparse
 
 
 def create_minimal_gguf(output_path: str) -> None:
@@ -128,4 +130,12 @@ def create_minimal_gguf(output_path: str) -> None:
 
 
 if __name__ == "__main__":
-    create_minimal_gguf(r"E:\voxcpm-cpp\tests\fixtures\minimal.gguf")
+    parser = argparse.ArgumentParser(description="Create a minimal synthetic VoxCPM2 GGUF fixture.")
+    parser.add_argument(
+        "output",
+        nargs="?",
+        default=Path(__file__).with_name("minimal.gguf"),
+        help="Output GGUF path (default: tests/fixtures/minimal.gguf)",
+    )
+    args = parser.parse_args()
+    create_minimal_gguf(str(args.output))

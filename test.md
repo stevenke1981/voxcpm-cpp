@@ -183,6 +183,27 @@ With model weights, gated by env var:
 VCPM_MODEL=./models/voxcpm2-f16.gguf ctest -L model
 ```
 
+Current no-weight verification command:
+
+```bash
+cmake -S . -B build -DVCPM_BUILD_TESTS=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
+
+The `vae_only` model fixture test is registered only when `VCPM_MODEL` is present at CMake configure time.
+
+Minimal synthetic GGUF smoke:
+
+```bash
+python tests/fixtures/create_minimal_gguf.py tests/fixtures/minimal.gguf
+voxcpm-c inspect --model tests/fixtures/minimal.gguf
+voxcpm-c tokenize --model tests/fixtures/minimal.gguf --text hello
+voxcpm-c tts --model tests/fixtures/minimal.gguf --text hello --out smoke.wav
+```
+
+Expected result: `inspect` and `tokenize` succeed; `tts` must fail cleanly with the first missing generation tensor, because the minimal fixture is not a full inference model.
+
 ## 8. Acceptance Gates
 
 | Gate | Required before merge |

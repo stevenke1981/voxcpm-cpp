@@ -31,12 +31,28 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <math.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+static int vcpm_debug_shapes(void) {
+    const char * v = getenv("VCPM_DEBUG_SHAPES");
+    return v && v[0] && strcmp(v, "0") != 0;
+}
+
+static void vcpm_debug_tensor_shape(const char * label, const struct ggml_tensor * t) {
+    if (!vcpm_debug_shapes()) return;
+    if (!t) {
+        fprintf(stderr, "VCPM_DEBUG %s: (null)\n", label);
+        return;
+    }
+    fprintf(stderr, "VCPM_DEBUG %s: [%" PRId64 ", %" PRId64 ", %" PRId64 ", %" PRId64 "] type=%s\n",
+            label, t->ne[0], t->ne[1], t->ne[2], t->ne[3], ggml_type_name(t->type));
+}
 
 /* ---- Weight resolution helpers ---- */
 
@@ -94,8 +110,35 @@ static int fill_fe_weights(const struct vcpm_model * model,
 static int fill_dit_weights(const struct vcpm_model * model,
                              vcpm_locdit_layer_weights * layers,
                              int n_layers) {
-    return fill_minicpm4_weights(model, "feat_decoder.estimator.blk",
-                                  (vcpm_minicpm4_layer_weights *)layers, n_layers);
+    const char * suffixes[] = {
+        "self_attn.q_proj.weight", "self_attn.k_proj.weight",
+        "self_attn.v_proj.weight", "self_attn.o_proj.weight",
+        "mlp.gate_proj.weight",    "mlp.up_proj.weight",
+        "mlp.down_proj.weight",
+        "input_layernorm.weight",  "post_attention_layernorm.weight"
+    };
+    enum { N_SUFFIXES = 9 };
+    int found = 0;
+    for (int i = 0; i < n_layers; i++) {
+        for (int s = 0; s < N_SUFFIXES; s++) {
+            char name[256];
+            vcpm_model_tensor_name(name, sizeof(name), "feat_decoder.estimator.blk", i, suffixes[s]);
+            struct ggml_tensor * t = resolve_weight(model, name);
+            if (!t) continue;
+            switch (s) {
+                case 0: layers[i].q_proj_weight              = t; found++; break;
+                case 1: layers[i].k_proj_weight              = t; found++; break;
+                case 2: layers[i].v_proj_weight              = t; found++; break;
+                case 3: layers[i].o_proj_weight              = t; found++; break;
+                case 4: layers[i].gate_proj_weight           = t; found++; break;
+                case 5: layers[i].up_proj_weight             = t; found++; break;
+                case 6: layers[i].down_proj_weight           = t; found++; break;
+                case 7: layers[i].input_layernorm_weight     = t; found++; break;
+                case 8: layers[i].post_attention_layernorm_weight = t; found++; break;
+            }
+        }
+    }
+    return found;
 }
 
 /* ---- Main API ---- */
@@ -532,6 +575,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     struct ggml_tensor * audio_embed = gen_build_audio_embed(state, ctx, graph, &fe_out);
     if (!audio_embed) return VCPM_ERR_BACKEND;
     ggml_set_name(audio_embed, "audio_embed");
+    vcpm_debug_tensor_shape("step.audio_embed", audio_embed);
 
     /* ========== Step 2: Forward through base_lm with audio_embed ========== */
     vcpm_minicpm4_config base_cfg;
@@ -561,23 +605,28 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                                                                fill_pos);
     if (!base_hidden) return VCPM_ERR_BACKEND;
     ggml_set_name(base_hidden, "base_hidden");
+    vcpm_debug_tensor_shape("step.base_hidden", base_hidden);
 
     /* ========== Step 3: FSQ on base_hidden ========== */
     struct ggml_tensor * fsq_out = gen_fsq_hidden(state, ctx, graph, base_hidden);
     ggml_set_name(fsq_out, "fsq_out");
+    vcpm_debug_tensor_shape("step.fsq_out", fsq_out);
 
     /* ========== Step 4: Fusion concat for RALM input ========== */
     /* concat(fsq_out[2048], audio_embed[2048]) → [4096] → fusion_concat_proj → [2048] */
     struct ggml_tensor * fusion_in = ggml_concat(ctx, fsq_out, audio_embed, 0);
     ggml_set_name(fusion_in, "fusion_in");
+    vcpm_debug_tensor_shape("step.fusion_in", fusion_in);
     struct ggml_tensor * ralm_in = vcpm_linear_proj(ctx, fusion_in,
                                                       state->fusion_concat_proj);
     ggml_set_name(ralm_in, "ralm_in");
+    vcpm_debug_tensor_shape("step.ralm_in", ralm_in);
 
     /* ========== Step 5: Forward RALM ========== */
     struct ggml_tensor * ralm_hidden = gen_forward_ralm(state, ctx, graph,
                                                           ralm_in, fill_pos);
     if (ralm_hidden) ggml_set_name(ralm_hidden, "ralm_hidden");
+    vcpm_debug_tensor_shape("step.ralm_hidden", ralm_hidden);
 
     /* ========== Step 6: Build mu (DiT conditioning) ========== */
     /* mu = concat(lm_to_dit_proj(base_hidden)[1024], res_to_dit_proj(ralm_hidden)[1024]) */
@@ -595,6 +644,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         mu = vcpm_linear_proj(ctx, base_hidden, state->lm_to_dit_proj);
         ggml_set_name(mu, "dit_mu_lm_only");
     }
+    vcpm_debug_tensor_shape("step.mu", mu);
 
     /* ========== Step 7: Compute graph to materialize all tensors ========== */
     /* Build all forward edges and compute once */
@@ -714,9 +764,11 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                                                               x_t, cond_t, t_tensor, mu_t,
                                                               &dit_cfg, &dit_w);
         if (!velocity) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_BACKEND; }
+        vcpm_debug_tensor_shape("step.velocity", velocity);
 
         struct ggml_tensor * dt_t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
         if (dt_t->data) ((float *)dt_t->data)[0] = dt;
+        vcpm_debug_tensor_shape("step.dt", dt_t);
 
         struct ggml_tensor * step_v = ggml_mul(ctx, velocity, dt_t);
         struct ggml_tensor * x_next = ggml_add(ctx, x_t, step_v);

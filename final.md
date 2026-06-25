@@ -115,3 +115,12 @@ voxcpm-c/
 - [ ] Streaming smoke passes.
 - [ ] License and notices included.
 - [ ] README documents safety limitations.
+
+## 8. Current Verified Baseline
+
+- Windows MSVC build succeeds with ggml CPU backend.
+- No-weight unit tests pass through CTest.
+- Model fixture tests are gated by `VCPM_MODEL` instead of hard-coded local paths.
+- Minimal synthetic GGUF supports `inspect` and `tokenize`.
+- Incomplete/mock GGUFs fail `tts` with a missing-tensor diagnostic instead of dummy audio or process crash.
+- Voice cloning CLI requires `--i-have-consent` and returns explicit not-implemented status until the reference-audio path is complete.

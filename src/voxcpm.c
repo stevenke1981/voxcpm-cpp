@@ -8,11 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include <math.h>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 struct vcpm_context {
     char last_error[512];
@@ -27,6 +22,70 @@ struct vcpm_context {
 static void vcpm_set_error(vcpm_context * ctx, const char * msg) {
     if (!ctx) return;
     snprintf(ctx->last_error, sizeof(ctx->last_error), "%s", msg ? msg : "unknown error");
+}
+
+static int vcpm_require_tensor(vcpm_context * ctx, const char * name) {
+    if (!ctx || !ctx->model || !name) return 0;
+    if (vcpm_model_get_tensor(ctx->model, name)) return 1;
+    snprintf(ctx->last_error, sizeof(ctx->last_error),
+             "model is missing required generation tensor: %s", name);
+    return 0;
+}
+
+static int vcpm_require_layer_tensors(vcpm_context * ctx, const char * prefix,
+                                      int n_layers) {
+    static const char * suffixes[] = {
+        "self_attn.q_proj.weight",
+        "self_attn.k_proj.weight",
+        "self_attn.v_proj.weight",
+        "self_attn.o_proj.weight",
+        "mlp.gate_proj.weight",
+        "mlp.up_proj.weight",
+        "mlp.down_proj.weight",
+        "input_layernorm.weight",
+        "post_attention_layernorm.weight",
+    };
+    for (int i = 0; i < n_layers; i++) {
+        for (size_t s = 0; s < sizeof(suffixes) / sizeof(suffixes[0]); s++) {
+            char name[256];
+            vcpm_model_tensor_name(name, sizeof(name), prefix, i, suffixes[s]);
+            if (!vcpm_require_tensor(ctx, name)) return 0;
+        }
+    }
+    return 1;
+}
+
+static int vcpm_generation_weights_ready(vcpm_context * ctx) {
+    const vcpm_model_config * cfg = &ctx->model->config;
+
+    if (!vcpm_require_tensor(ctx, "base_lm.embed_tokens.weight")) return 0;
+    if (!vcpm_require_tensor(ctx, "base_lm.norm.weight")) return 0;
+    if (!vcpm_require_layer_tensors(ctx, "base_lm.blk", cfg->num_hidden_layers)) return 0;
+
+    if (!vcpm_require_tensor(ctx, "feat_encoder.in_proj.weight")) return 0;
+    if (!vcpm_require_tensor(ctx, "feat_encoder.in_proj.bias")) return 0;
+    if (!vcpm_require_tensor(ctx, "feat_encoder.special_token")) return 0;
+    if (!vcpm_require_tensor(ctx, "feat_encoder.norm.weight")) return 0;
+    if (!vcpm_require_layer_tensors(ctx, "feat_encoder.blk", 12)) return 0;
+
+    if (!vcpm_require_tensor(ctx, "enc_to_lm_proj.weight")) return 0;
+    if (!vcpm_require_tensor(ctx, "fusion_concat_proj.weight")) return 0;
+    if (!vcpm_require_tensor(ctx, "lm_to_dit_proj.weight")) return 0;
+    if (!vcpm_require_tensor(ctx, "res_to_dit_proj.weight")) return 0;
+
+    if (!vcpm_require_tensor(ctx, "residual_lm.norm.weight")) return 0;
+    if (!vcpm_require_layer_tensors(ctx, "residual_lm.blk", cfg->res_num_layers)) return 0;
+
+    if (!vcpm_require_tensor(ctx, "feat_decoder.estimator.in_proj.weight")) return 0;
+    if (!vcpm_require_tensor(ctx, "feat_decoder.estimator.out_proj.weight")) return 0;
+    if (!vcpm_require_tensor(ctx, "feat_decoder.estimator.cond_proj.weight")) return 0;
+    if (!vcpm_require_tensor(ctx, "feat_decoder.estimator.norm.weight")) return 0;
+    if (!vcpm_require_layer_tensors(ctx, "feat_decoder.estimator.blk", cfg->dit_num_layers)) return 0;
+
+    if (!vcpm_require_tensor(ctx, "audio_vae.decoder.model.0.weight.weight")) return 0;
+    if (!vcpm_require_tensor(ctx, "audio_vae.decoder.model.1.weight.weight")) return 0;
+
+    return 1;
 }
 
 vcpm_model_params vcpm_default_model_params(void) {
@@ -132,64 +191,80 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         vcpm_set_error(ctx, "sequence building failed");
         return VCPM_ERR_INVALID_ARG;
     }
-    /* ---- Try full model inference pipeline ---- */
-    vcpm_generate_state * gen_state = vcpm_gen_init(ctx->model, 0);
-    if (gen_state) {
-        float * latent_buffer = (float *)malloc((size_t)4096 * 64 * sizeof(float));
-        int n_patches = 0;
 
-        if (latent_buffer) {
-            vcpm_status st = vcpm_gen_run(gen_state,
-                                           seq.token_ids,
-                                           seq.text_mask,
-                                           seq.audio_mask,
-                                           seq.length,
-                                           latent_buffer,
-                                           &n_patches,
-                                           4096,
-                                           params);
-            if (st == VCPM_OK && n_patches > 0) {
-                /* Decode latents to waveform */
-                size_t max_audio_samples = ctx->model->config.sample_rate * 30;  /* 30 sec max */
-                float * audio_buf = (float *)malloc(max_audio_samples * sizeof(float));
-                if (audio_buf) {
-                    int n_samples = 0;
-                    st = vcpm_gen_decode(gen_state, latent_buffer, n_patches,
-                                          audio_buf, (int)max_audio_samples, &n_samples);
-                    if (st == VCPM_OK && n_samples > 0) {
-                        out_audio->samples     = audio_buf;
-                        out_audio->sample_rate = ctx->model->config.sample_rate;
-                        out_audio->n_channels  = 1;
-                        out_audio->n_samples   = (size_t)n_samples;
-                        free(latent_buffer);
-                        vcpm_gen_free(gen_state);
-                        return VCPM_OK;
-                    }
-                    free(audio_buf);
-                }
-            }
-            free(latent_buffer);
-        }
-        vcpm_gen_free(gen_state);
+    if (!vcpm_generation_weights_ready(ctx)) {
+        return VCPM_ERR_MODEL_FORMAT;
     }
 
-    /* ---- Fallback: return a short dummy audio ---- */
-    size_t dummy_samples = ctx->model->config.sample_rate * 1;
-    out_audio->samples = (float *)calloc(dummy_samples, sizeof(float));
-    if (!out_audio->samples) {
+    /* ---- Full model inference pipeline ---- */
+    vcpm_generate_state * gen_state = vcpm_gen_init(ctx->model, 0);
+    if (!gen_state) {
+        vcpm_set_error(ctx, "failed to initialize generation state");
+        return VCPM_ERR_BACKEND;
+    }
+
+    int max_patches = params->max_len > 0 ? params->max_len : 4096;
+    int latent_dim = ctx->model->config.feat_dim > 0 ? ctx->model->config.feat_dim : 64;
+    float * latent_buffer = (float *)malloc((size_t)max_patches * (size_t)latent_dim * sizeof(float));
+    if (!latent_buffer) {
+        vcpm_gen_free(gen_state);
         vcpm_set_error(ctx, "out of memory");
         return VCPM_ERR_OOM;
     }
 
-    for (size_t i = 0; i < dummy_samples; i++) {
-        out_audio->samples[i] = 0.1f * sinf(2.0f * (float)M_PI * 440.0f * i / ctx->model->config.sample_rate);
+    int n_patches = 0;
+    vcpm_status st = vcpm_gen_run(gen_state,
+                                  seq.token_ids,
+                                  seq.text_mask,
+                                  seq.audio_mask,
+                                  seq.length,
+                                  latent_buffer,
+                                  &n_patches,
+                                  max_patches,
+                                  params);
+    if (st != VCPM_OK) {
+        free(latent_buffer);
+        vcpm_gen_free(gen_state);
+        vcpm_set_error(ctx, "generation failed before latent decode");
+        return st;
+    }
+    if (n_patches <= 0) {
+        free(latent_buffer);
+        vcpm_gen_free(gen_state);
+        vcpm_set_error(ctx, "generation produced no latent patches");
+        return VCPM_ERR_MODEL_FORMAT;
     }
 
-    out_audio->sample_rate = ctx->model->config.sample_rate;
-    out_audio->n_channels  = 1;
-    out_audio->n_samples   = dummy_samples;
+    int output_sample_rate = ctx->model->config.vae_out_sample_rate > 0
+                           ? ctx->model->config.vae_out_sample_rate
+                           : ctx->model->config.sample_rate;
+    size_t max_audio_samples = (size_t)output_sample_rate * 30;  /* 30 sec max */
+    float * audio_buf = (float *)malloc(max_audio_samples * sizeof(float));
+    if (!audio_buf) {
+        free(latent_buffer);
+        vcpm_gen_free(gen_state);
+        vcpm_set_error(ctx, "out of memory");
+        return VCPM_ERR_OOM;
+    }
 
-    vcpm_set_error(ctx, "generation pipeline skeleton - real inference not implemented");
+    int n_samples = 0;
+    st = vcpm_gen_decode(gen_state, latent_buffer, n_patches,
+                         audio_buf, (int)max_audio_samples, &n_samples);
+    free(latent_buffer);
+    vcpm_gen_free(gen_state);
+
+    if (st != VCPM_OK || n_samples <= 0) {
+        free(audio_buf);
+        vcpm_set_error(ctx, st == VCPM_OK
+                            ? "latent decode produced no audio samples"
+                            : "latent decode failed");
+        return st == VCPM_OK ? VCPM_ERR_MODEL_FORMAT : st;
+    }
+
+    out_audio->samples     = audio_buf;
+    out_audio->sample_rate = output_sample_rate;
+    out_audio->n_channels  = 1;
+    out_audio->n_samples   = (size_t)n_samples;
     return VCPM_OK;
 }
 

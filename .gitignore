@@ -1,6 +1,7 @@
 # Build output
 build/
 cmake-build-*/
+.codebase-memory/
 *.obj
 *.exe
 *.lib
@@ -25,7 +26,11 @@ __pycache__/
 *.pyc
 *.egg-info/
 
+# CMake generated
+${PROJECT_ROOT}/
+
 # Model files
+models/
 *.gguf
 model_download/
 

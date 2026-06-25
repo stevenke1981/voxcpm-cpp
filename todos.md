@@ -14,8 +14,8 @@
 - [x] Add `CMakeLists.txt` with options:
   - [x] `VCPM_BUILD_TESTS`
   - [x] `VCPM_GGML_DIR`
-  - [ ] `VCPM_ENABLE_CUDA`
-  - [ ] `VCPM_ENABLE_METAL`
+  - [x] `VCPM_ENABLE_CUDA`
+  - [x] `VCPM_ENABLE_METAL`
 - [x] Add `include/voxcpm.h`.
 - [x] Add `src/main.c` command dispatcher.
 - [x] Add `src/voxcpm.c` context lifecycle.
@@ -120,8 +120,11 @@
 - [ ] Implement max/min length handling.
 - [ ] Implement context trimming for prompt audio.
 - [ ] Implement `vcpm_generate()` full pipeline.
+  - [x] Reject incomplete/mock GGUFs before graph execution instead of returning dummy audio or crashing.
 - [ ] Implement `vcpm_generate_stream()`.
 - [ ] Implement `tts`, `design`, `clone`, `batch` CLI.
+  - [x] `tts` CLI is wired to `vcpm_generate()`.
+  - [x] `clone` CLI has a consent gate and explicit not-implemented failure.
 
 ## 12. Performance
 
@@ -135,8 +138,8 @@
 
 ## 13. Quality and Safety
 
-- [ ] Add AI-generated content warning in CLI help.
-- [ ] Require `--i-have-consent` for clone CLI.
+- [x] Add AI-generated content warning in CLI help.
+- [x] Require `--i-have-consent` for clone CLI.
 - [ ] Add optional sidecar JSON metadata.
 - [ ] Add long-input guard.
 - [ ] Add badcase/retry guard if needed.
@@ -149,4 +152,4 @@
 - [ ] Windows MinGW.
 - [ ] macOS clang.
 - [x] Unit tests without model weights.
-- [ ] Optional model fixture tests behind env var.
+- [x] Optional model fixture tests behind env var.
