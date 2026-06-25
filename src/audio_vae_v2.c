@@ -232,6 +232,53 @@ static struct ggml_tensor * upconv_transpose1d(struct ggml_context * ctx,
     return out;
 }
 
+/* ---- Helper: convert alpha tensor to F32 2D (broadcast-safe) ---- */
+static struct ggml_tensor * alpha_to_f32(struct ggml_context * ctx,
+                                           struct ggml_tensor * alpha) {
+    if (!alpha) return NULL;
+    int n_alpha = (int)ggml_nelements(alpha);
+    struct ggml_tensor * a_f32 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
+                                                      alpha->ne[0], alpha->ne[1]);
+    if (!a_f32 || !a_f32->data) return NULL;
+    float * dst = (float *)a_f32->data;
+    if (alpha->type == GGML_TYPE_F16) {
+        ggml_fp16_t * src = (ggml_fp16_t *)alpha->data;
+        for (int i = 0; i < n_alpha; i++)
+            dst[i] = ggml_fp16_to_fp32(src[i]);
+    } else {
+        memcpy(dst, alpha->data, (size_t)n_alpha * sizeof(float));
+    }
+    return a_f32;
+}
+
+/* ---- Snake activation: snake(x, a) = x + sin²(a*x) / a
+ *
+ * The alpha parameter (a) is a per-channel learned parameter.
+ * Unlike ReLU, Snake preserves the magnitude of both positive and
+ * negative values while adding a non-linear correction.
+ * ---- */
+static struct ggml_tensor * snake_activation(struct ggml_context * ctx,
+                                               struct ggml_tensor * h,
+                                               struct ggml_tensor * alpha_f32) {
+    if (!h || !alpha_f32) return h;
+
+    /* snake(x, a) = x + sin²(a*x) / a
+     *
+     * Implementation using elementary ggml ops:
+     *   t = a * x             (ggml_mul)
+     *   st = sin(t)           (ggml_sin)
+     *   st2 = st * st         (ggml_sqr)
+     *   corr = st2 / a        (ggml_div)
+     *   result = x + corr     (ggml_add)
+     *
+     * alpha_f32 shape: [1, C] or [C_elements] — broadcasts across h
+     */
+    struct ggml_tensor * t  = ggml_mul(ctx, h, alpha_f32);
+    struct ggml_tensor * st = ggml_sin(ctx, t);
+    struct ggml_tensor * correction = ggml_div(ctx, ggml_sqr(ctx, st), alpha_f32);
+    return ggml_add(ctx, h, correction);
+}
+
 /* ---- Residual unit (simplified, no depthwise) ---- */
 
 static struct ggml_tensor * residual_unit(struct ggml_context * ctx,
@@ -239,22 +286,33 @@ static struct ggml_tensor * residual_unit(struct ggml_context * ctx,
                                             struct ggml_tensor * h,
                                             struct ggml_tensor * conv1_w,
                                             struct ggml_tensor * conv1_b,
+                                            struct ggml_tensor * alpha0_t,
                                             struct ggml_tensor * conv2_w,
                                             struct ggml_tensor * conv2_b,
+                                            struct ggml_tensor * alpha2_t,
                                             const struct vcpm_model * model) {
     struct ggml_tensor * residual = h;
 
+    /* Convert alpha tensors to F32 if present */
+    struct ggml_tensor * a0 = alpha_to_f32(ctx, alpha0_t);
+    struct ggml_tensor * a2 = alpha_to_f32(ctx, alpha2_t);
+
+    /* Snake activation with alpha0: pre-depthwise nonlinearity */
+    if (a0) h = snake_activation(ctx, h, a0);
+
     /* Conv1: kernel=7, padding=3 (same length output) */
-    struct ggml_tensor * c1 = conv1d_layer(ctx, graph, conv1_w, conv1_b, h,
-                                            1, 3, 1, model);
-    if (c1) c1 = ggml_relu(ctx, c1);
+    h = conv1d_layer(ctx, graph, conv1_w, conv1_b, h, 1, 3, 1, model);
+    if (!h) return residual;
+
+    /* Snake activation with alpha2: post-depthwise nonlinearity */
+    if (a2) h = snake_activation(ctx, h, a2);
 
     /* Conv2: kernel=1, padding=0 */
-    struct ggml_tensor * c2 = conv1d_layer(ctx, graph, conv2_w, conv2_b, c1,
+    struct ggml_tensor * c2 = conv1d_layer(ctx, graph, conv2_w, conv2_b, h,
                                             1, 0, 1, model);
 
     /* Skip connection */
-    if (!c2) return h;
+    if (!c2) return residual;
     struct ggml_tensor * out = ggml_add(ctx, residual, c2);
     ggml_set_name(out, "vae_res_unit");
     return out;
@@ -270,6 +328,11 @@ static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
                                            int stride) {
     char name[256];
 
+    /* block.0.alpha — Snake activation parameter (pre-upconv) */
+    snprintf(name, sizeof(name), "audio_vae.decoder.model.%d.block.0.alpha",
+             block_idx);
+    struct ggml_tensor * pre_alpha = tensor_by_name(ctx, model, name);
+
     /* block.1.weight.weight — upsampling conv_transpose (k=2*stride, in→out/2) */
     snprintf(name, sizeof(name), "audio_vae.decoder.model.%d.block.1.weight.weight",
              block_idx);
@@ -282,13 +345,20 @@ static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
     snprintf(name, sizeof(name), "audio_vae.decoder.model.%d.block.1.bias", block_idx);
     struct ggml_tensor * up_b = tensor_by_name(ctx, model, name);
 
+    /* Snake activation with block.0.alpha (pre-upconv, on 2048-ch signal) */
+    {
+        struct ggml_tensor * a_f32 = alpha_to_f32(ctx, pre_alpha);
+        if (a_f32) {
+            h = snake_activation(ctx, h, a_f32);
+        }
+    }
+
     /* Transposed conv upsampling */
     h = upconv_transpose1d(ctx, graph, up_w, up_b, h, stride);
     if (!h) {
         fprintf(stderr, "VAE V2: upconv failed in block.%d\n", block_idx);
         return NULL;
     }
-    h = ggml_relu(ctx, h);
     ggml_set_name(h, "vae_upconv");
 
     int out_ch = (int)up_w->ne[1];  /* out_channels */
@@ -296,6 +366,12 @@ static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
     /* 3 residual units: block.k.block.{1,3} for k=2,3,4 */
     for (int ri = 0; ri < 3; ri++) {
         int res_idx = 2 + ri;  /* block.2, block.3, block.4 */
+
+        /* block.k.block.0.alpha — pre-depthwise scale */
+        snprintf(name, sizeof(name),
+                 "audio_vae.decoder.model.%d.block.%d.block.0.alpha",
+                 block_idx, res_idx);
+        struct ggml_tensor * ra0 = tensor_by_name(ctx, model, name);
 
         /* block.k.block.1.weight.weight (depthwise conv1d, k=7) */
         snprintf(name, sizeof(name),
@@ -309,6 +385,12 @@ static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
                  block_idx, res_idx);
         struct ggml_tensor * r1_b = tensor_by_name(ctx, model, name);
 
+        /* block.k.block.2.alpha — post-ReLU / pre-pointwise scale */
+        snprintf(name, sizeof(name),
+                 "audio_vae.decoder.model.%d.block.%d.block.2.alpha",
+                 block_idx, res_idx);
+        struct ggml_tensor * ra2 = tensor_by_name(ctx, model, name);
+
         /* block.k.block.3.weight.weight (pointwise conv1d, k=1) */
         snprintf(name, sizeof(name),
                  "audio_vae.decoder.model.%d.block.%d.block.3.weight.weight",
@@ -321,7 +403,7 @@ static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
                  block_idx, res_idx);
         struct ggml_tensor * r2_b = tensor_by_name(ctx, model, name);
 
-        h = residual_unit(ctx, graph, h, r1_w, r1_b, r2_w, r2_b, model);
+        h = residual_unit(ctx, graph, h, r1_w, r1_b, ra0, r2_w, r2_b, ra2, model);
         ggml_set_name(h, "vae_res");
 
         (void)out_ch;
@@ -367,11 +449,10 @@ struct ggml_tensor * vcpm_vae_v2_decode(
     struct ggml_tensor * b0 = tensor_by_name(ctx, model, name);
 
     if (w0) {
-        /* model.0 weight: [7, 1, 64] depthwise, Input [N, 64], Output [OW, 64] */
+        /* model.0 weight: [7, 1, 64] depthwise, Input [N, 64], Output [OW, 64]
+         * No activation — original model uses only linear projection at this stage. */
         h = conv1d_layer(ctx, graph, w0, b0, h, 1, 3, 1, model);
         g_dbg_tensors[g_dbg_count++] = h;  /* [0] = model.0 conv output */
-        if (h) h = ggml_relu(ctx, h);
-        g_dbg_tensors[g_dbg_count++] = h;  /* [1] = model.0 relu output */
         ggml_set_name(h, "vae_model0");
     }
 
@@ -382,11 +463,10 @@ struct ggml_tensor * vcpm_vae_v2_decode(
     struct ggml_tensor * b1 = tensor_by_name(ctx, model, name);
 
     if (w1) {
-        /* model.1: regular conv, Input [N, 64], Output [N, 2048] */
+        /* model.1: regular conv, Input [N, 64], Output [N, 2048]
+         * No activation — original model uses only linear projection at this stage. */
         h = conv1d_layer(ctx, graph, w1, b1, h, 1, 0, 1, model);
         g_dbg_tensors[g_dbg_count++] = h;  /* [2] = model.1 conv output */
-        if (h) h = ggml_relu(ctx, h);
-        g_dbg_tensors[g_dbg_count++] = h;  /* [3] = model.1 relu output */
         ggml_set_name(h, "vae_model1");
     } else {
         fprintf(stderr, "VAE V2: missing model.1 weight\n");
@@ -407,29 +487,12 @@ struct ggml_tensor * vcpm_vae_v2_decode(
         g_dbg_tensors[g_dbg_count++] = h;  /* [4..9] = decoder block outputs */
     }
 
-    /* ---- model.8: element-wise alpha + ReLU ---- */
+    /* ---- model.8: Snake activation (no preceding conv) ---- */
     snprintf(name, sizeof(name), "audio_vae.decoder.model.8.alpha");
     struct ggml_tensor * alpha = tensor_by_name(ctx, model, name);
-    if (h) {
-        h = ggml_relu(ctx, h);
-        /* Apply per-channel alpha scaling: h = h * alpha
-         * alpha shape: [1, 32] (ne[0]=1, ne[1]=32)
-         * h shape: [N, 32] (ne[0]=N, ne[1]=32)
-         * ggml_mul broadcasts correctly */
-        if (alpha) {
-            /* Convert F16 alpha to F32 for safe multiplication */
-            int n_alpha = (int)ggml_nelements(alpha);
-            struct ggml_tensor * alpha_f32 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, alpha->ne[1]);
-            float * alpha_data = (float *)alpha_f32->data;
-            if (alpha->type == GGML_TYPE_F16) {
-                ggml_fp16_t * src = (ggml_fp16_t *)alpha->data;
-                for (int i = 0; i < n_alpha; i++)
-                    alpha_data[i] = ggml_fp16_to_fp32(src[i]);
-            } else {
-                memcpy(alpha_data, alpha->data, n_alpha * sizeof(float));
-            }
-            h = ggml_mul(ctx, h, alpha_f32);
-        }
+    if (h && alpha) {
+        struct ggml_tensor * a_f32 = alpha_to_f32(ctx, alpha);
+        h = snake_activation(ctx, h, a_f32);
     }
     g_dbg_tensors[g_dbg_count++] = h;  /* [10] = model.8 output */
     ggml_set_name(h, "vae_model8");

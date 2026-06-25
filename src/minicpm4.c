@@ -194,19 +194,17 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
         vcpm_rope(ctx, graph, q_reshaped, k_reshaped, pos, (int32_t)n_tokens, head_dim, rope_theta);
     }
 
-    /* Update KV cache: copy k and v into cache at position pos */
-    /* K_cache shape: [head_dim, n_kv_heads, max_seq_len] */
-    /* We need to copy k_reshaped into the correct position */
-    /* Use ggml_view_3d to get a view of the cache at position pos, then ggml_cpy */
-
-    /* Write to cache at position 0 (overwrite everything, no incremental caching for MVP).
-     * This is simpler and avoids the complexity of managing incremental KV builds. */
+    /* Update KV cache: copy k and v into cache at the current end position.
+     * K_cache shape: [head_dim, n_kv_heads, max_seq_len]
+     * We write at offset *n_cache_used and increment by n_tokens for
+     * incremental KV cache that accumulates across multiple calls. */
+    int32_t write_pos = *n_cache_used;  /* current cache end */
     int64_t ne_kv = n_tokens;  /* write all tokens into cache */
     struct ggml_tensor * k_cache_view = ggml_view_3d(ctx, k_cache,
                                                        head_dim, n_kv_heads, ne_kv,
                                                        k_cache->nb[1],
                                                        k_cache->nb[2],
-                                                       0);
+                                                       write_pos * k_cache->nb[2]);
     ggml_set_name(k_cache_view, "k_cache_view");
     struct ggml_tensor * k_copied = ggml_cpy(ctx, k_reshaped, k_cache_view);
     GGML_UNUSED(k_copied);
@@ -215,14 +213,14 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
                                                        head_dim, n_kv_heads, ne_kv,
                                                        v_cache->nb[1],
                                                        v_cache->nb[2],
-                                                       0);
+                                                       write_pos * v_cache->nb[2]);
     ggml_set_name(v_cache_view, "v_cache_view");
     struct ggml_tensor * v_copied = ggml_cpy(ctx, v_reshaped, v_cache_view);
     GGML_UNUSED(v_copied);
 
-    /* Cache always contains exactly n_tokens tokens (no incremental build) */
-    int32_t n_used = (int32_t)n_tokens;
-    *n_cache_used = n_used;
+    /* Cache accumulates: increment by n_tokens */
+    *n_cache_used = write_pos + (int32_t)n_tokens;
+    int32_t n_used = *n_cache_used;  /* total tokens in cache */
 
     /* Build full K, V from cache for attention computation */
     /* K_full: [head_dim, n_kv_heads, n_used] */
@@ -283,43 +281,45 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
     /* For n_tokens>1 (prompt eval), process one token at a time by calling
      * ourselves recursively. This avoids complex 3D batched attention. */
     if (n_tokens > 1) {
+        fprintf(stderr, "DEBUG attn: n_tokens=%lld n_heads=%d n_kv_heads=%d head_dim=%d pos=%d\n",
+                (long long)n_tokens, n_heads, n_kv_heads, head_dim, pos);
         struct ggml_tensor * out_tokens = NULL;
         for (int64_t ti = 0; ti < n_tokens; ti++) {
             /* Slice one token from Q: [head_dim, n_heads, 1].
              * Use nb[2] stride (3rd dimension) for the offset since
              * q_reshaped layout is [head_dim, n_heads, n_tokens]. */
             struct ggml_tensor * q_t = ggml_view_3d(ctx, q_reshaped,
-                                                      head_dim, n_heads, 1,
-                                                      q_reshaped->nb[1],
-                                                      q_reshaped->nb[2],
-                                                      ti * q_reshaped->nb[2]);
+                                                       head_dim, n_heads, 1,
+                                                       q_reshaped->nb[1],
+                                                       q_reshaped->nb[2],
+                                                       ti * q_reshaped->nb[2]);
             ggml_set_name(q_t, "q_t");
 
-            /* View: K and V from cache (same for all tokens). Since we
-             * write entire cache starting at offset 0, full context is
-             * available from slots 0..n_used-1 (= 0..n_tokens-1). */
+            /* View only the first ti+1 tokens from KV cache for causal masking.
+             * Cache is written at positions 0..n_tokens-1, so viewing the first
+             * ti+1 entries naturally enforces causality without needing diag_mask_inf
+             * (which was broken on the flattened [n_kv_heads*n_tokens, n_heads] layout). */
             struct ggml_tensor * k_full_t = ggml_view_3d(ctx, k_cache,
-                                                          head_dim, n_kv_heads, n_tokens,
-                                                          k_cache->nb[1], k_cache->nb[2], 0);
+                                                           head_dim, n_kv_heads, ti + 1,
+                                                           k_cache->nb[1], k_cache->nb[2], 0);
             struct ggml_tensor * v_full_t = ggml_view_3d(ctx, v_cache,
-                                                          head_dim, n_kv_heads, n_tokens,
-                                                          v_cache->nb[1], v_cache->nb[2], 0);
+                                                           head_dim, n_kv_heads, ti + 1,
+                                                           v_cache->nb[1], v_cache->nb[2], 0);
 
-            /* Full cache: K,V for all n_tokens tokens starting at offset 0.
-             * Causal mask handles which tokens each position can see. */
-            int64_t kv_ne[2] = { head_dim, n_kv_heads * n_tokens };
+            /* Flatten KV heads and token dimension for matmul.
+             * k2: [head_dim, n_kv_heads * (ti+1)]  →  scores: [n_kv_heads * (ti+1), n_heads]
+             * No causal mask needed: K,V only contain tokens 0..ti which are all valid. */
+            int64_t kv_ne[2] = { head_dim, n_kv_heads * (ti + 1) };
             struct ggml_tensor * k2 = ggml_reshape_2d(ctx, k_full_t, kv_ne[0], kv_ne[1]);
             struct ggml_tensor * v2 = ggml_reshape_2d(ctx, v_full_t, kv_ne[0], kv_ne[1]);
 
             int64_t q_ne[2] = { head_dim, n_heads };
             struct ggml_tensor * q2 = ggml_reshape_2d(ctx, q_t, q_ne[0], q_ne[1]);
 
-            /* scores: [n_kv_heads * n_tokens, n_heads] */
+            /* scores: [n_kv_heads * (ti+1), n_heads] */
             struct ggml_tensor * s = ggml_mul_mat(ctx, k2, q2);
             float scale = 1.0f / sqrtf((float)head_dim);
             s = ggml_scale(ctx, s, scale);
-            /* Causal mask: token ti attends to tokens 0..ti */
-            s = ggml_diag_mask_inf(ctx, s, ti + 1);
             s = ggml_soft_max_ext(ctx, s, NULL, 1.0f, 0.0f);
 
             /* V @ softmax(scores) */

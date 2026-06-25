@@ -102,10 +102,9 @@ int main(int argc, char ** argv) {
         int dbg_count = 0;
         vcpm_vae_v2_get_debug_tensors(&dbg, &dbg_count);
         const char * names[] = {
-            "model.0 conv", "model.0 relu",
-            "model.1 conv", "model.1 relu",
+            "model.0 conv", "model.1 conv",
             "block.2", "block.3", "block.4", "block.5", "block.6", "block.7",
-            "model.8 relu", "model.9 conv", "final tanh"
+            "model.8 snake", "model.9 conv", "final tanh"
         };
         for (int i = 0; i < dbg_count && i < 16; i++) {
             struct ggml_tensor * t = dbg[i];

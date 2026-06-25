@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <math.h>
 
 #ifndef M_PI
@@ -299,6 +300,14 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     /* Reset graph for new step (forward-only: no gradients needed) */
     ggml_graph_clear(graph);
 
+    /* DEBUG: show what tokens are at this position */
+    if (fill_pos >= 0 && fill_pos < seq_len) {
+        fprintf(stderr, "DEBUG step: seq_len=%d fill_pos=%d token=%d text_mask=%d audio_mask=%d\n",
+                seq_len, fill_pos, token_ids[fill_pos],
+                text_mask ? text_mask[fill_pos] : -1,
+                audio_mask ? audio_mask[fill_pos] : -1);
+    }
+
     /* ---- Step 1: Base LM forward ---- */
 
     /* Build MiniCPM4 config for base_lm */
@@ -350,11 +359,14 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     if (!hidden) return VCPM_ERR_BACKEND;
     ggml_set_name(hidden, "base_embed");
 
-    /* Forward pass through base_lm layers + norm */
+    /* Forward pass through base_lm layers + norm
+     * CRITICAL: use pos=0 for absolute positional encoding [0..seq_len-1].
+     * Using fill_pos would shift ALL positions and make hidden states at
+     * every audio position identical (since only relative positions matter). */
     struct ggml_tensor * base_hidden = vcpm_minicpm4_forward(ctx, graph,
                                                                hidden, &base_cfg,
                                                                &base_w, &base_cache,
-                                                               fill_pos);
+                                                               0);
     if (!base_hidden) return VCPM_ERR_BACKEND;
 
     /* ---- Step 2: RALM forward (if configured) ---- */
@@ -388,14 +400,25 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
 
         ralm_hidden = vcpm_minicpm4_forward(ctx, graph, hidden,
                                              &ralm_cfg, &ralm_w, &ralm_cache,
-                                             fill_pos);
+                                             0);
     }
 
     /* ---- Step 3: Project to DiT conditioning ---- */
     int hd = state->hidden_size;
+    /* DEBUG: check if different positions have different hidden states */
+    {
+        float *bh = (float *)base_hidden->data;
+        fprintf(stderr, "DEBUG base_hidden[%d][0..2] = %.6f %.6f %.6f\n",
+                fill_pos, (double)bh[fill_pos*hd+0], (double)bh[fill_pos*hd+1],
+                (double)bh[fill_pos*hd+2]);
+        fprintf(stderr, "DEBUG base_hidden[%d][0..2] = %.6f %.6f %.6f\n",
+                0, (double)bh[0], (double)bh[1], (double)bh[2]);
+        fprintf(stderr, "DEBUG base_hidden[%d][0..2] = %.6f %.6f %.6f\n",
+                1, (double)bh[1*hd+0], (double)bh[1*hd+1], (double)bh[1*hd+2]);
+    }
     struct ggml_tensor * lm_feat = ggml_view_2d(ctx, base_hidden, hd, 1,
-                                                  base_hidden->nb[1],
-                                                  fill_pos * hd * sizeof(float));
+                                                   base_hidden->nb[1],
+                                                   fill_pos * hd * sizeof(float));
     ggml_set_name(lm_feat, "lm_feat");
 
     /* Project to DiT dim */
@@ -429,6 +452,24 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     if (cond) ggml_build_forward_expand(graph, cond);
     ggml_graph_compute_with_ctx(ctx, graph, 1);
 
+    /* DEBUG: check if different positions have different hidden states */
+    if (base_hidden && base_hidden->data) {
+        float *bh = (float *)base_hidden->data;
+        fprintf(stderr, "DEBUG base_hidden[%d][0..2] = %.6f %.6f %.6f\n",
+                fill_pos, (double)bh[fill_pos*hd+0], (double)bh[fill_pos*hd+1],
+                (double)bh[fill_pos*hd+2]);
+        fprintf(stderr, "DEBUG base_hidden[0][0..2] = %.6f %.6f %.6f\n",
+                (double)bh[0], (double)bh[1], (double)bh[2]);
+        fprintf(stderr, "DEBUG base_hidden[1][0..2] = %.6f %.6f %.6f\n",
+                (double)bh[1*hd+0], (double)bh[1*hd+1], (double)bh[1*hd+2]);
+        /* Print ALL positions to check within-pass variation */
+        for (int pi = 0; pi < seq_len && pi < 8; pi++) {
+            fprintf(stderr, "DEBUG  base_hidden_all[%d][0..3] = %.6f %.6f %.6f %.6f\n",
+                    pi, (double)bh[pi*hd+0], (double)bh[pi*hd+1],
+                    (double)bh[pi*hd+2], (double)bh[pi*hd+3]);
+        }
+    }
+
     /* Extract cond data to persistent buffer (DiT forward will be called
      * multiple times, so we need cond data outside the graph) */
     float * cond_raw = NULL;
@@ -439,15 +480,55 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         if (cond_raw) memcpy(cond_raw, cond->data, (size_t)cond_len * sizeof(float));
     }
 
-    /* Initialize noise: x_1 ~ N(0, I) */
+    /* DEBUG: show conditioning for this position */
+    {
+        double csum = 0.0, csumsq = 0.0;
+        float cmin = cond_raw ? cond_raw[0] : 0, cmax = cond_raw ? cond_raw[0] : 0;
+        for (int i = 0; i < cond_len && i < 5000; i++) {
+            csum += cond_raw[i]; csumsq += (double)cond_raw[i] * cond_raw[i];
+            if (cond_raw[i] < cmin) cmin = cond_raw[i];
+            if (cond_raw[i] > cmax) cmax = cond_raw[i];
+        }
+        fprintf(stderr, "DEBUG fill_pos=%d cond=%d min=%.4f max=%.4f mean=%.4f rms=%.4f\n",
+                fill_pos, cond_len,
+                (double)cmin, (double)cmax,
+                (double)(csum / (cond_len > 0 ? cond_len : 1)),
+                (double)(cond_len > 0 ? sqrt(csumsq / cond_len) : 0.0));
+        if (cond_raw) {
+            fprintf(stderr, "DEBUG cond[0..4]: %.6f %.6f %.6f %.6f %.6f\n",
+                    (double)cond_raw[0], (double)cond_raw[1], (double)cond_raw[2],
+                    (double)cond_raw[3], (double)cond_raw[4]);
+        }
+    }
+
+    /* Initialize noise: x_1 ~ N(0, I) with proper PRNG
+     *
+     * Uses a splitmix64-style deterministic RNG seeded from latent_dim + fill_pos
+     * to produce independent uniform(0,1) values per dimension,
+     * then Box-Muller to convert to normal. */
     float * noise = (float *)malloc((size_t)latent_dim * sizeof(float));
     float * x_data = (float *)malloc((size_t)latent_dim * sizeof(float));
     if (noise && x_data) {
+        uint64_t rng_state = (uint64_t)(latent_dim + fill_pos + 1) ^ 0x9E3779B97F4A7C15ULL;
         for (int i = 0; i < latent_dim; i++) {
-            float u1 = ((float)(i * 12345 + 67) / 100000.0f);
-            float u2 = ((float)(i * 54321 + 89) / 100000.0f);
+            /* SplitMix64 step */
+            rng_state += 0x9E3779B97F4A7C15ULL;
+            uint64_t z = rng_state;
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+            z = z ^ (z >> 31);
+            float u1 = (float)(z >> 11) * (1.0f / 9007199254740992.0f);
             u1 = fmaxf(1e-6f, fminf(u1, 1.0f - 1e-6f));
+
+            /* SplitMix64 step for u2 */
+            rng_state += 0x9E3779B97F4A7C15ULL;
+            z = rng_state;
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+            z = z ^ (z >> 31);
+            float u2 = (float)(z >> 11) * (1.0f / 9007199254740992.0f);
             u2 = fmaxf(1e-6f, fminf(u2, 1.0f - 1e-6f));
+
             noise[i] = sqrtf(-2.0f * logf(u1)) * cosf(2.0f * (float)M_PI * u2);
         }
     }
