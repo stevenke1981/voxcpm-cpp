@@ -49,6 +49,10 @@ int main(int argc, char ** argv) {
                                    cfg->vae_decoder_rates,
                                    cfg->vae_sample_rate,
                                    cfg->vae_out_sample_rate);
+    /* Dump model.0 expanded weight and padded input */
+    /* We need to call depthwise_conv1d manually - but it's static.
+     * Instead, we modify depthwise_conv1d to store intermediates.
+     * For now, skip this and use external verification. */
     printf("VAE config: latent_dim=%d decoder_dim=%d rates=[%d %d %d %d %d %d]\n",
            vaecfg.latent_dim, vaecfg.decoder_dim,
            vaecfg.decoder_rates[0], vaecfg.decoder_rates[1],
@@ -80,6 +84,48 @@ int main(int argc, char ** argv) {
     for (int i = 0; i < 64 && i < n_patches * vae_latent_dim; i++) {
         printf("  [%d] = %.6f\n", i, ld[i]);
     }
+    /* Dump model.0 weight for Python comparison */
+    {
+        struct ggml_tensor * w0 = vcpm_model_get_tensor(model,
+            "audio_vae.decoder.model.0.weight.weight");
+        if (w0 && w0->data) {
+            FILE * fp = fopen("E:\\voxcpm-cpp\\model0_weight.bin", "wb");
+            if (fp) {
+                fwrite(w0->data, (size_t)ggml_nbytes(w0), 1, fp);
+                fclose(fp);
+                printf("Dumped model0_weight.bin: ne=[%lld,%lld,%lld] n=%lld type=%d\n",
+                       (long long)w0->ne[0], (long long)w0->ne[1], (long long)w0->ne[2],
+                       (long long)ggml_nelements(w0), w0->type);
+            }
+        }
+    }
+    /* Dump model.0 bias for Python comparison */
+    {
+        struct ggml_tensor * b0 = vcpm_model_get_tensor(model,
+            "audio_vae.decoder.model.0.bias");
+        if (b0 && b0->data) {
+            FILE * fp = fopen("E:\\voxcpm-cpp\\model0_bias.bin", "wb");
+            if (fp) {
+                fwrite(b0->data, (size_t)ggml_nbytes(b0), 1, fp);
+                fclose(fp);
+                printf("Dumped model0_bias.bin: ne=[%lld] n=%lld type=%d\n",
+                       (long long)b0->ne[0], (long long)ggml_nelements(b0), b0->type);
+            }
+        }
+    }
+
+    /* Dump test input for Python comparison */
+    {
+        FILE * fp = fopen("E:\\voxcpm-cpp\\test_input.bin", "wb");
+        if (fp) {
+            int64_t N = (int64_t)n_patches, C = (int64_t)vae_latent_dim;
+            fwrite(&N, sizeof(N), 1, fp);
+            fwrite(&C, sizeof(C), 1, fp);
+            fwrite(ld, (size_t)(n_patches * vae_latent_dim) * sizeof(float), 1, fp);
+            fclose(fp);
+            { double _sumsq = 0; int _nn = (int)(N * C); for (int _i = 0; _i < _nn; _i++) { _sumsq += (double)ld[_i] * ld[_i]; } printf("Dumped test_input.bin: [%lld, %lld] rms=%.6f\n", (long long)N, (long long)C, sqrt(_sumsq / _nn)); }
+        }
+    }
 
     /* Build VAE decoder graph */
     struct ggml_tensor * audio = vcpm_vae_v2_decode(ctx, graph, latent,
@@ -109,7 +155,7 @@ int main(int argc, char ** argv) {
         for (int i = 0; i < dbg_count && i < 16; i++) {
             struct ggml_tensor * t = dbg[i];
             if (!t || !t->data) {
-                printf("  [%2d] %s: NULL\n", i, i < 13 ? names[i] : "?");
+                printf("  [%2d] %s: NULL\n", i, i < 11 ? names[i] : "?");
                 continue;
             }
             int n = (int)ggml_nelements(t);
@@ -125,14 +171,78 @@ int main(int argc, char ** argv) {
                 if (d[j] != 0.0f) nnz++;
             }
             printf("  [%2d] %-15s: ne=[%lld,%lld,%lld,%lld] n=%d nnz=%d min=%.6f max=%.6f mean=%.6f rms=%.6f\n",
-                   i, i < 13 ? names[i] : "?",
+                   i, i < 11 ? names[i] : "?",
                    (long long)t->ne[0], (long long)t->ne[1],
                    (long long)t->ne[2], (long long)t->ne[3],
                    n, nnz, minv, maxv, sum / count, sqrt(sumsq / count));
         }
+        /* Print block.2 upconv using dedicated getter */
+        {
+            struct ggml_tensor * upconv = vcpm_vae_v2_get_upconv_b2();
+            if (upconv && upconv->data) {
+                int n = (int)ggml_nelements(upconv);
+                float * d = (float *)upconv->data;
+                double sum = 0, sumsq = 0;
+                float minv = d[0], maxv = d[0];
+                int count = n < 100000 ? n : 100000;
+                for (int j = 0; j < count; j++) {
+                    sum += d[j]; sumsq += (double)d[j] * d[j];
+                    if (d[j] < minv) minv = d[j];
+                    if (d[j] > maxv) maxv = d[j];
+                }
+            printf("  [up] block.2 upconv: ne=[%lld,%lld,%lld,%lld] n=%d min=%.6f max=%.6f mean=%.6f rms=%.6f\n",
+                   (long long)upconv->ne[0], (long long)upconv->ne[1],
+                   (long long)upconv->ne[2], (long long)upconv->ne[3],
+                   n, minv, maxv, sum / count, sqrt(sumsq / count));
+        }
     }
 
-    /* Print model.9 weight info */
+    /* Print persistent snapshots (immune to buffer reuse) */
+    {
+        int snap_count = vcpm_vae_v2_get_snapshot_count();
+        printf("\n=== Persistent snapshots (ggml_cpy copies) ===\n");
+        for (int i = 0; i < snap_count; i++) {
+            struct ggml_tensor * t = vcpm_vae_v2_get_snapshot(i);
+            if (!t || !t->data) continue;
+            int n = (int)ggml_nelements(t);
+            float * d = (float *)t->data;
+            double sum = 0, sumsq = 0;
+            float minv = d[0], maxv = d[0];
+            int count = n < 100000 ? n : 100000;
+            for (int j = 0; j < count; j++) {
+                sum += d[j]; sumsq += (double)d[j] * d[j];
+                if (d[j] < minv) minv = d[j];
+                if (d[j] > maxv) maxv = d[j];
+            }
+            printf("  [snap %2d] ne=[%lld,%lld] n=%d min=%.6f max=%.6f mean=%.6f rms=%.6f\n",
+                   i, (long long)t->ne[0], (long long)t->ne[1],
+                   n, minv, maxv, sum / count, sqrt(sumsq / count));
+        }
+        /* Dump all snapshots as files for Python comparison */
+        for (int i = 0; i < snap_count; i++) {
+            struct ggml_tensor * t = vcpm_vae_v2_get_snapshot(i);
+            if (!t || !t->data) continue;
+            char fname[64];
+            sprintf(fname, "E:\\voxcpm-cpp\\snap_%02d.bin", i);
+            FILE * fp = fopen(fname, "wb");
+            if (fp) {
+                int64_t N = t->ne[0], C = t->ne[1];
+                fwrite(&N, sizeof(N), 1, fp);
+                fwrite(&C, sizeof(C), 1, fp);
+                fwrite(t->data, (size_t)ggml_nbytes(t), 1, fp);
+                fclose(fp);
+                int nn = (int)ggml_nelements(t);
+                float * dd = (float *)t->data;
+                double sumsq = 0;
+                for (int j = 0; j < nn; j++) sumsq += (double)dd[j] * dd[j];
+                printf("  Dumped snap_%02d.bin: [%lld,%lld] rms=%.6f\n",
+                       i, (long long)N, (long long)C, sqrt(sumsq/nn));
+            }
+        }
+    }
+    }
+
+    /* Print model.9 weight inspection */
     {
         struct ggml_tensor * w9 = vcpm_model_get_tensor(model,
             "audio_vae.decoder.model.9.weight.weight");
@@ -278,6 +388,49 @@ int main(int argc, char ** argv) {
                     }
                 }
                 free(w_f32);
+            }
+        }
+    }
+
+    /* Dump upconv input and output for Python comparison */
+    {
+        struct ggml_tensor ** dbg = NULL;
+        int dbg_count = 0;
+        vcpm_vae_v2_get_debug_tensors(&dbg, &dbg_count);
+        /* Save model.1 output (block.2 upconv input) */
+        if (dbg_count >= 2 && dbg[1] && dbg[1]->data) {
+            struct ggml_tensor * t = dbg[1];
+            FILE * fp = fopen("E:\\voxcpm-cpp\\upconv_input.bin", "wb");
+            if (fp) {
+                int64_t N = t->ne[0], C = t->ne[1];
+                fwrite(&N, sizeof(N), 1, fp);
+                fwrite(&C, sizeof(C), 1, fp);
+                fwrite(t->data, (size_t)ggml_nbytes(t), 1, fp);
+                fclose(fp);
+                int n = (int)ggml_nelements(t);
+                float * d = (float *)t->data;
+                double sumsq = 0;
+                for (int i = 0; i < n; i++) sumsq += (double)d[i] * d[i];
+                printf("Saved upconv_input.bin: [%lld,%lld] rms=%.6f\n",
+                       (long long)N, (long long)C, sqrt(sumsq/n));
+            }
+        }
+        /* Save upconv output */
+        struct ggml_tensor * up = vcpm_vae_v2_get_upconv_b2();
+        if (up && up->data) {
+            FILE * fp = fopen("E:\\voxcpm-cpp\\upconv_output.bin", "wb");
+            if (fp) {
+                int64_t N = up->ne[0], C = up->ne[1];
+                fwrite(&N, sizeof(N), 1, fp);
+                fwrite(&C, sizeof(C), 1, fp);
+                fwrite(up->data, (size_t)ggml_nbytes(up), 1, fp);
+                fclose(fp);
+                int n = (int)ggml_nelements(up);
+                float * d = (float *)up->data;
+                double sumsq = 0;
+                for (int i = 0; i < n; i++) sumsq += (double)d[i] * d[i];
+                printf("Saved upconv_output.bin: [%lld,%lld] rms=%.6f\n",
+                       (long long)N, (long long)C, sqrt(sumsq/n));
             }
         }
     }

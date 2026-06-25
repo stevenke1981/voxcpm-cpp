@@ -198,8 +198,7 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
     (void)model;
 
     /* ggml_conv_1d weight convention: ne[0]=K(kernel), ne[1]=IC, ne[2]=OC
-     * For depthwise: OC groups with IC=1 per group, so weight ne = [K, 1, OC]
-     * We expand to diagonal [K, OC, OC] so each OC reads from its matching IC. */
+     * For depthwise: OC groups with IC=1 per group, so weight ne = [K, 1, OC] */
     int K = (int)weight->ne[0];   /* kernel size */
     int C = (int)weight->ne[2];   /* output channels (= input channels for depthwise) */
     int left_pad = pad * 2;       /* causal: left-only padding */
@@ -213,86 +212,79 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
         return input;
     }
 
-    /* Pad input causally */
     int64_t N = input->ne[0];
     int64_t OC = input->ne[1];  /* same as C for depthwise */
-    struct ggml_tensor * padded = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
-                                                       N + left_pad, OC);
-    if (!padded || !padded->data) {
-        fprintf(stderr, "depthwise_conv1d: padded alloc failed (N=%lld, pad=%d, C=%d)\n",
-                (long long)N, left_pad, C);
+
+    /* Build padded input using only graph operations to avoid allocator
+     * memory-reuse corruption of manually allocated tensors.
+     *
+     * Strategy: use ggmls built-in ggml_conv_1d with symmetric padding
+     * and adjust. For causal (left-only) padding, we first prepend zeros
+     * via ggml_view_2d on a zero tensor, then concat with input.
+     *
+     * Approach: use ggml_im2col directly with manual padding handled at
+     * element level. We compute OW, then create the im2col manually by
+     * slicing windows from the correctly-offset positions.
+     *
+     * Simplest approach: use two separate graph ops:
+     * 1. Compute the conv output for output positions that only need the
+     *    original input (no padding needed if we use stride=1, dilate=1)
+     * 2. For causal depthwise with left_pad, we create a zero-filled prefix
+     *    tensor and concatenate via manually built im2col + matmul.
+     *
+     * Even simpler: just use ggml_new_tensor_2d but preserve its data by
+     * making it an explicit graph output with ggml_cpy.
+     */
+
+    /* Allocate padded tensor with EXTERNAL memory (malloc) so ggml
+     * allocator cannot overwrite it. The context still creates an
+     * unused tensor allocation, but we override the data pointer. */
+    size_t pad_nbytes = (size_t)(N + left_pad) * (size_t)OC * sizeof(float);
+    float * padded_data = (float *)malloc(pad_nbytes);
+    if (!padded_data) {
+        fprintf(stderr, "depthwise_conv1d: malloc failed for padded (%zu bytes)\n",
+                pad_nbytes);
         if (bias && bias->ne[0] == (int64_t)C) {
             struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
             return ggml_add(ctx, input, b2);
         }
         return input;
     }
+    struct ggml_tensor * padded = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
+                                                        N + left_pad, OC);
+    if (!padded) {
+        free(padded_data);
+        return input;
+    }
+    /* Override padded's data pointer with our malloc'd buffer */
+    padded->data = padded_data;
     size_t row_bytes = (size_t)N * sizeof(float);
-    float * pd = (float *)padded->data;
     float * id = (float *)input->data;
     for (int64_t c = 0; c < OC; c++) {
-        memcpy(pd + c * (N + left_pad) + left_pad, id + c * N, row_bytes);
+        memset(padded_data + c * (N + left_pad), 0,
+               (size_t)left_pad * sizeof(float));
+        memcpy(padded_data + c * (N + left_pad) + left_pad,
+               id + c * N, row_bytes);
     }
     ggml_set_name(padded, "vae_dw_pad");
+    /* Mark as graph input to prevent allocator from reusing its memory */
+    ggml_set_input(padded);
 
-    /* Diagonal weight expansion [K, 1, OC] -> [K, OC, OC]
-     * conv1d_f32 expects weight ne = [K, IC, OC].
-     * For depthwise with groups=OC: IC=OC with diagonal entries.
-     * We use F32 for the expanded weight to avoid F16 precision loss. */
-    struct ggml_tensor * w_exp = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, K, C, C);
-    if (!w_exp || !w_exp->data) {
-        fprintf(stderr, "depthwise_conv1d: w_exp alloc failed\n");
+    /* Use ggml_conv_1d_dw on the padded tensor */
+    struct ggml_tensor * result = ggml_conv_1d_dw(ctx, weight, padded,
+                                                    stride, 0, dilate);
+    if (!result) {
+        fprintf(stderr, "depthwise_conv1d: ggml_conv_1d_dw failed\n");
         if (bias && bias->ne[0] == (int64_t)C) {
             struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
             return ggml_add(ctx, input, b2);
         }
         return input;
     }
-    {
-        float * w_dst = (float *)w_exp->data;
-        memset(w_dst, 0, (size_t)ggml_nbytes(w_exp));
 
-        size_t n_w = (size_t)ggml_nelements(weight);
-        float * f32_scratch = (float *)malloc(n_w * sizeof(float));
-        if (!f32_scratch) {
-            if (bias && bias->ne[0] == (int64_t)C) {
-                struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
-                return ggml_add(ctx, input, b2);
-            }
-            return input;
-        }
-        float * f32_w = ensure_f32_weights(weight, f32_scratch, n_w);
-        if (!f32_w) { free(f32_scratch); return input; }
-
-        /* Original weight ne=[K, 1, OC]: data[k + oc*K] for ic=0
-         * Expanded ne=[K, OC, OC]: data[k + ic*K + oc*K*OC]
-         * Diagonal: ic=oc=ch → data[k + ch*K*(1+OC)]
-         * Source: f32_w[k + ch*K] = weight[kernel=k, channel=ch] */
-        for (int ch = 0; ch < C; ch++) {
-            for (int kp = 0; kp < K; kp++) {
-                size_t src_idx = (size_t)kp + (size_t)ch * (size_t)K;
-                if (src_idx >= n_w) continue;
-                float val = f32_w[src_idx];
-                size_t dst_idx = (size_t)kp + (size_t)ch * (size_t)K
-                               + (size_t)ch * (size_t)K * (size_t)C;
-                w_dst[dst_idx] = val;
-            }
-        }
-        free(f32_scratch);
-    }
-    ggml_set_name(w_exp, "vae_dw_exp");
-
-    /* Convolve padded input with diagonal weight, pad=0 (we already padded) */
-    struct ggml_tensor * out = conv1d_f32(ctx, w_exp, padded, stride, 0, dilate);
-    if (!out) {
-        fprintf(stderr, "depthwise_conv1d: conv1d_f32 failed\n");
-        if (bias && bias->ne[0] == (int64_t)C) {
-            struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
-            return ggml_add(ctx, input, b2);
-        }
-        return input;
-    }
-    out = ggml_reshape_2d(ctx, out, out->ne[0], out->ne[1]);
+    /* ggml_conv_1d_dw returns [N, OC, 1] after reshape.
+     * We want [OW, OC] 2D output. */
+    struct ggml_tensor * out = ggml_reshape_2d(ctx, result, result->ne[0], result->ne[1]);
 
     if (bias) {
         struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
@@ -414,7 +406,44 @@ static struct ggml_tensor * snake_activation(struct ggml_context * ctx,
     return ggml_add(ctx, h, correction);
 }
 
-/* ---- Residual unit (simplified, no depthwise) ---- */
+/* ---- Post-compute diagnostic tensor pointers ---- */
+static struct ggml_tensor * g_dbg_tensors[32] = {0};
+static int g_dbg_count = 0;
+static struct ggml_tensor * g_dbg_snapshots[16] = {0}; /* persistent copies via ggml_cpy */
+static int g_dbg_snap_count = 0;
+static struct ggml_tensor * g_dbg_upconv_b2 = NULL;
+
+/* Debug slot for residual_unit intermediates — starts after block-level tensors */
+#define RES_UNIT_DBG_START 12
+static int g_res_debug_idx = RES_UNIT_DBG_START;
+
+/* ---- Snapshot: copy intermediate tensor via ggml_dup with set_output ----
+ * ggml_dup creates a proper operation-output tensor.  ggml_set_output
+ * prevents the memory manager from reusing the buffer.
+ * Returns the copy tensor (valid after graph compute). */
+static struct ggml_tensor * snapshot_tensor(struct ggml_context * ctx,
+                                             struct ggml_cgraph * graph,
+                                             struct ggml_tensor * t) {
+    if (!t || !t->data) return NULL;
+    struct ggml_tensor * s = ggml_dup(ctx, t);
+    if (!s) return NULL;
+    ggml_set_output(s);
+    return s;
+}
+
+/* Save a debug snapshot for post-compute analysis.
+ * The ggml_dup op is included via ggml_build_forward_expand
+ * so it's computed during graph execution. */
+static void save_snapshot(struct ggml_context * ctx,
+                          struct ggml_cgraph * graph,
+                          struct ggml_tensor * t) {
+    if (g_dbg_snap_count >= 16) return;
+    struct ggml_tensor * s = snapshot_tensor(ctx, graph, t);
+    g_dbg_snapshots[g_dbg_snap_count++] = s;
+    ggml_build_forward_expand(graph, s);
+}
+
+/* ---- Residual unit ---- */
 
 static struct ggml_tensor * residual_unit(struct ggml_context * ctx,
                                             struct ggml_cgraph * graph,
@@ -428,6 +457,7 @@ static struct ggml_tensor * residual_unit(struct ggml_context * ctx,
                                             const struct vcpm_model * model,
                                             int dilation) {
     struct ggml_tensor * residual = h;
+    int dbg_slot = g_res_debug_idx++;
 
     /* Convert alpha tensors to F32 if present */
     struct ggml_tensor * a0 = alpha_to_f32(ctx, alpha0_t);
@@ -435,24 +465,34 @@ static struct ggml_tensor * residual_unit(struct ggml_context * ctx,
 
     /* Snake activation with alpha0: pre-depthwise nonlinearity */
     if (a0) h = snake_activation(ctx, h, a0);
+    if (dbg_slot + 0 < 32)
+        g_dbg_tensors[dbg_slot + 0] = h;  /* after snake1 */
 
     /* Depthwise conv1d: kernel=7, causal padding, stride=1
      * Python CausalConv1d uses left_pad = 3 * dilation * 2 = 6 * dilation.
      * We pass pad = 3*dilation so depthwise_conv1d can compute left_pad = pad*2. */
     h = conv1d_layer(ctx, graph, conv1_w, conv1_b, h, 1, 3 * dilation, dilation, model);
     if (!h) return residual;
+    if (dbg_slot + 1 < 32)
+        g_dbg_tensors[dbg_slot + 1] = h;  /* after depthwise conv */
 
     /* Snake activation with alpha2: post-depthwise nonlinearity */
     if (a2) h = snake_activation(ctx, h, a2);
+    if (dbg_slot + 2 < 32)
+        g_dbg_tensors[dbg_slot + 2] = h;  /* after snake2 */
 
     /* Conv2: pointwise kernel=1, padding=0, dilation=1 */
     struct ggml_tensor * c2 = conv1d_layer(ctx, graph, conv2_w, conv2_b, h,
                                             1, 0, 1, model);
+    if (!c2) return residual;
+    if (dbg_slot + 3 < 32)
+        g_dbg_tensors[dbg_slot + 3] = c2;  /* after pointwise conv (before skip) */
 
     /* Skip connection */
-    if (!c2) return residual;
     struct ggml_tensor * out = ggml_add(ctx, residual, c2);
     ggml_set_name(out, "vae_res_unit");
+    if (dbg_slot + 4 < 32)
+        g_dbg_tensors[dbg_slot + 4] = out;  /* final output */
     return out;
 }
 
@@ -483,13 +523,14 @@ static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
     snprintf(name, sizeof(name), "audio_vae.decoder.model.%d.block.1.bias", block_idx);
     struct ggml_tensor * up_b = tensor_by_name(ctx, model, name);
 
-    /* Snake activation with block.0.alpha (pre-upconv, on 2048-ch signal) */
-    //{
-    //    struct ggml_tensor * a_f32 = alpha_to_f32(ctx, pre_alpha);
-    //    if (a_f32) {
-    //        h = snake_activation(ctx, h, a_f32);
-    //    }
-    //}
+    /* Snake activation with block.0.alpha (pre-upconv, on 2048-ch signal)
+     * Matches Python CausalDecoderBlock which starts with Snake1d(). */
+    if (pre_alpha) {
+        struct ggml_tensor * a_f32 = alpha_to_f32(ctx, pre_alpha);
+        if (a_f32) {
+            h = snake_activation(ctx, h, a_f32);
+        }
+    }
 
     /* Transposed conv upsampling */
     h = upconv_transpose1d(ctx, graph, up_w, up_b, h, stride);
@@ -498,6 +539,12 @@ static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
         return NULL;
     }
     ggml_set_name(h, "vae_upconv");
+
+    /* Save upconv output for block.2 for external comparison */
+    if (block_idx == 2) {
+        g_dbg_upconv_b2 = h;
+        save_snapshot(ctx, graph, h);
+    }
 
     int out_ch = (int)up_w->ne[1];  /* out_channels */
 
@@ -577,23 +624,28 @@ static struct ggml_tensor * sr_cond_embedding_extract(struct ggml_context * ctx,
                                                         struct ggml_tensor * embed_weight,
                                                         int idx) {
     if (!embed_weight || !embed_weight->data) return NULL;
-    int num_buckets = (int)embed_weight->ne[0];
-    int input_dim   = (int)embed_weight->ne[1];
+    /* GGUF stores reversed numpy shape. For PyTorch [num_buckets, input_dim]:
+     *   GGUF shape: [input_dim, num_buckets]
+     *   ggml ne[0] = input_dim (innermost, stride 1), ne[1] = num_buckets
+     * Element at (channel c, bucket b): c + b * ne[0] = c + b * input_dim */
+    int input_dim   = (int)embed_weight->ne[0];
+    int num_buckets = (int)embed_weight->ne[1];
     if (idx < 0 || idx >= num_buckets || input_dim <= 0) return NULL;
 
     struct ggml_tensor * result = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, input_dim);
     if (!result || !result->data) return NULL;
 
     float * dst = (float *)result->data;
+    size_t bucket_offset = (size_t)idx * (size_t)input_dim;
     if (embed_weight->type == GGML_TYPE_F32) {
         float * src = (float *)embed_weight->data;
         for (int j = 0; j < input_dim; j++) {
-            dst[j] = src[idx + j * (size_t)num_buckets];
+            dst[j] = src[j + bucket_offset];
         }
     } else if (embed_weight->type == GGML_TYPE_F16) {
         ggml_fp16_t * src = (ggml_fp16_t *)embed_weight->data;
         for (int j = 0; j < input_dim; j++) {
-            dst[j] = ggml_fp16_to_fp32(src[idx + j * (size_t)num_buckets]);
+            dst[j] = ggml_fp16_to_fp32(src[j + bucket_offset]);
         }
     } else {
         fprintf(stderr, "VAE V2: sr_cond weight type %d not supported\n",
@@ -644,10 +696,6 @@ static int compute_sr_cond_idx(struct ggml_tensor * sr_bin_boundaries,
     return idx;
 }
 
-/* ---- Post-compute diagnostic tensor pointers ---- */
-static struct ggml_tensor * g_dbg_tensors[16] = {0};
-static int g_dbg_count = 0;
-
 void vcpm_vae_v2_get_debug_tensors(struct ggml_tensor *** tensors, int * count) {
     if (tensors) *tensors = g_dbg_tensors;
     if (count) *count = g_dbg_count;
@@ -655,7 +703,22 @@ void vcpm_vae_v2_get_debug_tensors(struct ggml_tensor *** tensors, int * count) 
 
 void vcpm_vae_v2_reset_debug(void) {
     g_dbg_count = 0;
+    g_res_debug_idx = RES_UNIT_DBG_START;
     memset(g_dbg_tensors, 0, sizeof(g_dbg_tensors));
+    g_dbg_upconv_b2 = NULL;
+}
+
+struct ggml_tensor * vcpm_vae_v2_get_upconv_b2(void) {
+    return g_dbg_upconv_b2;
+}
+
+int vcpm_vae_v2_get_snapshot_count(void) {
+    return g_dbg_snap_count;
+}
+
+struct ggml_tensor * vcpm_vae_v2_get_snapshot(int i) {
+    if (i < 0 || i >= g_dbg_snap_count) return NULL;
+    return g_dbg_snapshots[i];
 }
 
 /* ---- Main decoder ---- */
@@ -684,6 +747,7 @@ struct ggml_tensor * vcpm_vae_v2_decode(
          * No activation — original model uses only linear projection at this stage. */
         h = conv1d_layer(ctx, graph, w0, b0, h, 1, 3, 1, model);
         g_dbg_tensors[g_dbg_count++] = h;  /* [0] = model.0 conv output */
+        save_snapshot(ctx, graph, h);
         ggml_set_name(h, "vae_model0");
     }
 
@@ -697,7 +761,8 @@ struct ggml_tensor * vcpm_vae_v2_decode(
         /* model.1: regular conv, Input [N, 64], Output [N, 2048]
          * No activation — original model uses only linear projection at this stage. */
         h = conv1d_layer(ctx, graph, w1, b1, h, 1, 0, 1, model);
-        g_dbg_tensors[g_dbg_count++] = h;  /* [2] = model.1 conv output */
+        g_dbg_tensors[g_dbg_count++] = h;  /* [1] = model.1 conv output */
+        save_snapshot(ctx, graph, h);
         ggml_set_name(h, "vae_model1");
     } else {
         fprintf(stderr, "VAE V2: missing model.1 weight\n");
@@ -762,6 +827,7 @@ struct ggml_tensor * vcpm_vae_v2_decode(
             return NULL;
         }
         g_dbg_tensors[g_dbg_count++] = h;  /* [4..9] = decoder block outputs */
+        save_snapshot(ctx, graph, h);
     }
 
     /* ---- model.8: Snake activation (no preceding conv) ---- */
@@ -783,11 +849,15 @@ struct ggml_tensor * vcpm_vae_v2_decode(
     if (w9 && h) {
         h = conv1d_layer(ctx, graph, w9, b9, h, 1, 3, 1, model);
         g_dbg_tensors[g_dbg_count++] = h;  /* [11] = model.9 output */
+        save_snapshot(ctx, graph, h);
         ggml_set_name(h, "vae_model9");
     }
 
     /* ---- model.10: Tanh activation (bound output to [-1, 1]) ---- */
-    if (h) h = ggml_tanh(ctx, h);
+    if (h) {
+        h = ggml_tanh(ctx, h);
+        save_snapshot(ctx, graph, h);
+    }
     g_dbg_tensors[g_dbg_count++] = h;  /* [12] = final output */
     ggml_set_name(h, "vae_output");
 

@@ -69,5 +69,10 @@ struct ggml_tensor * vcpm_vae_v2_decode(
 /* Debug: get pointers to intermediate tensors (valid after ggml_graph_compute) */
 void vcpm_vae_v2_get_debug_tensors(struct ggml_tensor *** tensors, int * count);
 void vcpm_vae_v2_reset_debug(void);
+struct ggml_tensor * vcpm_vae_v2_get_upconv_b2(void);
+
+/* Persistent snapshots via ggml_cpy (immune to buffer reuse) */
+int  vcpm_vae_v2_get_snapshot_count(void);
+struct ggml_tensor * vcpm_vae_v2_get_snapshot(int i);
 
 #endif /* VCPM_AUDIO_VAE_V2_H */

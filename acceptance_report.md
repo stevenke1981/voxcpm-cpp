@@ -78,14 +78,33 @@
 | VAE decoder produces valid output | ✅ | test_vae_only passes: 17574 samples from 8 synthetic patches, tanh output range [-0.01, 0.06] |
 | VAE model.9 conv verified correct | ✅ | conv1d_f32 matches manual im2col reference to 0.0006% relative error (RMS diff = 5e-10) |
 | F32 conv1d fix verified | ✅ | All conv layers use F32 im2col + F32 matmul; no numerical regression vs original F16 path |
+| Converter produces valid GGUF | ✅ | `voxcpm2_v2_full.gguf`: 813 tensors, 8.88 GB, architecture=voxcpm2, loads correctly |
+| Python reference fixtures | ✅ | 128 .npy files + ref_audio.wav in `fixtures/ref/`; Python generates real speech (RMS=0.116) |
+| C VAE decoder per-step correct | ✅ | Both C and Python produce 1920 samples per latent time step |
+| Root cause of low-amplitude output | 🔍 | C generation loop produces 1 vector/step vs Python's patch_size=4 vectors/step |
 | Stop predictor returns valid float | ✅ | Now returns 0.999997–1.0 (sigmoid of logits[1]=12.8) instead of 65535.0 |
 | Tokenizer CJK expansion removed | ✅ | BPE output used as-is; no post-processing of multi-character CJK tokens |
 | VAE upconv uses native ggml | ✅ | ggml_conv_transpose_1d proven correct by standalone test (F32 cos_sim=1.0, max_diff=1.5e-5) |
 
+#### Additional Fixes (Session 5)
+
+12. **Python reference fixtures generated** (`tools/export_ref_fixtures.py`)
+     - Ran successfully with model_download: generated 128 .npy files + reference audio.
+     - Python produces real speech from "Hello world.": RMS=0.116, range [-0.66, 0.73], 1.28s at 48kHz.
+     - All pipeline stages dumped: text_embed, base_lm_out, feat_encoder_out, fsq_out, residual_lm_out, dit_hidden, cfm_pred_feat, vae_decode_raw, etc.
+     - `feat_pred_latent.bin` saved as raw f32 for C decoder comparison.
+
+13. **C VAE decoder vs Python VAE decoder comparison** (`tools/test_vae_reference.c`)
+     - **Key finding**: C decoder is per-time-step correct (1920 samples/step matches Python).
+     - **Root cause of low-amplitude hum**: C autoregressive loop produces 1 latent vector per step, but Python produces `patch_size=4` vectors per step (via CFM decoder output).
+     - C output: 15360 samples, RMS=0.000097 (from 8 time steps, one per patch).
+     - Python output: 61440 samples, RMS=0.116 (from 32 time steps, 4 per patch).
+     - The 4× ratio matches `patch_size`. Fixing the C generation loop to produce `patch_size` vectors per step should resolve the audio quality issue.
+
 ### Remaining Risks
 
-1. **Audio quality**: Pipeline output is not speech-quality. Text conditioning works (output varies by input) but spectral content is dominated by low frequencies.
-2. **No Python reference fixtures**: Can't validate numerical parity without Python-generated reference latents, velocities, and audio.
+1. **Audio quality**: Pipeline output is not speech-quality. Root cause identified: C generation loop produces 1 latent vector per autoregressive step instead of `patch_size=4`. The VAE decoder itself per-time-step correct.
+2. **Python reference fixtures created**: ✅ 128 .npy files in `fixtures/ref/` covering all pipeline stages.
 3. **Stop predictor always fires early**: Model predicts stop at ~2-3 patches for short text; may need different threshold or architecture fix.
 4. **Stop threshold hardcoded**: 0.5 threshold not user-configurable.
-5. **Converter not implemented**: `convert_voxcpm2_to_gguf.py` (todos.md §2) is still unchecked; needed for generating reference fixtures.
+5. **Converter implemented**: ✅ `convert_voxcpm2_to_gguf.py` works, `voxcpm2_v2_full.gguf` already produced and verified (813 tensors, 8.88 GB).

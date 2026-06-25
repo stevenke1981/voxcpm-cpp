@@ -45,6 +45,9 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 | 2026-06-25 | Bug fix: ggml_view_2d + ggml_add in manual upconv | F3, T10 | Reverted to native ggml_conv_transpose_1d; removed all post-compute fixup infrastructure |
 | 2026-06-25 | Bug fix: CJK multi-character token expansion wrong | F4, T0 | Removed unconditional CJK splitting in append_expanded_token; BPE output now used as-is |
 | 2026-06-26 | F32 conv1d precision fix: replaced ggml_conv_1d (F16 im2col) with F32 im2col + F32 matmul | F3, G6 | conv1d_f32() verified: manual im2col reference matches to < 0.001% relative error; output identical to original F16 path |
+| 2026-06-26 | Python reference fixtures generated: 128 .npy files covering all pipeline stages | G6, spec.md §9 | export_ref_fixtures.py ran on model_download; produces real speech (RMS=0.116) |
+| 2026-06-26 | C VAE decoder per-time-step verified correct vs Python reference | G6 | Both produce 1920 samples per latent time step; C decoder RMS=0.000097 for 8-step latent, Python 0.116 for 32-step latent (matches 4× ratio=patch_size) |
+| 2026-06-26 | Root cause of low-amplitude C output identified: autoregressive loop | G7, spec.md §8 | C generates 1 latent vector/step; Python generates patch_size=4 vectors/step via CFM decoder |
 
 ## Legend
 

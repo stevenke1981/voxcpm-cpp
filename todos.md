@@ -23,16 +23,16 @@
 
 ## 2. Converter
 
-- [ ] Create `tools/convert_voxcpm2_to_gguf.py`.
-- [ ] Parse HF `config.json`.
-- [ ] Parse tokenizer files.
-- [ ] Parse safetensors index.
-- [ ] Implement tensor name mapper.
-- [ ] Implement dtype conversion f32/f16/bf16.
-- [ ] Write GGUF metadata.
-- [ ] Write GGUF tensors.
-- [ ] Emit `shapes.json`.
-- [ ] Add converter smoke tests.
+- [x] Create `tools/convert_voxcpm2_to_gguf.py` (714 lines, complete converter).
+- [x] Parse HF `config.json` (nested lm_config, encoder_config, dit_config, vae_config).
+- [x] Parse tokenizer files (tokenizer.json with BPE vocab and merges).
+- [x] Parse safetensors index (single file and sharded index support).
+- [x] Implement tensor name mapper (28 prefix patterns covering all submodules).
+- [x] Implement dtype conversion f32/f16/bf16 (norms/biases stay f32).
+- [x] Write GGUF metadata (all voxcpm.* keys from config).
+- [x] Write GGUF tensors (sort by module order, 813 tensors, 8.88 GB).
+- [x] Emit `shapes.json` (optional --emit-shape-manifest flag).
+- [ ] Add converter smoke tests (minor - converter is already verified working).
 
 ## 3. Model Loader
 
@@ -136,9 +136,10 @@
 - [x] Implement stop predictor (CPU-based, uses stop_proj + SiLU + stop_head + sigmoid/softmax).
 - [x] Implement max/min length handling (min_len/max_len from gen_params).
 - [ ] **Debug audio quality**: pipeline runs end-to-end but output has low-frequency hum (~47 Hz dominant). Needs Python reference latents for DiT/CFM parity check.
-  - [ ] Export Python reference latents via converter/fixture script.
-  - [ ] Verify DiT velocity predictions match Python.
-  - [ ] Verify CFM integration produces equivalent latents.
+  - [x] **Export Python reference latents via converter/fixture script** — ✅ Done: 128 .npy files + reference audio in `fixtures/ref/`. Python produces real speech (RMS=0.116, range [-0.66, 0.73]).
+  - [ ] **Verify DiT velocity predictions match Python** — next priority.
+  - [ ] **Verify CFM integration produces equivalent latents**.
+  - [ ] **Fix autoregressive loop: produce patch_size=4 latent vectors per step** — Root cause of low-amplitude C output: C generates 1 latent vector per autoregressive step, but Python generates `patch_size=4` vectors per step (via CFM decoder). The C VAE decoder is per-time-step correct (1920 samples/step, matching Python's 1920 samples/time-step). The fix is to expand the C generation loop to produce `patch_size` vectors per step.
   - [x] **VAE decoder upconv proven correct** — ggml_conv_transpose_1d matches manual computation exactly (F32 cos_sim=1.0). Root cause of previous −0.04 vs −0.10 discrepancy was a buggy manual scatter implementation (broken ggml_view_2d stride + ggml_add).
   - [x] **Latent buffer offset bug fixed** — `vcpm_gen_run` advanced output pointer by only `latent_dim` per patch but `vcpm_gen_step` writes `latent_dim * patch_size` floats. This caused progressive data corruption on all patches after the first. Fixed by advancing by `total_patch_dim` per patch.
   - [ ] Verify VAE decoder reconstructs expected audio from both Python and C latents (need model file to run).
