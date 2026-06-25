@@ -193,6 +193,38 @@ ctest --test-dir build -C Release --output-on-failure
 
 The `vae_only` model fixture test is registered only when `VCPM_MODEL` is present at CMake configure time.
 
+Current full-model release-gate commands on Windows:
+
+```powershell
+$env:VCPM_MODEL='D:\voxcpm-cpp\models\voxcpm2-f16.gguf'
+cmake -S . -B build -DVCPM_BUILD_TESTS=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release -L model --output-on-failure
+ctest --test-dir build -C Release --output-on-failure
+
+.\build\Release\voxcpm-c.exe tts `
+  --model models\voxcpm2-f16.gguf `
+  --text "Hello, this is a release gate speech test." `
+  --out models\tts_release_gate_steps10.wav `
+  --max-len 24 --steps 10 --pcm16
+
+.\build\Release\voxcpm-c.exe stream `
+  --model models\voxcpm2-f16.gguf `
+  --text "Streaming release gate test." `
+  --out models\stream_release_gate.wav `
+  --max-len 16 --steps 2 --pcm16
+```
+
+Verified full-model results:
+
+- `vae_only`: pass.
+- `model_tts_smoke`: pass; this calls both `vcpm_generate()` and `vcpm_generate_stream()` and checks 48 kHz mono, finite samples, duration, peak/RMS, and clipping.
+- Model CTest label: 2/2 pass.
+- Full CTest: 8/8 pass.
+- `tts_release_gate_steps10.wav`: 48 kHz mono, 48294 frames, 1.006125 sec, finite samples, peak 0.778137, RMS 0.321684, no clipping.
+- `stream_release_gate.wav`: 48 kHz mono, 32934 frames, 0.686125 sec, finite samples, peak 0.770172, RMS 0.254618, no clipping.
+- Streaming result is a one-shot callback smoke, not final chunked streaming parity.
+
 Minimal synthetic GGUF smoke:
 
 ```bash
@@ -218,6 +250,13 @@ Expected result: `inspect` and `tokenize` succeed; `tts` must fail cleanly with 
 | G7 | End-to-end TTS smoke |
 | G8 | Reference cloning smoke |
 | G9 | Streaming smoke |
+
+Current status:
+
+- G0/G1/model fixture/G7 basic WAV sanity/G9 one-shot smoke are verified locally with the full f16 GGUF.
+- Release CTest assertions are enabled even for `Release` builds; test files explicitly undefine `NDEBUG` before including `assert.h`.
+- G2-G6 still require upstream Python fixture parity, not just C unit smoke.
+- G8 is not complete; clone is safety-gated and returns explicit not-implemented.
 
 ## 9. Debugging Failed Audio
 

@@ -76,6 +76,8 @@ tests/test_smoke.c
 ```bash
 voxcpm-c tts   --model ./models/voxcpm2-f16.gguf   --text "(young warm female voice)你好，這是 VoxCPM2 C runtime 測試。"   --cfg 2.0   --steps 10   --out output.wav
 
+voxcpm-c stream   --model ./models/voxcpm2-f16.gguf   --text "Streaming release gate test."   --steps 2   --max-len 16   --out stream.wav
+
 voxcpm-c clone   --model ./models/voxcpm2-f16.gguf   --text "這是一段聲音複製測試。"   --reference-audio ref_16k.wav   --i-have-consent   --out clone.wav
 ```
 
@@ -83,4 +85,9 @@ Current verified baseline:
 
 - `inspect` and `tokenize` work on a minimal synthetic GGUF fixture.
 - No-weight CTest unit tests pass.
-- Full `tts` requires a complete converted VoxCPM2 GGUF; incomplete/mock GGUFs fail with a missing tensor diagnostic instead of dummy audio.
+- Full `tts` runs on the converted f16 VoxCPM2 GGUF (`models/voxcpm2-f16.gguf`, ignored by git).
+- `VCPM_MODEL=models/voxcpm2-f16.gguf` registers and passes `vae_only` plus `model_tts_smoke`.
+- A 10-step TTS smoke writes 48 kHz mono WAV with non-zero finite samples.
+- `stream` is currently a one-shot callback smoke path: it uses `vcpm_generate_stream()` and writes the callback audio to WAV. It is not yet low-latency chunked streaming.
+- Incomplete/mock GGUFs fail `tts` with a missing tensor diagnostic instead of dummy audio.
+- `clone` and the C API reference-audio path require consent, check that the reference file exists, and still return explicit not-implemented until reference-audio encoding/conditioning is complete.

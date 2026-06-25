@@ -1,5 +1,9 @@
 #include "voxcpm.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -80,6 +84,35 @@ int main(void) {
     vcpm_free(ctx);
 
     printf("PASS: empty text rejected\n");
+
+    /* ---- Test reference audio safety gate happens before model execution ---- */
+    ctx = vcpm_load_model("nonexistent.gguf", &mp);
+    assert(ctx != NULL);
+    gp = vcpm_default_generation_params();
+    gp.text = "hello";
+    gp.reference_audio_path = "ref.wav";
+    gp.consent_confirmed = 0;
+    st = vcpm_generate(ctx, &gp, &audio);
+    assert(st == VCPM_ERR_INVALID_ARG && "reference generation should require consent");
+    assert(strstr(vcpm_last_error(ctx), "consent") != NULL && "error should mention consent");
+
+    gp.consent_confirmed = 1;
+    gp.reference_audio_path = "definitely_missing_reference.wav";
+    st = vcpm_generate(ctx, &gp, &audio);
+    assert(st == VCPM_ERR_INVALID_ARG && "missing reference audio should be invalid");
+    assert(strstr(vcpm_last_error(ctx), "reference audio") != NULL && "error should mention reference audio");
+
+    FILE * ref = fopen("test_reference.wav", "wb");
+    assert(ref != NULL && "should create temporary reference file");
+    fclose(ref);
+    gp.reference_audio_path = "test_reference.wav";
+    st = vcpm_generate(ctx, &gp, &audio);
+    assert(st == VCPM_ERR_NOT_IMPLEMENTED && "existing reference audio should not fall back to zero-shot");
+    assert(strstr(vcpm_last_error(ctx), "not implemented") != NULL && "error should mention not implemented");
+    remove("test_reference.wav");
+    vcpm_free(ctx);
+
+    printf("PASS: reference audio safety gate\n");
 
     /* ---- Test vcpm_audio_free with allocated samples ---- */
     {

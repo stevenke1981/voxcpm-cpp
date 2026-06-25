@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <assert.h>
 
 static const float EPS = 1e-4f;

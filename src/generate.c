@@ -308,7 +308,7 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
                                    cfg->vae_out_sample_rate);
 
     /* Per-step ggml context */
-    if (step_mem == 0) step_mem = 8LL * 1024 * 1024 * 1024;  /* 8 GB for KV caches + inference compute */
+    if (step_mem == 0) step_mem = 6LL * 1024 * 1024 * 1024;  /* KV caches plus 10-step LocDiT compute arena */
     s->step_mem_size = step_mem;
 
     struct ggml_init_params params = {
@@ -572,9 +572,8 @@ static struct ggml_tensor * gen_fsq_hidden(vcpm_generate_state * state,
 vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                            const int32_t * token_ids,
                            int fill_pos,
-                           float * output_patch,
-                           float cfg_value,
-                           int n_steps) {
+                           const vcpm_generation_params * gen_params,
+                           float * output_patch) {
     if (!state || !token_ids || !output_patch) return VCPM_ERR_INVALID_ARG;
     struct ggml_context * ctx = state->step_ctx;
     struct ggml_cgraph * graph = state->step_graph;
@@ -751,7 +750,9 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     dit_w.delta_time_mlp_b2    = state->dit_delta_time_mlp_b2;
 
     /* CFM Euler integration: t=1 → 0 */
-    if (n_steps < 1) n_steps = 10;
+    int n_steps = (gen_params && gen_params->inference_steps > 0)
+                ? gen_params->inference_steps
+                : 10;
     float dt = -1.0f / n_steps;
     float t = 1.0f;
     /* CFG: if cfg_value != 1.0f, run two DiT forwards and blend */
@@ -1066,12 +1067,8 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
     /* Step 2: Generate audio patches one at a time with stop predictor */
     for (int pos = first_audio_pos; pos < seq_len && n_patches < effective_max; pos++) {
         if (audio_mask[pos] != 1) continue;
-        int patch_size = state->model ? state->model->config.patch_size : 1;
-        if (patch_size < 1) patch_size = 1;
-        /* Each gen_step produces patch_size latent vectors */
-        float * patch = latent_out + (size_t)n_patches * latent_dim * patch_size;
-        vcpm_status st = vcpm_gen_step(state, token_ids, pos, patch,
-                                        cfg_value, n_steps);
+        float * patch = latent_out + (size_t)n_patches * latent_dim;
+        vcpm_status st = vcpm_gen_step(state, token_ids, pos, gen_params, patch);
         if (st != VCPM_OK) return st;
         n_patches++;
 

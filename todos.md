@@ -125,9 +125,11 @@
 ## 11. Full Generation
 
 - [x] Implement model weight loading for all submodules (including feat_encoder, fusion, stop, time_mlp).
-- [x] **Rewrite generate.c pipeline**: combined_embed → base_lm → FSQ → fusion_concat → RALM → concat cond → CFM → prev_latent feedback loop.
-- [x] Implement stop predictor.
-- [x] Implement max/min length handling.
+- [ ] **Rewrite generate.c pipeline**: combined_embed → base_lm → FSQ → fusion_concat → RALM → concat cond → CFM → prev_latent feedback loop.
+- [ ] Implement stop predictor.
+- [ ] Implement max/min length handling.
+  - [x] `max_len` now controls the number of generated audio patches for zero-shot TTS.
+  - [ ] `min_len` and stop predictor are still pending.
 - [ ] Implement context trimming for prompt audio.
 - [x] Implement `vcpm_generate()` full pipeline.
   - [x] Reject incomplete/mock GGUFs before graph execution instead of returning dummy audio or crashing.
@@ -140,14 +142,19 @@
   - [x] **VAE decoder upconv proven correct** — ggml_conv_transpose_1d matches manual computation exactly (F32 cos_sim=1.0). Root cause of previous −0.04 vs −0.10 discrepancy was a buggy manual scatter implementation (broken ggml_view_2d stride + ggml_add).
   - [ ] Verify VAE decoder reconstructs expected audio from both Python and C latents (need model file to run).
 - [ ] Implement `vcpm_generate_stream()`.
+  - [x] One-shot callback baseline implemented by generating full audio then invoking the stream callback once.
+  - [ ] True chunked autoregressive/AudioVAE streaming is still pending.
 - [ ] Implement `tts`, `design`, `clone`, `batch` CLI.
   - [x] `tts` CLI is wired to `vcpm_generate()`.
+  - [x] `stream` CLI smoke path is wired to `vcpm_generate_stream()`.
   - [x] `clone` CLI has a consent gate and explicit not-implemented failure.
 
 ## 12. Performance
 
 - [ ] Add `bench` command.
 - [ ] Reuse graph memory.
+  - [x] Raised the default generation arena to 6 GiB so 10-step f16 smoke can run without ggml arena exhaustion.
+  - [ ] Split/reuse graph memory properly for long generation.
 - [ ] Reuse KV cache.
 - [ ] Add CPU thread setting.
 - [ ] Add backend selection.
@@ -179,3 +186,4 @@
 - [ ] macOS clang.
 - [x] Unit tests without model weights.
 - [x] Optional model fixture tests behind env var.
+  - [x] `model_tts_smoke` validates full `vcpm_generate()` and one-shot `vcpm_generate_stream()` WAV sanity with `VCPM_MODEL`.

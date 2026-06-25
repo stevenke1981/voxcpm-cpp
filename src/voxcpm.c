@@ -88,6 +88,35 @@ static int vcpm_generation_weights_ready(vcpm_context * ctx) {
     return 1;
 }
 
+static int vcpm_path_exists(const char * path) {
+    if (!path || !path[0]) return 0;
+    FILE * f = fopen(path, "rb");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
+static int vcpm_sequence_extend_audio(vcpm_sequence * seq,
+                                      const vcpm_seq_builder * builder,
+                                      int target_patches) {
+    if (!seq || !builder) return -1;
+    if (target_patches <= seq->n_audio_patches) return 0;
+    if (target_patches > VCPM_MAX_SEQ_LEN) return -1;
+
+    int extra = target_patches - seq->n_audio_patches;
+    if (seq->length + extra > VCPM_MAX_SEQ_LEN) return -1;
+    if (seq->length + extra > builder->max_seq_len) return -1;
+
+    for (int i = 0; i < extra; i++) {
+        int pos = seq->length++;
+        seq->token_ids[pos] = builder->audio_end_token;
+        seq->text_mask[pos] = 0;
+        seq->audio_mask[pos] = 1;
+    }
+    seq->n_audio_patches = target_patches;
+    return 0;
+}
+
 vcpm_model_params vcpm_default_model_params(void) {
     vcpm_model_params p;
     p.backend = VCPM_BACKEND_AUTO;
@@ -155,6 +184,19 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
     }
     memset(out_audio, 0, sizeof(*out_audio));
 
+    if (params->reference_audio_path && params->reference_audio_path[0]) {
+        if (!params->consent_confirmed) {
+            vcpm_set_error(ctx, "reference audio generation requires consent confirmation");
+            return VCPM_ERR_INVALID_ARG;
+        }
+        if (!vcpm_path_exists(params->reference_audio_path)) {
+            vcpm_set_error(ctx, "reference audio file not found");
+            return VCPM_ERR_INVALID_ARG;
+        }
+        vcpm_set_error(ctx, "reference voice cloning is not implemented in this build");
+        return VCPM_ERR_NOT_IMPLEMENTED;
+    }
+
     if (!ctx->model_loaded) {
         vcpm_set_error(ctx, "model not loaded");
         return VCPM_ERR_MODEL_FORMAT;
@@ -189,6 +231,12 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
     int ret = vcpm_seq_build_zero_shot(&builder, token_ids, n_tokens, &seq);
     if (ret != 0) {
         vcpm_set_error(ctx, "sequence building failed");
+        return VCPM_ERR_INVALID_ARG;
+    }
+
+    int requested_patches = params->max_len > 0 ? params->max_len : ctx->model->config.patch_size;
+    if (vcpm_sequence_extend_audio(&seq, &builder, requested_patches) != 0) {
+        vcpm_set_error(ctx, "sequence exceeds maximum length");
         return VCPM_ERR_INVALID_ARG;
     }
 
@@ -273,11 +321,19 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
 }
 
 vcpm_status vcpm_generate_stream(vcpm_context * ctx, const vcpm_generation_params * params, vcpm_stream_cb cb, void * user_data) {
-    (void)cb;
-    (void)user_data;
-    if (!ctx || !params) return VCPM_ERR_INVALID_ARG;
-    vcpm_set_error(ctx, "not implemented: streaming generation");
-    return VCPM_ERR_NOT_IMPLEMENTED;
+    if (!ctx || !params || !cb) return VCPM_ERR_INVALID_ARG;
+
+    vcpm_audio audio;
+    vcpm_status st = vcpm_generate(ctx, params, &audio);
+    if (st != VCPM_OK) return st;
+
+    int cb_ret = cb(audio.samples, audio.n_samples, audio.sample_rate, user_data);
+    vcpm_audio_free(&audio);
+    if (cb_ret != 0) {
+        vcpm_set_error(ctx, "stream callback failed");
+        return VCPM_ERR_BACKEND;
+    }
+    return VCPM_OK;
 }
 
 const char * vcpm_last_error(const vcpm_context * ctx) {

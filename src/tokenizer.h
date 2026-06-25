@@ -5,6 +5,11 @@
 #include <stddef.h>
 
 /* Tokenizer loaded from GGUF metadata */
+typedef struct vcpm_bpe_merge {
+    char * left;
+    char * right;
+} vcpm_bpe_merge;
+
 typedef struct vcpm_tokenizer {
     /* Token list */
     int         vocab_size;
@@ -19,6 +24,11 @@ typedef struct vcpm_tokenizer {
 
     /* Maximum token length in bytes */
     int         max_token_len;
+
+    /* BPE merge ranks loaded from tokenizer.ggml.merges.
+     * Rank is the array index: lower index means higher merge priority. */
+    int         n_merges;
+    vcpm_bpe_merge * merges;
 
     /* GGUF model type string (e.g., "llama", "gpt2") */
     char        model_type[64];

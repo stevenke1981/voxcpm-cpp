@@ -188,9 +188,8 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
 vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                            const int32_t * token_ids,
                            int fill_pos,
-                           float * output_patch,
-                           float cfg_value,
-                           int n_steps);
+                            const vcpm_generation_params * gen_params,
+                            float * output_patch);
 
 /*
  * Run full autoregressive generation.

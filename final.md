@@ -110,7 +110,7 @@ voxcpm-c/
 - [ ] `inspect` reports correct metadata.
 - [ ] Unit tests pass.
 - [ ] Model fixture tests pass.
-- [ ] TTS smoke produces valid WAV.
+- [ ] TTS smoke produces valid 48 kHz mono WAV.
 - [ ] Clone smoke produces valid WAV.
 - [ ] Streaming smoke passes.
 - [ ] License and notices included.
@@ -121,6 +121,19 @@ voxcpm-c/
 - Windows MSVC build succeeds with ggml CPU backend.
 - No-weight unit tests pass through CTest.
 - Model fixture tests are gated by `VCPM_MODEL` instead of hard-coded local paths.
+- Full converted f16 GGUF was configured through `VCPM_MODEL=D:\voxcpm-cpp\models\voxcpm2-f16.gguf`; `vae_only`, `model_tts_smoke`, and full CTest pass.
+- Release CTest assertions are active; the assert-based tests explicitly undefine `NDEBUG`.
 - Minimal synthetic GGUF supports `inspect` and `tokenize`.
 - Incomplete/mock GGUFs fail `tts` with a missing-tensor diagnostic instead of dummy audio or process crash.
-- Voice cloning CLI requires `--i-have-consent` and returns explicit not-implemented status until the reference-audio path is complete.
+- `tts --max-len 24 --steps 10 --pcm16` writes a valid 48 kHz mono WAV with finite non-clipped samples.
+- `stream --max-len 16 --steps 2 --pcm16` writes a valid WAV through the stream callback path.
+- `--steps` now controls the CFM loop, and `max_len` extends zero-shot audio patch placeholders.
+- Voice cloning API/CLI requires `--i-have-consent`, checks the reference file exists, and returns explicit not-implemented status until the reference-audio path is complete.
+
+## 9. Remaining Release Blockers
+
+- Upstream Python parity fixtures for tokenizer, sequence, Base LM, LocEnc/FSQ/RALM, LocDiT/CFM, and AudioVAE are still required before declaring semantic parity.
+- TTS currently passes objective WAV sanity only; intelligibility/voice quality still needs listening review and fixture parity.
+- Reference cloning is not implemented beyond the CLI safety gate.
+- Streaming is a one-shot callback baseline, not true chunked autoregressive/AudioVAE streaming.
+- Generation memory uses a large 6 GiB arena; long-form output still needs graph allocator reuse and memory growth tests.

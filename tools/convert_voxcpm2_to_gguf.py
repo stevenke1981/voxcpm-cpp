@@ -337,6 +337,9 @@ def write_tokenizer(writer: gguf.GGUFWriter, hf_dir: Path, cfg: dict):
     writer.add_token_list(tokens)
     writer.add_token_scores(scores)
     writer.add_token_types(types)
+    merges = tok_data.get("model", {}).get("merges", [])
+    if merges:
+        writer.add_token_merges(merges)
     writer.add_string("tokenizer.ggml.model", "llama")
     writer.add_int32("tokenizer.ggml.bos_token_id",
                      cfg.get("lm_bos_token_id", cfg.get("bos_token_id", 1)))
