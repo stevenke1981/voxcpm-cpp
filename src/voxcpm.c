@@ -205,7 +205,9 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
 
     int max_patches = params->max_len > 0 ? params->max_len : 4096;
     int latent_dim = ctx->model->config.feat_dim > 0 ? ctx->model->config.feat_dim : 64;
-    float * latent_buffer = (float *)malloc((size_t)max_patches * (size_t)latent_dim * sizeof(float));
+    int patch_size = ctx->model->config.patch_size > 0 ? ctx->model->config.patch_size : 1;
+    /* Each patch produces patch_size latent vectors of latent_dim each */
+    float * latent_buffer = (float *)malloc((size_t)max_patches * (size_t)latent_dim * (size_t)patch_size * sizeof(float));
     if (!latent_buffer) {
         vcpm_gen_free(gen_state);
         vcpm_set_error(ctx, "out of memory");
@@ -261,6 +263,8 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         return st == VCPM_OK ? VCPM_ERR_MODEL_FORMAT : st;
     }
 
+    fprintf(stderr, "VCPM_DEBUG generate: n_patches=%d n_samples=%d sample_rate=%d\n",
+            n_patches, n_samples, output_sample_rate);
     out_audio->samples     = audio_buf;
     out_audio->sample_rate = output_sample_rate;
     out_audio->n_channels  = 1;

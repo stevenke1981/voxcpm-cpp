@@ -22,8 +22,11 @@ int main(void) {
         int ret = vcpm_seq_build_zero_shot(&builder, text_tokens, n_text, &seq);
         assert(ret == 0 && "zero-shot build should succeed");
 
-        /* Sequence: [10, 20, 30, 40, 50, 101, 102, 102, ..., 102] */
-        int expected_len = n_text + 1 + builder.patch_size; /* text + audio_start + placeholders */
+        /* Sequence: [10, 20, 30, 40, 50, 101, 102, 102, ..., 102]
+         * Placeholder count = max(patch_size*16, n_text*8) = max(12*16, 5*8) = 192 */
+        int expected_placeholders = builder.patch_size * 16 > n_text * 8
+            ? builder.patch_size * 16 : n_text * 8;
+        int expected_len = n_text + 1 + expected_placeholders;
         assert(seq.length == expected_len && "sequence length mismatch");
         assert(seq.n_text_tokens == n_text && "n_text_tokens mismatch");
         assert(seq.audio_start_pos == n_text && "audio_start at correct position");
@@ -56,7 +59,7 @@ int main(void) {
         vcpm_sequence seq;
         int ret = vcpm_seq_build_zero_shot(&builder, text_tokens, 1, &seq);
         assert(ret == 0 && "single token should work");
-        assert(seq.length == 1 + 1 + 12 && "length check");
+        assert(seq.length == 1 + 1 + 1*8 && "length check (single token, text-based placeholders)");
         printf("PASS: zero-shot single token\n");
     }
 

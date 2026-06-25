@@ -36,12 +36,11 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 
 | Date | Change | AC/Gate | Evidence |
 |------|--------|---------|----------|
-| 2026-06-25 | Implement CFG in generate.c diffusion loop | T8, G5 | cfg_value from gen_params, dual DiT forward, CPU blend |
-| 2026-06-25 | Configurable inference_steps from gen_params | T9 | n_steps passed from vcpm_gen_run to vcpm_gen_step |
-| 2026-06-25 | Update generate.h API for cfg_value/n_steps params | T8 | New signature |
-| 2026-06-25 | Implement stop predictor (CPU) | spec.md §8.10 | gen_predict_stop: stop_proj→SiLU→stop_head→sigmoid/softmax |
-| 2026-06-25 | Implement min_len/max_len from gen_params | spec.md §8.10 | vcpm_gen_run uses gen_params for bounds |
-| 2026-06-25 | Capture RALM hidden state for stop prediction | spec.md §8.10 | last_ralm_hidden in generate_state |
+| 2026-06-25 | Bug fix: RALM KV cache not populated during prompt eval | F3, G4 | Added ggml_build_forward_expand(graph, ralm_hidden) in gen_prompt_eval |
+| 2026-06-25 | Bug fix: audio placeholder count too small (4→~80) | F4, T7 | Updated sequence.c zero-shot builder to max(patch_size*16, n_text*8) |
+| 2026-06-25 | Bug fix: stop predictor matmul transposed indexing | F4, spec.md §8.10 | Changed W[j*hs+i] to W[i*hs+j] in both stop_proj and stop_head |
+| 2026-06-25 | Bug fix: gen_predict_stop forward declaration missing | F4, spec.md §8.10 | Added prototype before vcpm_gen_run; MSVC assumed int return |
+| 2026-06-25 | Bug fix: step_ctx memory pool exhaustion (3GB→8GB) | F3, G0 | Increased step_mem to accommodate full prompt eval compute graph |
 
 ## Legend
 

@@ -135,8 +135,9 @@ typedef struct vcpm_generate_state {
      * Updated after each gen_step call. */
     float * prev_latent;                  /* [feat_dim] allocated in gen_init */
 
-    /* Last RALM hidden state (for stop predictor). */
-    float * last_ralm_hidden;             /* [hidden_size] or NULL */
+    /* Last base_lm hidden state (after FSQ) for stop predictor.
+     * Updated after each gen_step with fsq_out data. */
+    float * last_lm_hidden;               /* [hidden_size] or NULL */
 
     /* Per-step ggml execution resources */
     struct ggml_context * step_ctx;

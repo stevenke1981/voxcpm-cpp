@@ -1,0 +1,1095 @@
+{
+  "base_lm_out.npy": {
+    "shape": [
+      1,
+      4,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 32768,
+    "path": "ref\\base_lm_out.npy"
+  },
+  "cfm_final_out.npy": {
+    "shape": [
+      1,
+      64,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\cfm_final_out.npy"
+  },
+  "combined_embed.npy": {
+    "shape": [
+      1,
+      4,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 32768,
+    "path": "ref\\combined_embed.npy"
+  },
+  "dit_hidden_init.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\dit_hidden_init.npy"
+  },
+  "enc_to_lm_proj_out.npy": {
+    "shape": [
+      1,
+      4,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 32768,
+    "path": "ref\\enc_to_lm_proj_out.npy"
+  },
+  "feat_encoder_out.npy": {
+    "shape": [
+      1,
+      4,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 16384,
+    "path": "ref\\feat_encoder_out.npy"
+  },
+  "feat_pred_latent.npy": {
+    "shape": [
+      1,
+      64,
+      28
+    ],
+    "dtype": "float32",
+    "size_bytes": 7168,
+    "path": "ref\\feat_pred_latent.npy"
+  },
+  "fsq_out.npy": {
+    "shape": [
+      1,
+      4,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 32768,
+    "path": "ref\\fsq_out.npy"
+  },
+  "generated_feat.npy": {
+    "shape": [
+      7,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 7168,
+    "path": "ref\\generated_feat.npy"
+  },
+  "input_feat.npy": {
+    "shape": [
+      1,
+      4,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\input_feat.npy"
+  },
+  "input_feat_mask.npy": {
+    "shape": [
+      1,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 16,
+    "path": "ref\\input_feat_mask.npy"
+  },
+  "input_text.npy": {
+    "shape": [
+      1,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 16,
+    "path": "ref\\input_text.npy"
+  },
+  "input_text_mask.npy": {
+    "shape": [
+      1,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 16,
+    "path": "ref\\input_text_mask.npy"
+  },
+  "lm_hidden_init.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\lm_hidden_init.npy"
+  },
+  "pred_feat_seq_full.npy": {
+    "shape": [
+      1,
+      7,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 7168,
+    "path": "ref\\pred_feat_seq_full.npy"
+  },
+  "residual_enc_inputs.npy": {
+    "shape": [
+      1,
+      4,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 32768,
+    "path": "ref\\residual_enc_inputs.npy"
+  },
+  "residual_hidden_init.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\residual_hidden_init.npy"
+  },
+  "residual_lm_out.npy": {
+    "shape": [
+      1,
+      4,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 32768,
+    "path": "ref\\residual_lm_out.npy"
+  },
+  "step0000_cfm_cond.npy": {
+    "shape": [
+      1,
+      64,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0000_cfm_cond.npy"
+  },
+  "step0000_cfm_pred_feat.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0000_cfm_pred_feat.npy"
+  },
+  "step0000_curr_embed_proj.npy": {
+    "shape": [
+      1,
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0000_curr_embed_proj.npy"
+  },
+  "step0000_curr_embed_raw.npy": {
+    "shape": [
+      1,
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0000_curr_embed_raw.npy"
+  },
+  "step0000_curr_residual_input.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0000_curr_residual_input.npy"
+  },
+  "step0000_dit_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0000_dit_hidden.npy"
+  },
+  "step0000_lm_hidden_fsq.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0000_lm_hidden_fsq.npy"
+  },
+  "step0000_lm_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0000_lm_hidden_step.npy"
+  },
+  "step0000_lm_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0000_lm_to_dit_proj_out.npy"
+  },
+  "step0000_prefix_feat_cond.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0000_prefix_feat_cond.npy"
+  },
+  "step0000_res_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0000_res_to_dit_proj_out.npy"
+  },
+  "step0000_residual_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0000_residual_hidden_step.npy"
+  },
+  "step0000_stop_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0000_stop_hidden.npy"
+  },
+  "step0000_stop_logits.npy": {
+    "shape": [
+      1,
+      2
+    ],
+    "dtype": "float32",
+    "size_bytes": 8,
+    "path": "ref\\step0000_stop_logits.npy"
+  },
+  "step0001_cfm_cond.npy": {
+    "shape": [
+      1,
+      64,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0001_cfm_cond.npy"
+  },
+  "step0001_cfm_pred_feat.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0001_cfm_pred_feat.npy"
+  },
+  "step0001_curr_embed_proj.npy": {
+    "shape": [
+      1,
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0001_curr_embed_proj.npy"
+  },
+  "step0001_curr_embed_raw.npy": {
+    "shape": [
+      1,
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0001_curr_embed_raw.npy"
+  },
+  "step0001_curr_residual_input.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0001_curr_residual_input.npy"
+  },
+  "step0001_dit_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0001_dit_hidden.npy"
+  },
+  "step0001_lm_hidden_fsq.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0001_lm_hidden_fsq.npy"
+  },
+  "step0001_lm_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0001_lm_hidden_step.npy"
+  },
+  "step0001_lm_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0001_lm_to_dit_proj_out.npy"
+  },
+  "step0001_prefix_feat_cond.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0001_prefix_feat_cond.npy"
+  },
+  "step0001_res_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0001_res_to_dit_proj_out.npy"
+  },
+  "step0001_residual_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0001_residual_hidden_step.npy"
+  },
+  "step0001_stop_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0001_stop_hidden.npy"
+  },
+  "step0001_stop_logits.npy": {
+    "shape": [
+      1,
+      2
+    ],
+    "dtype": "float32",
+    "size_bytes": 8,
+    "path": "ref\\step0001_stop_logits.npy"
+  },
+  "step0002_cfm_cond.npy": {
+    "shape": [
+      1,
+      64,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0002_cfm_cond.npy"
+  },
+  "step0002_cfm_pred_feat.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0002_cfm_pred_feat.npy"
+  },
+  "step0002_curr_embed_proj.npy": {
+    "shape": [
+      1,
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0002_curr_embed_proj.npy"
+  },
+  "step0002_curr_embed_raw.npy": {
+    "shape": [
+      1,
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0002_curr_embed_raw.npy"
+  },
+  "step0002_curr_residual_input.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0002_curr_residual_input.npy"
+  },
+  "step0002_dit_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0002_dit_hidden.npy"
+  },
+  "step0002_lm_hidden_fsq.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0002_lm_hidden_fsq.npy"
+  },
+  "step0002_lm_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0002_lm_hidden_step.npy"
+  },
+  "step0002_lm_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0002_lm_to_dit_proj_out.npy"
+  },
+  "step0002_prefix_feat_cond.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0002_prefix_feat_cond.npy"
+  },
+  "step0002_res_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0002_res_to_dit_proj_out.npy"
+  },
+  "step0002_residual_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0002_residual_hidden_step.npy"
+  },
+  "step0002_stop_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0002_stop_hidden.npy"
+  },
+  "step0002_stop_logits.npy": {
+    "shape": [
+      1,
+      2
+    ],
+    "dtype": "float32",
+    "size_bytes": 8,
+    "path": "ref\\step0002_stop_logits.npy"
+  },
+  "step0003_cfm_cond.npy": {
+    "shape": [
+      1,
+      64,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0003_cfm_cond.npy"
+  },
+  "step0003_cfm_pred_feat.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0003_cfm_pred_feat.npy"
+  },
+  "step0003_curr_embed_proj.npy": {
+    "shape": [
+      1,
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0003_curr_embed_proj.npy"
+  },
+  "step0003_curr_embed_raw.npy": {
+    "shape": [
+      1,
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0003_curr_embed_raw.npy"
+  },
+  "step0003_curr_residual_input.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0003_curr_residual_input.npy"
+  },
+  "step0003_dit_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0003_dit_hidden.npy"
+  },
+  "step0003_lm_hidden_fsq.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0003_lm_hidden_fsq.npy"
+  },
+  "step0003_lm_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0003_lm_hidden_step.npy"
+  },
+  "step0003_lm_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0003_lm_to_dit_proj_out.npy"
+  },
+  "step0003_prefix_feat_cond.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0003_prefix_feat_cond.npy"
+  },
+  "step0003_res_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0003_res_to_dit_proj_out.npy"
+  },
+  "step0003_residual_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0003_residual_hidden_step.npy"
+  },
+  "step0003_stop_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0003_stop_hidden.npy"
+  },
+  "step0003_stop_logits.npy": {
+    "shape": [
+      1,
+      2
+    ],
+    "dtype": "float32",
+    "size_bytes": 8,
+    "path": "ref\\step0003_stop_logits.npy"
+  },
+  "step0004_cfm_cond.npy": {
+    "shape": [
+      1,
+      64,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0004_cfm_cond.npy"
+  },
+  "step0004_cfm_pred_feat.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0004_cfm_pred_feat.npy"
+  },
+  "step0004_curr_embed_proj.npy": {
+    "shape": [
+      1,
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0004_curr_embed_proj.npy"
+  },
+  "step0004_curr_embed_raw.npy": {
+    "shape": [
+      1,
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0004_curr_embed_raw.npy"
+  },
+  "step0004_curr_residual_input.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0004_curr_residual_input.npy"
+  },
+  "step0004_dit_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0004_dit_hidden.npy"
+  },
+  "step0004_lm_hidden_fsq.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0004_lm_hidden_fsq.npy"
+  },
+  "step0004_lm_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0004_lm_hidden_step.npy"
+  },
+  "step0004_lm_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0004_lm_to_dit_proj_out.npy"
+  },
+  "step0004_prefix_feat_cond.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0004_prefix_feat_cond.npy"
+  },
+  "step0004_res_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0004_res_to_dit_proj_out.npy"
+  },
+  "step0004_residual_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0004_residual_hidden_step.npy"
+  },
+  "step0004_stop_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0004_stop_hidden.npy"
+  },
+  "step0004_stop_logits.npy": {
+    "shape": [
+      1,
+      2
+    ],
+    "dtype": "float32",
+    "size_bytes": 8,
+    "path": "ref\\step0004_stop_logits.npy"
+  },
+  "step0005_cfm_cond.npy": {
+    "shape": [
+      1,
+      64,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0005_cfm_cond.npy"
+  },
+  "step0005_cfm_pred_feat.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0005_cfm_pred_feat.npy"
+  },
+  "step0005_curr_embed_proj.npy": {
+    "shape": [
+      1,
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0005_curr_embed_proj.npy"
+  },
+  "step0005_curr_embed_raw.npy": {
+    "shape": [
+      1,
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0005_curr_embed_raw.npy"
+  },
+  "step0005_curr_residual_input.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0005_curr_residual_input.npy"
+  },
+  "step0005_dit_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0005_dit_hidden.npy"
+  },
+  "step0005_lm_hidden_fsq.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0005_lm_hidden_fsq.npy"
+  },
+  "step0005_lm_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0005_lm_hidden_step.npy"
+  },
+  "step0005_lm_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0005_lm_to_dit_proj_out.npy"
+  },
+  "step0005_prefix_feat_cond.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0005_prefix_feat_cond.npy"
+  },
+  "step0005_res_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0005_res_to_dit_proj_out.npy"
+  },
+  "step0005_residual_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0005_residual_hidden_step.npy"
+  },
+  "step0005_stop_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0005_stop_hidden.npy"
+  },
+  "step0005_stop_logits.npy": {
+    "shape": [
+      1,
+      2
+    ],
+    "dtype": "float32",
+    "size_bytes": 8,
+    "path": "ref\\step0005_stop_logits.npy"
+  },
+  "step0006_cfm_cond.npy": {
+    "shape": [
+      1,
+      64,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0006_cfm_cond.npy"
+  },
+  "step0006_cfm_pred_feat.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0006_cfm_pred_feat.npy"
+  },
+  "step0006_curr_embed_proj.npy": {
+    "shape": [
+      1,
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0006_curr_embed_proj.npy"
+  },
+  "step0006_curr_embed_raw.npy": {
+    "shape": [
+      1,
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0006_curr_embed_raw.npy"
+  },
+  "step0006_dit_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0006_dit_hidden.npy"
+  },
+  "step0006_lm_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0006_lm_to_dit_proj_out.npy"
+  },
+  "step0006_prefix_feat_cond.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0006_prefix_feat_cond.npy"
+  },
+  "step0006_res_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0006_res_to_dit_proj_out.npy"
+  },
+  "step0006_stop_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0006_stop_hidden.npy"
+  },
+  "step0006_stop_logits.npy": {
+    "shape": [
+      1,
+      2
+    ],
+    "dtype": "float32",
+    "size_bytes": 8,
+    "path": "ref\\step0006_stop_logits.npy"
+  },
+  "text_embed.npy": {
+    "shape": [
+      1,
+      4,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 32768,
+    "path": "ref\\text_embed.npy"
+  },
+  "vae_decode_raw.npy": {
+    "shape": [
+      1,
+      1,
+      53760
+    ],
+    "dtype": "float32",
+    "size_bytes": 215040,
+    "path": "ref\\vae_decode_raw.npy"
+  },
+  "_config": {
+    "patch_size": 4,
+    "feat_dim": 64,
+    "hidden_size": 2048,
+    "dit_hidden_size": 1024,
+    "vae_latent_dim": 64,
+    "vae_sample_rate": 16000,
+    "vae_out_sample_rate": 48000,
+    "chunk_size": 640
+  },
+  "_generation_params": {
+    "text": "Hello world.",
+    "steps": 10,
+    "cfg": 2.0,
+    "device": "cpu"
+  }
+}

@@ -107,7 +107,17 @@
 - [x] Map AudioVAE V2 config.
 - [ ] Implement conv/downsample encoder (skeleton).
 - [ ] Implement latent reshape to `[T, P, D]`.
-- [ ] Implement decoder/upsample (skeleton).
+- [x] Implement decoder/upsample (skeleton — model.0–model.10 all wired).
+  - [x] model.0: Conv1d (k=7, 1→64) — verified correct.
+  - [x] model.1: Pointwise Conv1d (k=1, 64→2048) — verified correct.
+  - [x] model.2–7: CausalDecoderBlocks (upconv + 3× residual units).
+    - [x] upconv_transpose1d uses ggml_conv_transpose_1d — **proven correct** (standalone test F32: cos_sim=1.0, max_diff=1.5e-5; F16: cos_sim=1.0, max_diff=0.024).
+    - [x] Residual units enabled (DIAG return removed).
+    - [x] 3 residual units per block with dilations 1, 3, 9.
+  - [x] model.8: Snake activation (alpha → F32 → ggml_sin).
+  - [x] model.9: Output Conv1d (k=7, 32→1).
+  - [x] model.10: Tanh output bound.
+- [ ] **Verify block.2 upconv output matches Python reference** (blocked: no model file available locally).
 - [ ] Implement streaming decoder state.
 - [ ] Test decode latent fixture.
 - [ ] Test encode WAV fixture.
@@ -116,13 +126,19 @@
 
 - [x] Implement model weight loading for all submodules (including feat_encoder, fusion, stop, time_mlp).
 - [x] **Rewrite generate.c pipeline**: combined_embed → base_lm → FSQ → fusion_concat → RALM → concat cond → CFM → prev_latent feedback loop.
-- [ ] Implement stop predictor.
-- [ ] Implement max/min length handling.
+- [x] Implement stop predictor.
+- [x] Implement max/min length handling.
 - [ ] Implement context trimming for prompt audio.
 - [x] Implement `vcpm_generate()` full pipeline.
   - [x] Reject incomplete/mock GGUFs before graph execution instead of returning dummy audio or crashing.
 - [x] Implement stop predictor (CPU-based, uses stop_proj + SiLU + stop_head + sigmoid/softmax).
 - [x] Implement max/min length handling (min_len/max_len from gen_params).
+- [ ] **Debug audio quality**: pipeline runs end-to-end but output has low-frequency hum (~47 Hz dominant). Needs Python reference latents for DiT/CFM parity check.
+  - [ ] Export Python reference latents via converter/fixture script.
+  - [ ] Verify DiT velocity predictions match Python.
+  - [ ] Verify CFM integration produces equivalent latents.
+  - [x] **VAE decoder upconv proven correct** — ggml_conv_transpose_1d matches manual computation exactly (F32 cos_sim=1.0). Root cause of previous −0.04 vs −0.10 discrepancy was a buggy manual scatter implementation (broken ggml_view_2d stride + ggml_add).
+  - [ ] Verify VAE decoder reconstructs expected audio from both Python and C latents (need model file to run).
 - [ ] Implement `vcpm_generate_stream()`.
 - [ ] Implement `tts`, `design`, `clone`, `batch` CLI.
   - [x] `tts` CLI is wired to `vcpm_generate()`.
@@ -146,7 +162,15 @@
 - [ ] Add long-input guard.
 - [ ] Add badcase/retry guard if needed.
 
-## 14. CI
+## 14. Bugs Fixed in This Session
+
+- [x] **RALM KV cache not populated (F2)**: Added `ggml_build_forward_expand(graph, ralm_hidden)` in prompt eval so RALM output's KV cache writes execute. Without this, residual LM enters autoregressive mode with zeroed context.
+- [x] **Audio placeholder count too small (F4)**: Zero-shot builder created only `patch_size` (4) audio placeholders, yielding ~0.08s max audio. Updated to `max(patch_size*16, n_text_tokens*8)` for minimum ~2.5s budget.
+- [x] **Stop predictor matmul transposed (F4)**: Both `stop_proj` (2048×2048) and `stop_head` (2048×2) CPU matmuls computed `W^T @ x` instead of `W @ x`. Fixed indexing from `W[j*hs+i]` to `W[i*hs+j]`.
+- [x] **Missing `gen_predict_stop` forward declaration (F4)**: Static function used before definition with no prototype; MSVC assumed `int` return, causing float return value to be read as int (65535.0).
+- [x] **step_ctx memory exhaustion (F3)**: 3GB pool too small for full prompt eval graph (28 LM layers + 8 RALM layers). Increased to 8GB.
+
+## 15. CI
 
 - [ ] Linux gcc.
 - [ ] Linux clang.

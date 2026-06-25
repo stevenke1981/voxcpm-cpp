@@ -37,6 +37,15 @@ model_download/
 # Audio output
 *.wav
 
+# Binary debug dumps
+c_*.f32
+c_*.bin
+py_*.f32
+py_*.npy
+
+# OpenCode CBM database
+.opencode/
+
 # Test fixtures (large binary)
 tests/fixtures/*.gguf
 

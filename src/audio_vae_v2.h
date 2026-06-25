@@ -39,6 +39,7 @@ typedef struct vcpm_audio_vae_v2_config {
     int32_t sample_rate;            /* input sample rate (16000) */
     int32_t output_sample_rate;     /* output sample rate (48000) */
     int32_t sr_cond_enabled;        /* whether sr_cond_model is loaded */
+    int32_t sr_cond_idx;            /* bucketize(output_sample_rate, sr_bin_boundaries) */
 } vcpm_audio_vae_v2_config;
 
 /* Initialize V2 config from GGUF metadata */
