@@ -98,7 +98,7 @@
 - [x] Implement time embedding (sinusoidal).
 - [x] Implement conditioning path.
 - [x] Implement CFM schedule (callback-based config).
-- [ ] Implement CFG.
+- [x] Implement CFG.
 - [x] Implement diffusion loop (Euler + Midpoint solver).
 - [ ] Test one-step and multi-step fixtures.
 
@@ -115,12 +115,14 @@
 ## 11. Full Generation
 
 - [x] Implement model weight loading for all submodules (including feat_encoder, fusion, stop, time_mlp).
-- [ ] **Rewrite generate.c pipeline**: combined_embed → base_lm → FSQ → fusion_concat → RALM → concat cond → CFM → prev_latent feedback loop.
+- [x] **Rewrite generate.c pipeline**: combined_embed → base_lm → FSQ → fusion_concat → RALM → concat cond → CFM → prev_latent feedback loop.
 - [ ] Implement stop predictor.
 - [ ] Implement max/min length handling.
 - [ ] Implement context trimming for prompt audio.
-- [ ] Implement `vcpm_generate()` full pipeline.
+- [x] Implement `vcpm_generate()` full pipeline.
   - [x] Reject incomplete/mock GGUFs before graph execution instead of returning dummy audio or crashing.
+- [x] Implement stop predictor (CPU-based, uses stop_proj + SiLU + stop_head + sigmoid/softmax).
+- [x] Implement max/min length handling (min_len/max_len from gen_params).
 - [ ] Implement `vcpm_generate_stream()`.
 - [ ] Implement `tts`, `design`, `clone`, `batch` CLI.
   - [x] `tts` CLI is wired to `vcpm_generate()`.

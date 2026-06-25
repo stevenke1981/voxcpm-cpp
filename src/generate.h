@@ -135,6 +135,9 @@ typedef struct vcpm_generate_state {
      * Updated after each gen_step call. */
     float * prev_latent;                  /* [feat_dim] allocated in gen_init */
 
+    /* Last RALM hidden state (for stop predictor). */
+    float * last_ralm_hidden;             /* [hidden_size] or NULL */
+
     /* Per-step ggml execution resources */
     struct ggml_context * step_ctx;
     struct ggml_cgraph * step_graph;
@@ -184,7 +187,9 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
 vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                            const int32_t * token_ids,
                            int fill_pos,
-                           float * output_patch);
+                           float * output_patch,
+                           float cfg_value,
+                           int n_steps);
 
 /*
  * Run full autoregressive generation.
