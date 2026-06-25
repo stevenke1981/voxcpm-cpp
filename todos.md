@@ -140,6 +140,7 @@
   - [ ] Verify DiT velocity predictions match Python.
   - [ ] Verify CFM integration produces equivalent latents.
   - [x] **VAE decoder upconv proven correct** — ggml_conv_transpose_1d matches manual computation exactly (F32 cos_sim=1.0). Root cause of previous −0.04 vs −0.10 discrepancy was a buggy manual scatter implementation (broken ggml_view_2d stride + ggml_add).
+  - [x] **Latent buffer offset bug fixed** — `vcpm_gen_run` advanced output pointer by only `latent_dim` per patch but `vcpm_gen_step` writes `latent_dim * patch_size` floats. This caused progressive data corruption on all patches after the first. Fixed by advancing by `total_patch_dim` per patch.
   - [ ] Verify VAE decoder reconstructs expected audio from both Python and C latents (need model file to run).
 - [ ] Implement `vcpm_generate_stream()`.
   - [x] One-shot callback baseline implemented by generating full audio then invoking the stream callback once.

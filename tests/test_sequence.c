@@ -62,7 +62,10 @@ int main(void) {
         vcpm_sequence seq;
         int ret = vcpm_seq_build_zero_shot(&builder, text_tokens, 1, &seq);
         assert(ret == 0 && "single token should work");
-        assert(seq.length == 1 + 1 + 1*8 && "length check (single token, text-based placeholders)");
+        /* Placeholder count = max(patch_size*16, n_text_tokens*8) = max(192, 8) = 192 */
+        int expected_placeholders = builder.patch_size * 16 > 1 * 8
+            ? builder.patch_size * 16 : 1 * 8;
+        assert(seq.length == 1 + 1 + expected_placeholders && "length check (single token, 192 text-based placeholders)");
         printf("PASS: zero-shot single token\n");
     }
 
@@ -81,9 +84,12 @@ int main(void) {
         int ret = vcpm_seq_build_reference(&builder, text_tokens, 3, &seq);
         assert(ret == 0 && "reference sequence build should succeed");
 
-        /* Sequence: [103, feat..., 104, 10, 20, 30, 101, placeholder...] */
+        /* Sequence: [103, feat..., 104, 10, 20, 30, 101, placeholder...]
+         * Placeholder count = max(patch_size*16, n_text*8) = max(192, 24) = 192 */
         int ref_feat_len = builder.patch_size * 2;
-        int expected_len = 1 + ref_feat_len + 1 + 3 + 1 + builder.patch_size;
+        int expected_placeholders = builder.patch_size * 16 > 3 * 8
+            ? builder.patch_size * 16 : 3 * 8;
+        int expected_len = 1 + ref_feat_len + 1 + 3 + 1 + expected_placeholders;
         assert(seq.length == expected_len && "reference sequence length mismatch");
 
         /* Check ref markers */

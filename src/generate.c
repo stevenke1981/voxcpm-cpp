@@ -584,6 +584,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     int patch_size = state->model ? state->model->config.patch_size : 1;
     if (patch_size < 1) patch_size = 1;
     int total_patch_dim = latent_dim * patch_size;
+    float cfg_value = gen_params ? gen_params->cfg_value : 2.0f;
 
     /* ========== Step 1: Build audio embedding from prev_latent ========== */
     struct ggml_tensor * fe_out = NULL;
@@ -1031,6 +1032,8 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
     float stop_threshold = 0.5f;
 
     int latent_dim = state->vae_cfg.latent_dim;
+    int patch_size = state->model ? state->model->config.patch_size : 1;
+    if (patch_size < 1) patch_size = 1;
     int n_patches = 0;
 
     int first_audio_pos = -1;
@@ -1064,10 +1067,13 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
         if (st != VCPM_OK) return st;
     }
 
-    /* Step 2: Generate audio patches one at a time with stop predictor */
+    /* Step 2: Generate audio patches one at a time with stop predictor
+     * Each patch produces patch_size latent vectors of latent_dim each.
+     * Advance the output pointer by total_patch_dim per patch. */
+    int total_patch_dim = latent_dim * patch_size;
     for (int pos = first_audio_pos; pos < seq_len && n_patches < effective_max; pos++) {
         if (audio_mask[pos] != 1) continue;
-        float * patch = latent_out + (size_t)n_patches * latent_dim;
+        float * patch = latent_out + (size_t)n_patches * (size_t)total_patch_dim;
         vcpm_status st = vcpm_gen_step(state, token_ids, pos, gen_params, patch);
         if (st != VCPM_OK) return st;
         n_patches++;
