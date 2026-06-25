@@ -51,6 +51,7 @@ typedef struct vcpm_model_config {
     int vae_latent_dim;
     int vae_sample_rate;
     int vae_out_sample_rate;
+    int vae_decoder_rates[6];  /* upsampling strides per decoder block [8,6,5,2,2,2] */
 
     /* LocDiT config */
     int dit_hidden_size;

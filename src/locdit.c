@@ -72,8 +72,11 @@ struct ggml_tensor * vcpm_timestep_embed(struct ggml_context * ctx,
     }
     ggml_set_name(freqs, "t_embed_freqs");
 
-    /* t * freqs (broadcast): result [half_dim, 1] */
-    struct ggml_tensor * angles = ggml_mul(ctx, t, freqs);
+    /* t * freqs (broadcast): result [half_dim, 1].
+     * First arg 'a' is [half_dim,1], second arg 'b' is [1,1] (scalar t).
+     * ggml requires b to be broadcastable to a's shape — t is [1,1] so it
+     * broadcasts to [half_dim,1] correctly when placed as the second arg. */
+    struct ggml_tensor * angles = ggml_mul(ctx, freqs, t);
     ggml_set_name(angles, "t_embed_angles");
 
     /* sin(angles) and cos(angles) */
@@ -96,47 +99,33 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
                                           const vcpm_locdit_weights * w) {
     (void)graph;
 
-    /* Step 1: Input projection
-     *   x: [in_dim, seq_len]
-     *   w->input_proj_weight: [in_dim, hidden_size]
-     *   h: [hidden_size, seq_len]
-     */
     struct ggml_tensor * h = ggml_mul_mat(ctx, w->input_proj_weight, x);
     ggml_set_name(h, "dit_input_proj");
 
-    /* Step 2: Add timestep embedding to every position
-     *   timestep_emb: [hidden_size, 1]
-     *   broadcast adds to all positions along seq_len
-     *   h += timestep_emb
+    /* Step 2: Add conditioning to hidden states
+     *   cond: [hidden_size, seq_len] — projected from LM hidden
+     *   h += cond
      */
+    struct ggml_tensor * cond_to_add = cond;
+    if (cond && w->cond_proj_weight && cond->ne[0] == w->cond_proj_weight->ne[0]) {
+        /* Project cond through cond_proj to hidden size */
+        cond_to_add = ggml_mul_mat(ctx, w->cond_proj_weight, cond);
+        ggml_set_name(cond_to_add, "dit_cond_proj");
+    }
+    if (cond_to_add) {
+        h = ggml_add(ctx, h, cond_to_add);
+        ggml_set_name(h, "dit_add_cond");
+    }
+
+    /* Step 3: Add timestep embedding to every position */
     if (timestep_emb) {
         h = ggml_add(ctx, h, timestep_emb);
         ggml_set_name(h, "dit_add_t_embed");
     }
 
-    /* Step 3: Add conditioning
-     *   cond: [hidden_size, seq_len] (or [hidden_size, 1] to broadcast)
-     *   h += cond
-     */
-    if (cond) {
-        h = ggml_add(ctx, h, cond);
-        ggml_set_name(h, "dit_add_cond");
-    }
-
     /* Step 4: Process through DiT transformer blocks.
-     *
-     * Each block is the same pattern as MiniCPM4:
-     *   RMSNorm → Self-Attention → Residual → RMSNorm → SwiGLU MLP → Residual
-     *
-     * For DiT we use:
-     *   - bidirectional attention (no causal mask)
-     *   - no KV cache (process all positions simultaneously)
-     *   - no_rope=1 (no positional encoding, or set 0 if needed)
-     *
-     * NOTE: The real DiT may use adaptive layer norm (adaLN) modulated
-     * by timestep embedding. This skeleton uses a simpler approach where
-     * timestep is injected upfront via addition. Refinement needed when
-     * upstream architecture details are available.
+     * Each block: RMSNorm -> Self-Attention -> Residual -> RMSNorm -> SwiGLU MLP -> Residual
+     * no_rope=1, no causal mask for DiT.
      */
     for (int i = 0; i < cfg->n_layers; i++) {
         vcpm_minicpm4_layer_weights lw;
@@ -190,13 +179,7 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
     h = vcpm_rms_norm(ctx, h, w->norm_weight, cfg->rms_norm_eps);
     ggml_set_name(h, "dit_norm");
 
-    /* Step 6: Output projection
-     *   h:  [hidden_size, seq_len]
-     *   w->output_proj_weight: [hidden_size, out_dim]
-     *   out: [out_dim, seq_len]
-     */
     struct ggml_tensor * out = ggml_mul_mat(ctx, w->output_proj_weight, h);
     ggml_set_name(out, "dit_output");
-
     return out;
 }

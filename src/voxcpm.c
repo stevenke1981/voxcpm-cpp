@@ -136,36 +136,40 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
     /* ---- Try full model inference pipeline ---- */
     vcpm_generate_state * gen_state = vcpm_gen_init(ctx->model, 0);
     if (gen_state) {
-        float latent_buffer[4096 * 64];  /* generous: 4096 patches x 64 latent dim */
+        float * latent_buffer = (float *)malloc((size_t)4096 * 64 * sizeof(float));
         int n_patches = 0;
 
-        vcpm_status st = vcpm_gen_run(gen_state,
-                                       seq.token_ids,
-                                       seq.text_mask,
-                                       seq.audio_mask,
-                                       seq.length,
-                                       latent_buffer,
-                                       &n_patches,
-                                       4096,
-                                       params);
-        if (st == VCPM_OK && n_patches > 0) {
-            /* Decode latents to waveform */
-            size_t max_audio_samples = ctx->model->config.sample_rate * 30;  /* 30 sec max */
-            float * audio_buf = (float *)malloc(max_audio_samples * sizeof(float));
-            if (audio_buf) {
-                int n_samples = 0;
-                st = vcpm_gen_decode(gen_state, latent_buffer, n_patches,
-                                      audio_buf, (int)max_audio_samples, &n_samples);
-                if (st == VCPM_OK && n_samples > 0) {
-                    out_audio->samples     = audio_buf;
-                    out_audio->sample_rate = ctx->model->config.sample_rate;
-                    out_audio->n_channels  = 1;
-                    out_audio->n_samples   = (size_t)n_samples;
-                    vcpm_gen_free(gen_state);
-                    return VCPM_OK;
+        if (latent_buffer) {
+            vcpm_status st = vcpm_gen_run(gen_state,
+                                           seq.token_ids,
+                                           seq.text_mask,
+                                           seq.audio_mask,
+                                           seq.length,
+                                           latent_buffer,
+                                           &n_patches,
+                                           4096,
+                                           params);
+            if (st == VCPM_OK && n_patches > 0) {
+                /* Decode latents to waveform */
+                size_t max_audio_samples = ctx->model->config.sample_rate * 30;  /* 30 sec max */
+                float * audio_buf = (float *)malloc(max_audio_samples * sizeof(float));
+                if (audio_buf) {
+                    int n_samples = 0;
+                    st = vcpm_gen_decode(gen_state, latent_buffer, n_patches,
+                                          audio_buf, (int)max_audio_samples, &n_samples);
+                    if (st == VCPM_OK && n_samples > 0) {
+                        out_audio->samples     = audio_buf;
+                        out_audio->sample_rate = ctx->model->config.sample_rate;
+                        out_audio->n_channels  = 1;
+                        out_audio->n_samples   = (size_t)n_samples;
+                        free(latent_buffer);
+                        vcpm_gen_free(gen_state);
+                        return VCPM_OK;
+                    }
+                    free(audio_buf);
                 }
-                free(audio_buf);
             }
+            free(latent_buffer);
         }
         vcpm_gen_free(gen_state);
     }

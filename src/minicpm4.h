@@ -98,10 +98,11 @@ struct ggml_tensor * vcpm_embed(struct ggml_context * ctx,
                                 struct ggml_tensor * tokens,
                                 struct ggml_tensor * embed_weight);
 
-/* Build RoPE on query and key tensors in-place (modifies q, k) */
+/* Build RoPE on query and key tensors in-place (modifies q, k).
+ * n_tokens: number of tokens in the sequence (positions = pos..pos+n_tokens-1) */
 void vcpm_rope(struct ggml_context * ctx, struct ggml_cgraph * graph,
                struct ggml_tensor * q, struct ggml_tensor * k,
-               int32_t pos, int32_t head_dim, int32_t rope_theta);
+               int32_t pos, int32_t n_tokens, int32_t head_dim, int32_t rope_theta);
 
 /* Build attention graph with KV cache.
  * Returns the attention output tensor.

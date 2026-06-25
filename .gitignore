@@ -24,3 +24,17 @@ Thumbs.db
 __pycache__/
 *.pyc
 *.egg-info/
+
+# Model files
+*.gguf
+model_download/
+
+# Audio output
+*.wav
+
+# Test fixtures (large binary)
+tests/fixtures/*.gguf
+
+# Python venv
+.venv/
+venv/

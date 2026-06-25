@@ -5,6 +5,7 @@
 #include "minicpm4.h"
 #include "locdit.h"
 #include "audio_vae.h"
+#include "audio_vae_v2.h"
 
 /*
  * generate.h — Full VoxCPM2 autoregressive generation pipeline.
@@ -83,10 +84,7 @@ typedef struct vcpm_generate_state {
     struct ggml_tensor * dit_input_proj;
     struct ggml_tensor * dit_output_proj;
     struct ggml_tensor * dit_norm;
-    struct ggml_tensor * dit_t_embed_w0;
-    struct ggml_tensor * dit_t_embed_b0;
-    struct ggml_tensor * dit_t_embed_w1;
-    struct ggml_tensor * dit_t_embed_b1;
+    struct ggml_tensor * dit_cond_proj;
     vcpm_locdit_layer_weights dit_layer_weights[VCPM_MAX_LAYERS];
 
     /* KV caches (mutable runtime state) */
@@ -99,8 +97,9 @@ typedef struct vcpm_generate_state {
     struct ggml_cgraph * step_graph;
     size_t step_mem_size;
 
-    /* AudioVAE config */
+    /* AudioVAE configs */
     vcpm_audio_vae_config vae_cfg;
+    vcpm_audio_vae_v2_config vae_v2_cfg;  /* V2 decoder config */
 
     /* Opaque model pointer for weight loading */
     const struct vcpm_model * model;

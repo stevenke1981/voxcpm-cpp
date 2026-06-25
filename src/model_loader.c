@@ -78,6 +78,7 @@ vcpm_model_config vcpm_model_config_default(void) {
     c.vae_latent_dim        = 16;
     c.vae_sample_rate       = 16000;
     c.vae_out_sample_rate   = 48000;
+    { int rates[6] = {8, 6, 5, 2, 2, 2}; memcpy(c.vae_decoder_rates, rates, sizeof(rates)); }
     c.dit_hidden_size       = 1024;
     c.dit_num_layers        = 8;
     c.dit_num_heads         = 8;
@@ -97,11 +98,11 @@ vcpm_model * vcpm_model_load(const char * path, char * err_buf, size_t err_buf_s
         return NULL;
     }
 
-    /* Create ggml context for tensor metadata (no data allocation) */
+    /* Create ggml context for tensor metadata (with data allocation) */
     struct ggml_context * ggml_ctx = NULL;
 
     struct gguf_init_params gguf_params = {
-        .no_alloc = true,   /* don't alloc tensor data */
+        .no_alloc = false,  /* alloc tensor data so weights are accessible via tensor->data */
         .ctx      = &ggml_ctx,  /* gguf will create the ggml context */
     };
 

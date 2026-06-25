@@ -14,6 +14,7 @@
 #include "cfm_solver.h"
 
 #include "ggml.h"
+#include "ggml-cpu.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,7 +60,7 @@ static struct ggml_tensor * step_euler(
     struct ggml_tensor * x_next = ggml_add(ctx, x_t, step);
 
     /* Compute graph */
-    ggml_graph_compute_with_ctx(ctx, graph);
+    ggml_graph_compute_with_ctx(ctx, graph, 1);
 
     return x_next;
 }
@@ -93,7 +94,7 @@ static struct ggml_tensor * step_midpoint(
     struct ggml_tensor * v2_scaled = ggml_mul(ctx, v2, dt_tensor);
     struct ggml_tensor * x_next = ggml_add(ctx, x_t, v2_scaled);
 
-    ggml_graph_compute_with_ctx(ctx, graph);
+    ggml_graph_compute_with_ctx(ctx, graph, 1);
 
     return x_next;
 }

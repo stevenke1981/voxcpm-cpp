@@ -43,6 +43,7 @@ add_library(voxcpm STATIC
     src/locdit.c
     src/cfm_solver.c
     src/audio_vae.c
+    src/audio_vae_v2.c
     src/generate.c
 )
 
@@ -99,4 +100,29 @@ if(VCPM_BUILD_TESTS)
     target_include_directories(test_model_loader_tensors PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_model_loader_tensors PRIVATE voxcpm)
     add_test(NAME model_loader_tensors COMMAND test_model_loader_tensors)
+
+    add_executable(test_vae_only tools/test_vae_only.c)
+    target_include_directories(test_vae_only PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES} ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(test_vae_only PRIVATE voxcpm)
+    add_test(NAME vae_only COMMAND test_vae_only E:/voxcpm-cpp/voxcpm2_v1_mixed.gguf)
+
+    add_executable(test_depthwise_only tools/test_depthwise_only.c)
+    target_include_directories(test_depthwise_only PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES} ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(test_depthwise_only PRIVATE voxcpm)
+
+    add_executable(test_conv1d_only tools/test_conv1d_only.c)
+    target_include_directories(test_conv1d_only PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES} ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(test_conv1d_only PRIVATE voxcpm)
+
+    add_executable(test_model9_only tools/test_model9_only.c)
+    target_include_directories(test_model9_only PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES} ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(test_model9_only PRIVATE voxcpm)
+
+    add_executable(dump_tensors tools/dump_tensors.c)
+    target_include_directories(dump_tensors PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES} ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(dump_tensors PRIVATE voxcpm)
+
+    add_executable(check_alpha tools/check_alpha.c)
+    target_include_directories(check_alpha PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES} ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(check_alpha PRIVATE voxcpm)
 endif()

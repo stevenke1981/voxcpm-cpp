@@ -50,6 +50,7 @@ typedef struct vcpm_locdit_weights {
     struct ggml_tensor * input_proj_weight;   /* [in_dim, hidden_size] */
     struct ggml_tensor * output_proj_weight;  /* [hidden_size, out_dim] */
     struct ggml_tensor * norm_weight;         /* final RMSNorm weight */
+    struct ggml_tensor * cond_proj_weight;    /* [hidden_size, cond_dim] conditioning proj */
     /* Optional timestep embedding MLP (2-layer): [hidden_size, hidden_size] each */
     struct ggml_tensor * t_embed_weight_0;
     struct ggml_tensor * t_embed_bias_0;
