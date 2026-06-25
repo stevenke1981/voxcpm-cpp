@@ -190,6 +190,126 @@ int main(int argc, char ** argv) {
         }
     }
 
+    /* Direct model.9 verification: compute expected output manually */
+    {
+        struct ggml_tensor * blk7 = NULL;
+        struct ggml_tensor * mod9 = NULL;
+        struct ggml_tensor ** dbg = NULL;
+        int dbg_count = 0;
+        vcpm_vae_v2_get_debug_tensors(&dbg, &dbg_count);
+        /* IMPORTANT: model.9 input is model.8 (snake) output, not block.7 output! */
+        if (dbg_count >= 10) {
+            blk7 = dbg[8];  /* model.8 snake output = model.9 input */
+            mod9 = dbg[9];
+        }
+        if (blk7 && blk7->data && mod9 && mod9->data) {
+            int N = (int)blk7->ne[0], IC = (int)blk7->ne[1];
+            int OW = (int)mod9->ne[0], OC = (int)mod9->ne[1];
+            float * blk7_data = (float *)blk7->data;
+            float * mod9_data = (float *)mod9->data;
+
+            /* Load weight for manual verification */
+            struct ggml_tensor * w9 = vcpm_model_get_tensor(model,
+                "audio_vae.decoder.model.9.weight.weight");
+            struct ggml_tensor * b9 = vcpm_model_get_tensor(model,
+                "audio_vae.decoder.model.9.bias");
+
+            if (w9 && b9) {
+                int K = (int)w9->ne[0];
+                int pad = 3, stride = 1, dilate = 1;
+                int OW_exp = (N + 2*pad - dilate*(K-1) - 1) / stride + 1;
+
+                /* Convert weight to F32 for manual im2col computation */
+                size_t nw = (size_t)ggml_nelements(w9);
+                float * w_f32 = (float *)malloc(nw * sizeof(float));
+                if (w9->type == GGML_TYPE_F16) {
+                    ggml_fp16_t * src = (ggml_fp16_t *)w9->data;
+                    for (size_t i = 0; i < nw; i++)
+                        w_f32[i] = ggml_fp16_to_fp32(src[i]);
+                } else {
+                    memcpy(w_f32, w9->data, nw * sizeof(float));
+                }
+
+                /* Manual im2col + matmul (matching ggml convention) */
+                double sum_sq_ref = 0, sum_sq_c = 0;
+                double sum_diff_sq = 0;
+                /* Sample every 100th element for speed */
+                for (int iow = 0; iow < OW_exp && iow < OW; iow += 100) {
+                    float ref_val = 0;
+                    for (int ic = 0; ic < IC; ic++) {
+                        for (int k = 0; k < K; k++) {
+                            int iiw = iow + k - pad;
+                            float x = (iiw >= 0 && iiw < N) ? blk7_data[iiw + ic * N] : 0.0f;
+                            float w = w_f32[k + ic * K + 0 * K * IC];
+                            ref_val += x * w;
+                        }
+                    }
+                    float bias_val = (b9->type == GGML_TYPE_F32) ? ((float *)b9->data)[0] : 0.0f;
+                    ref_val += bias_val;
+
+                    float c_val = mod9_data[iow + 0 * OW];
+                    sum_sq_ref += (double)ref_val * ref_val;
+                    sum_sq_c   += (double)c_val * c_val;
+                    sum_diff_sq += (double)(ref_val - c_val) * (ref_val - c_val);
+                }
+                int n_samples = (OW_exp < OW ? OW_exp : OW) / 100;
+                if (n_samples > 0) {
+                    printf("\n=== Manual model.9 verification (every 100th sample) ===\n");
+                    printf("  Reference RMS: %.10f\n", sqrt(sum_sq_ref / n_samples));
+                    printf("  C output RMS:  %.10f\n", sqrt(sum_sq_c / n_samples));
+                    printf("  Diff RMS:      %.10f\n", sqrt(sum_diff_sq / n_samples));
+                    printf("  Relative error: %.6f\n",
+                           sqrt(sum_diff_sq / n_samples) / (sqrt(sum_sq_ref / n_samples) + 1e-30));
+                    /* Print first few */
+                    printf("  First 3 ref / C:\n");
+                    for (int iow = 0; iow < 3 && iow < OW; iow++) {
+                        float ref_val = 0;
+                        for (int ic = 0; ic < IC; ic++)
+                            for (int k = 0; k < K; k++) {
+                                int iiw = iow + k - pad;
+                                float x = (iiw >= 0 && iiw < N) ? blk7_data[iiw + ic * N] : 0.0f;
+                                float w = w_f32[k + ic * K + 0 * K * IC];
+                                ref_val += x * w;
+                            }
+                        float bias_val = (b9->type == GGML_TYPE_F32) ? ((float *)b9->data)[0] : 0.0f;
+                        printf("    [%d] ref=%.10f C=%.10f diff=%.10f\n",
+                               iow, ref_val + bias_val, mod9_data[iow],
+                               ref_val + bias_val - mod9_data[iow]);
+                    }
+                }
+                free(w_f32);
+            }
+        }
+    }
+
+    /* Dump block.7 (model.9 input) and model.9 output for Python comparison */
+    {
+        struct ggml_tensor ** dbg = NULL;
+        int dbg_count = 0;
+        vcpm_vae_v2_get_debug_tensors(&dbg, &dbg_count);
+        if (dbg_count >= 10) {
+            struct ggml_tensor * blk7 = dbg[7];  /* block.7 output = model.9 input */
+            struct ggml_tensor * mod9 = dbg[9];  /* model.9 output */
+            if (blk7 && blk7->data && mod9 && mod9->data) {
+                FILE * fp = fopen("E:\\voxcpm-cpp\\vae_debug_dump.bin", "wb");
+                if (fp) {
+                    /* Write block.7: ne=[N, IC] */
+                    int64_t N7 = blk7->ne[0], IC7 = blk7->ne[1];
+                    fwrite(&N7, sizeof(N7), 1, fp);
+                    fwrite(&IC7, sizeof(IC7), 1, fp);
+                    fwrite(blk7->data, (size_t)ggml_nbytes(blk7), 1, fp);
+                    /* Write model.9: ne=[N, OC] */
+                    int64_t N9 = mod9->ne[0], OC9 = mod9->ne[1];
+                    fwrite(&N9, sizeof(N9), 1, fp);
+                    fwrite(&OC9, sizeof(OC9), 1, fp);
+                    fwrite(mod9->data, (size_t)ggml_nbytes(mod9), 1, fp);
+                    fclose(fp);
+                    printf("\nDumped block.7 and model.9 to vae_debug_dump.bin\n");
+                }
+            }
+        }
+    }
+
     /* Print output stats */
     if (audio->data) {
         int n = (int)audio->ne[0];

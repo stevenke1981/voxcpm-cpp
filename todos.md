@@ -47,7 +47,7 @@
 
 - [x] Load tokenizer metadata from GGUF.
 - [x] Implement encode for UTF-8.
-- [ ] Preserve upstream handling of Chinese multi-character tokens.
+- [x] Preserve upstream handling of Chinese multi-character tokens (removed unconditional CJK expansion in append_expanded_token).
 - [x] Add special speech tokens.
 - [x] Add `voxcpm-c tokenize`.
 - [ ] Test exact ids vs Python.
@@ -115,7 +115,7 @@
     - [x] Residual units enabled (DIAG return removed).
     - [x] 3 residual units per block with dilations 1, 3, 9.
   - [x] model.8: Snake activation (alpha → F32 → ggml_sin).
-  - [x] model.9: Output Conv1d (k=7, 32→1).
+  - [x] model.9: Output Conv1d (k=7, 32→1) — **verified correct**: conv1d_f32 (F32 im2col + F32 matmul) matches manual im2col reference to 0.0006% relative error. Matches original F16 ggml_conv_1d path (identical RMS). The earlier 8× discrepancy was caused by the Python reference having no dilation/wrong im2col layout AND the manual verification using block.7 instead of model.8 (snake-activated) input.
   - [x] model.10: Tanh output bound.
 - [ ] **Verify block.2 upconv output matches Python reference** (blocked: no model file available locally).
 - [ ] Implement streaming decoder state.
@@ -177,6 +177,8 @@
 - [x] **Stop predictor matmul transposed (F4)**: Both `stop_proj` (2048×2048) and `stop_head` (2048×2) CPU matmuls computed `W^T @ x` instead of `W @ x`. Fixed indexing from `W[j*hs+i]` to `W[i*hs+j]`.
 - [x] **Missing `gen_predict_stop` forward declaration (F4)**: Static function used before definition with no prototype; MSVC assumed `int` return, causing float return value to be read as int (65535.0).
 - [x] **step_ctx memory exhaustion (F3)**: 3GB pool too small for full prompt eval graph (28 LM layers + 8 RALM layers). Increased to 8GB.
+- [x] **ggml_conv_1d hardcodes F16 im2col (F4)**: Replaced `ggml_conv_1d` with custom `conv1d_f32()` using `ggml_im2col(GGML_TYPE_F32)` + F32 matmul. Depthwise conv also updated for F32 weight expansion. Verified correct: relative error < 0.001% vs manual im2col reference. Output identical to original F16 path (no numerical regression).
+- [x] **Manual model.9 verification used wrong input (F5)**: Test code used `dbg[7]` (block.7 output) instead of `dbg[8]` (model.8 snake output) as model.9 input, causing 56% relative error. Fixed by switching to `dbg[8]`. After fix, manual reference matches C conv1d_f32 output to 0.0006%.
 
 ## 15. CI
 

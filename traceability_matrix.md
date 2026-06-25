@@ -27,7 +27,7 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 | G3 | test.md §8 | Base LM parity | ✅ | test_minicpm4 passes |
 | G4 | test.md §8 | LocEnc/FSQ/RALM parity | ✅ | test_phase5 passes |
 | G5 | test.md §8 | LocDiT/CFM parity | ⏳ | Needs model fixture test |
-| G6 | test.md §8 | AudioVAE decode parity | ⏳ | Needs model fixture test |
+| G6 | test.md §8 | AudioVAE decode numerical correctness | ✅ | test_vae_only + manual im2col verify: all 10 decoder layers enumerated; model.0, model.1, model.9 conv verified against manual reference to < 0.001% error; upconv verified F32 cos_sim=1.0 |
 | G7 | test.md §8 | End-to-end TTS smoke | ⏳ | Needs full model weights |
 | G8 | test.md §8 | Reference cloning smoke | ⏳ | Not implemented |
 | G9 | test.md §8 | Streaming smoke | ⏳ | Not implemented |
@@ -41,6 +41,10 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 | 2026-06-25 | Bug fix: stop predictor matmul transposed indexing | F4, spec.md §8.10 | Changed W[j*hs+i] to W[i*hs+j] in both stop_proj and stop_head |
 | 2026-06-25 | Bug fix: gen_predict_stop forward declaration missing | F4, spec.md §8.10 | Added prototype before vcpm_gen_run; MSVC assumed int return |
 | 2026-06-25 | Bug fix: step_ctx memory pool exhaustion (3GB→8GB) | F3, G0 | Increased step_mem to accommodate full prompt eval compute graph |
+| 2026-06-25 | Bug fix: latent buffer offset wrong in vcpm_gen_run | F4, T5 | Changed `latent_out + n_patches * latent_dim` to `latent_out + n_patches * total_patch_dim` |
+| 2026-06-25 | Bug fix: ggml_view_2d + ggml_add in manual upconv | F3, T10 | Reverted to native ggml_conv_transpose_1d; removed all post-compute fixup infrastructure |
+| 2026-06-25 | Bug fix: CJK multi-character token expansion wrong | F4, T0 | Removed unconditional CJK splitting in append_expanded_token; BPE output now used as-is |
+| 2026-06-26 | F32 conv1d precision fix: replaced ggml_conv_1d (F16 im2col) with F32 im2col + F32 matmul | F3, G6 | conv1d_f32() verified: manual im2col reference matches to < 0.001% relative error; output identical to original F16 path |
 
 ## Legend
 

@@ -70,10 +70,14 @@ static struct ggml_tensor * tensor_by_name(struct ggml_context * ctx,
  *
  * Auto-detects depthwise vs regular conv from weight shape:
  *   weight ne[1] == 1 → depthwise (uses diagonal weight expansion)
- *   weight ne[1] > 1  → regular (ggml_conv_1d)
+ *   weight ne[1] > 1  → regular (conv1d_f32)
  *
  * For depthwise: weight [K, 1, C], input [N, C], output [OW, C]
  * For regular:   weight [K, IC, OC], input [N, IC], output [OW, OC]
+ *
+ * F32 precision: All convolutions use F32 im2col and F32 matmul
+ * instead of ggml_conv_1d's hardcoded F16, to avoid cumulative
+ * precision loss in deep VAE decoder stacks.
  * ---- */
 
 /* ---- Helper: get weight data pointer with proper F16→F32 conversion
@@ -99,6 +103,70 @@ static float * ensure_f32_weights(struct ggml_tensor * weight,
         return dst;
     }
     return NULL;
+}
+
+/* ---- F32-precision conv1d (replaces ggml_conv_1d to avoid F16 im2col)
+ *
+ * ggml_conv_1d internally creates F16 im2col and may use F16 matmul,
+ * causing precision loss in deep decoder stacks. This function uses
+ * F32 im2col and F32 matmul explicitly.
+ *
+ * weight: [K, IC, OC] (F16 or F32 — if F16, an F32 copy is created)
+ * input:  [N, IC] (F32)
+ * output: [OW, OC] after reshape
+ */
+static struct ggml_tensor * conv1d_f32(struct ggml_context * ctx,
+                                        struct ggml_tensor * weight,
+                                        struct ggml_tensor * input,
+                                        int s0, int p0, int d0) {
+    /* Step 1: F32 im2col (ggml_im2col_f32 does not check weight type) */
+    struct ggml_tensor * im2col = ggml_im2col(ctx, weight, input,
+                                               s0, 0, p0, 0, d0, 0,
+                                               false, GGML_TYPE_F32);
+    if (!im2col) return NULL;
+
+    /* Step 2: Convert weight to F32 if needed */
+    struct ggml_tensor * w = weight;
+    if (weight->type != GGML_TYPE_F32) {
+        size_t n = (size_t)ggml_nelements(weight);
+        w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,
+                                weight->ne[0], weight->ne[1], weight->ne[2]);
+        if (!w || !w->data) return NULL;
+        if (weight->type == GGML_TYPE_F16) {
+            ggml_fp16_t * src = (ggml_fp16_t *)weight->data;
+            float * dst = (float *)w->data;
+            for (size_t i = 0; i < n; i++) {
+                dst[i] = ggml_fp16_to_fp32(src[i]);
+            }
+        } else {
+            return NULL;
+        }
+    }
+
+    /* Debug: verify F32 path is active */
+    fprintf(stderr, "DEBUG conv1d_f32: weight ne=[%lld,%lld,%lld] type=%d->%d input ne=[%lld,%lld] pad=%d\n",
+            (long long)weight->ne[0], (long long)weight->ne[1], (long long)weight->ne[2],
+            weight->type, w->type,
+            (long long)input->ne[0], (long long)input->ne[1], p0);
+
+    /* Step 3: Reshape and matmul in F32
+     * im2col: [IC*K, OW, N] → [IC*K, N*OW]
+     * weight: [K, IC, OC]   → [K*IC, OC]
+     * mul_mat(src0, src1): see ggml convention
+     *   src0 = [KIC, N*OW] → (N*OW, KIC)
+     *   src1 = [KIC, OC]   → internally transposed to (OC, KIC)
+     *   result = (N*OW, OC) → reshape to [OW, OC, N]
+     */
+    struct ggml_tensor * im2col_2d = ggml_reshape_2d(ctx, im2col,
+        im2col->ne[0], im2col->ne[2] * im2col->ne[1]);
+    struct ggml_tensor * w_2d = ggml_reshape_2d(ctx, w,
+        w->ne[0] * w->ne[1], w->ne[2]);
+    struct ggml_tensor * result = ggml_mul_mat(ctx, im2col_2d, w_2d);
+    if (!result) return NULL;
+
+    result = ggml_reshape_3d(ctx, result,
+        im2col->ne[1], w->ne[2], im2col->ne[2]);
+    return result;
 }
 
 /* ---- Causal depthwise conv1d via ggml operations
@@ -168,9 +236,10 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
     ggml_set_name(padded, "vae_dw_pad");
 
     /* Diagonal weight expansion [K, 1, OC] -> [K, OC, OC]
-     * ggml_conv_1d expects weight ne = [K, IC, OC].
-     * For depthwise with groups=OC: IC=OC with diagonal entries. */
-    struct ggml_tensor * w_exp = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, K, C, C);
+     * conv1d_f32 expects weight ne = [K, IC, OC].
+     * For depthwise with groups=OC: IC=OC with diagonal entries.
+     * We use F32 for the expanded weight to avoid F16 precision loss. */
+    struct ggml_tensor * w_exp = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, K, C, C);
     if (!w_exp || !w_exp->data) {
         fprintf(stderr, "depthwise_conv1d: w_exp alloc failed\n");
         if (bias && bias->ne[0] == (int64_t)C) {
@@ -180,7 +249,7 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
         return input;
     }
     {
-        ggml_fp16_t * w_dst = (ggml_fp16_t *)w_exp->data;
+        float * w_dst = (float *)w_exp->data;
         memset(w_dst, 0, (size_t)ggml_nbytes(w_exp));
 
         size_t n_w = (size_t)ggml_nelements(weight);
@@ -206,7 +275,7 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
                 float val = f32_w[src_idx];
                 size_t dst_idx = (size_t)kp + (size_t)ch * (size_t)K
                                + (size_t)ch * (size_t)K * (size_t)C;
-                w_dst[dst_idx] = ggml_fp32_to_fp16(val);
+                w_dst[dst_idx] = val;
             }
         }
         free(f32_scratch);
@@ -214,9 +283,9 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
     ggml_set_name(w_exp, "vae_dw_exp");
 
     /* Convolve padded input with diagonal weight, pad=0 (we already padded) */
-    struct ggml_tensor * out = ggml_conv_1d(ctx, w_exp, padded, stride, 0, dilate);
+    struct ggml_tensor * out = conv1d_f32(ctx, w_exp, padded, stride, 0, dilate);
     if (!out) {
-        fprintf(stderr, "depthwise_conv1d: ggml_conv_1d failed\n");
+        fprintf(stderr, "depthwise_conv1d: conv1d_f32 failed\n");
         if (bias && bias->ne[0] == (int64_t)C) {
             struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
             return ggml_add(ctx, input, b2);
@@ -247,8 +316,8 @@ static struct ggml_tensor * conv1d_layer(struct ggml_context * ctx,
         return depthwise_conv1d(ctx, graph, weight, bias, input, stride, pad, dilate, model);
     }
 
-    /* Regular conv1d */
-    out = ggml_conv_1d(ctx, weight, input, stride, pad, dilate);
+    /* Regular conv1d (F32 precision) */
+    out = conv1d_f32(ctx, weight, input, stride, pad, dilate);
     if (!out) return NULL;
     out = ggml_reshape_2d(ctx, out, out->ne[0], out->ne[1]);
 
@@ -650,9 +719,6 @@ struct ggml_tensor * vcpm_vae_v2_decode(
             sr_cond_idx = -1;
         }
     }
-    /* DIAG: override sr_cond for isolation testing */
-    sr_cond_idx = -1;
-
     /* ---- model.2 through model.7: CausalDecoderBlocks ---- */
     int strides[6];
     for (int i = 0; i < 6; i++) strides[i] = cfg->decoder_rates[i];

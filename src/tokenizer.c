@@ -249,48 +249,6 @@ static int split_initial_symbols(const vcpm_tokenizer * tok, const char * normal
 static int append_expanded_token(const vcpm_tokenizer * tok, int token_id,
                                  int32_t * ids, int * n_tokens, int max_len) {
     if (token_id < 0 || token_id >= tok->vocab_size || !tok->tokens[token_id]) return -1;
-
-    const char * token = tok->tokens[token_id];
-    int cjk_count = 0;
-    int all_cjk = 1;
-    const char * p = token;
-    while (*p) {
-        static const char marker[] = "\xE2\x96\x81";
-        if (strncmp(p, marker, 3) == 0) {
-            p += 3;
-            continue;
-        }
-        int clen = utf8_char_len((unsigned char)*p);
-        unsigned int cp = utf8_codepoint(p, clen);
-        if (!is_cjk_codepoint(cp)) {
-            all_cjk = 0;
-            break;
-        }
-        cjk_count++;
-        p += clen;
-    }
-
-    if (all_cjk && cjk_count >= 2) {
-        p = token;
-        while (*p) {
-            static const char marker[] = "\xE2\x96\x81";
-            if (strncmp(p, marker, 3) == 0) {
-                p += 3;
-                continue;
-            }
-            int clen = utf8_char_len((unsigned char)*p);
-            char * ch = strndup_local(p, (size_t)clen);
-            if (!ch) return -1;
-            int ch_id = token_id_by_str(tok, ch);
-            free(ch);
-            if (ch_id < 0) return -1;
-            if (*n_tokens >= max_len) return 0;
-            ids[(*n_tokens)++] = ch_id;
-            p += clen;
-        }
-        return 0;
-    }
-
     if (*n_tokens >= max_len) return 0;
     ids[(*n_tokens)++] = token_id;
     return 0;
