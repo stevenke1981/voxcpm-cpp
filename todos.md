@@ -40,7 +40,7 @@
 - [x] Validate `general.architecture == voxcpm2`.
 - [x] Load metadata into `vcpm_model_config`.
 - [x] Resolve tensor pointers by canonical names.
-- [ ] Add missing tensor diagnostics.
+- [x] Add missing tensor diagnostics.
 - [x] Implement `voxcpm-c inspect`.
 
 ## 4. Tokenizer
@@ -84,11 +84,11 @@
 
 ## 8. LocEnc / FSQ / RALM / Projections
 
-- [x] Implement LocEnc (skeleton).
+- [x] Implement LocEnc (skeleton → full: fixed GGUF prefix feat_encoder.blk, in_proj+bias, special_token, no_rope=1).
 - [x] Implement `enc_to_lm_proj` (inline in projections.h).
 - [x] Implement FSQ/scalar quantization layer.
 - [x] Implement residual LM with `vocab_size=0` path.
-- [x] Implement `fusion_concat_proj` (inline in projections.h).
+- [x] Implement `fusion_concat_proj` (loaded in generate.c).
 - [x] Implement `lm_to_dit_proj` and `res_to_dit_proj` (inline in projections.h).
 - [ ] Test `dit_hidden` parity.
 
@@ -114,8 +114,8 @@
 
 ## 11. Full Generation
 
-- [ ] Implement model weight loading for all submodules.
-- [ ] Implement autoregressive generation loop.
+- [x] Implement model weight loading for all submodules (including feat_encoder, fusion, stop, time_mlp).
+- [ ] **Rewrite generate.c pipeline**: combined_embed → base_lm → FSQ → fusion_concat → RALM → concat cond → CFM → prev_latent feedback loop.
 - [ ] Implement stop predictor.
 - [ ] Implement max/min length handling.
 - [ ] Implement context trimming for prompt audio.

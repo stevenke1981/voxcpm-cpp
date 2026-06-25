@@ -207,7 +207,10 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
                                                        write_pos * k_cache->nb[2]);
     ggml_set_name(k_cache_view, "k_cache_view");
     struct ggml_tensor * k_copied = ggml_cpy(ctx, k_reshaped, k_cache_view);
-    GGML_UNUSED(k_copied);
+    /* Must add to graph so the copy actually executes during compute.
+     * Otherwise ggml_build_forward_expand from the output tensor never
+     * reaches this orphan node and the KV cache stays zero. */
+    ggml_build_forward_expand(graph, k_copied);
 
     struct ggml_tensor * v_cache_view = ggml_view_3d(ctx, v_cache,
                                                        head_dim, n_kv_heads, ne_kv,
@@ -216,7 +219,7 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
                                                        write_pos * v_cache->nb[2]);
     ggml_set_name(v_cache_view, "v_cache_view");
     struct ggml_tensor * v_copied = ggml_cpy(ctx, v_reshaped, v_cache_view);
-    GGML_UNUSED(v_copied);
+    ggml_build_forward_expand(graph, v_copied);
 
     /* Cache accumulates: increment by n_tokens */
     *n_cache_used = write_pos + (int32_t)n_tokens;
@@ -281,8 +284,6 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
     /* For n_tokens>1 (prompt eval), process one token at a time by calling
      * ourselves recursively. This avoids complex 3D batched attention. */
     if (n_tokens > 1) {
-        fprintf(stderr, "DEBUG attn: n_tokens=%lld n_heads=%d n_kv_heads=%d head_dim=%d pos=%d\n",
-                (long long)n_tokens, n_heads, n_kv_heads, head_dim, pos);
         struct ggml_tensor * out_tokens = NULL;
         for (int64_t ti = 0; ti < n_tokens; ti++) {
             /* Slice one token from Q: [head_dim, n_heads, 1].

@@ -2,11 +2,14 @@
  *
  * Implements the autoregressive loop that produces latent patches.
  * For each audio position:
- *   1. Base LM forward (MiniCPM4)
- *   2. RALM forward (MiniCPM4 with no_rope=1)
- *   3. Project LM + residual to DiT dim
- *   4. Run CFM diffusion (LocDiT + solver steps)
- *   5. Quantize via FSQ
+ *   1. FeatEncoder(prev_latent) → enc_to_lm_proj → audio embedding
+ *   2. Base LM forward with audio embedding at fill_pos
+ *   3. FSQ on base_lm output (in_proj → scalar quant → out_proj)
+ *   4. Fusion: concat(FSQ_out, enc_to_lm_proj(fe_out)) → fusion_concat_proj → RALM
+ *   5. RALM forward
+ *   6. Build mu = concat(lm_to_dit_proj, res_to_dit_proj) [2048]
+ *   7. CFM diffusion (LocDiT with time_mlp, delta_time_mlp, cond_proj)
+ *   8. Output latent becomes prev_latent for next step
  *
  * At the end, latents are decoded via AudioVAE V2 to waveform.
  */
@@ -15,6 +18,7 @@
 #include "generate.h"
 #include "model_loader.h"
 #include "minicpm4.h"
+#include "locenc.h"
 #include "fsq.h"
 #include "locdit.h"
 #include "cfm_solver.h"
@@ -41,14 +45,10 @@ static struct ggml_tensor * resolve_weight(const struct vcpm_model * model,
     return vcpm_model_get_tensor(model, name);
 }
 
-/* Resolve base_lm layer weights into vcpm_minicpm4_weights struct.
- * Prefix should include the ".blk" part (e.g., "base_lm.blk").
- * Returns number of tensors found. */
+/* Resolve MiniCPM4 layer weights from GGUF into array.
+ * Same 9-suffix layout for base_lm, feat_encoder, and RALM. */
 static int fill_minicpm4_weights(const struct vcpm_model * model,
                                   const char * prefix,
-                                  struct ggml_tensor * embed,
-                                  struct ggml_tensor * norm,
-                                  struct ggml_tensor * lm_head,
                                   vcpm_minicpm4_layer_weights * layers,
                                   int n_layers) {
     const char * suffixes[] = {
@@ -60,7 +60,6 @@ static int fill_minicpm4_weights(const struct vcpm_model * model,
     };
     enum { N_SUFFIXES = 9 };
     int found = 0;
-
     for (int i = 0; i < n_layers; i++) {
         for (int s = 0; s < N_SUFFIXES; s++) {
             char name[256];
@@ -80,46 +79,23 @@ static int fill_minicpm4_weights(const struct vcpm_model * model,
             }
         }
     }
-    (void)embed;
-    (void)norm;
-    (void)lm_head;
     return found;
 }
 
-/* Fill LocDiT layer weights */
+/* Alias: fill_fe_weights = fill_minicpm4_weights (same layout). */
+static int fill_fe_weights(const struct vcpm_model * model,
+                            const char * prefix,
+                            vcpm_minicpm4_layer_weights * layers,
+                            int n_layers) {
+    return fill_minicpm4_weights(model, prefix, layers, n_layers);
+}
+
+/* Fill LocDiT layer weights from feat_decoder.estimator.blk. */
 static int fill_dit_weights(const struct vcpm_model * model,
                              vcpm_locdit_layer_weights * layers,
                              int n_layers) {
-    const char * suffixes[] = {
-        "self_attn.q_proj.weight",        "self_attn.k_proj.weight",
-        "self_attn.v_proj.weight",        "self_attn.o_proj.weight",
-        "mlp.gate_proj.weight",           "mlp.up_proj.weight",
-        "mlp.down_proj.weight",
-        "input_layernorm.weight",         "post_attention_layernorm.weight"
-    };
-    enum { N_SUFFIXES = 9 };
-    int found = 0;
-
-    for (int i = 0; i < n_layers; i++) {
-        for (int s = 0; s < N_SUFFIXES; s++) {
-            char name[256];
-            vcpm_model_tensor_name(name, sizeof(name), "feat_decoder.estimator.blk", i, suffixes[s]);
-            struct ggml_tensor * t = resolve_weight(model, name);
-            if (!t) continue;
-            switch (s) {
-                case 0: layers[i].q_proj_weight              = t; found++; break;
-                case 1: layers[i].k_proj_weight              = t; found++; break;
-                case 2: layers[i].v_proj_weight              = t; found++; break;
-                case 3: layers[i].o_proj_weight              = t; found++; break;
-                case 4: layers[i].gate_proj_weight           = t; found++; break;
-                case 5: layers[i].up_proj_weight             = t; found++; break;
-                case 6: layers[i].down_proj_weight           = t; found++; break;
-                case 7: layers[i].input_layernorm_weight     = t; found++; break;
-                case 8: layers[i].post_attention_layernorm_weight = t; found++; break;
-            }
-        }
-    }
-    return found;
+    return fill_minicpm4_weights(model, "feat_decoder.estimator.blk",
+                                  (vcpm_minicpm4_layer_weights *)layers, n_layers);
 }
 
 /* ---- Main API ---- */
@@ -142,6 +118,7 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     s->rms_norm_eps       = cfg->rms_norm_eps;
     s->max_seq_len        = cfg->max_seq_len;
     s->vocab_size         = cfg->vocab_size;
+    s->rope_theta         = cfg->rope_theta;
 
     s->res_hidden_size    = cfg->res_hidden_size;
     s->res_n_layers       = cfg->res_num_layers;
@@ -164,31 +141,88 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     s->base_norm         = resolve_weight(model, "base_lm.norm.weight");
     s->base_lm_head      = resolve_weight(model, "base_lm.lm_head.weight");
     fill_minicpm4_weights(model, "base_lm.blk",
-                           NULL, NULL, NULL,
                            s->base_layer_weights, s->n_base_layers);
 
     /* Resolve RALM weights */
     s->ralm_norm = resolve_weight(model, "residual_lm.norm.weight");
     fill_minicpm4_weights(model, "residual_lm.blk",
-                           NULL, NULL, NULL,
                            s->ralm_layer_weights, s->res_n_layers);
+
+    /* ---- FeatEncoder (alignment head) ---- */
+    /* Infer config from q_proj weight shape */
+    {
+        struct ggml_tensor * fe_q = resolve_weight(model, "feat_encoder.blk.0.self_attn.q_proj.weight");
+        if (fe_q) {
+            /* ne[0] = in_features = hidden_size, ne[1] = out_features = n_heads * head_dim */
+            s->enc_hidden_size = (int)fe_q->ne[0];
+            s->enc_n_heads     = (int)(fe_q->ne[1] / cfg->head_dim);
+            s->enc_n_layers    = 12;  /* known from GGUF structure */
+        } else {
+            s->enc_hidden_size = 1024;
+            s->enc_n_heads     = 16;
+            s->enc_n_layers    = 12;
+        }
+        /* k_proj determines KV heads */
+        struct ggml_tensor * fe_k = resolve_weight(model, "feat_encoder.blk.0.self_attn.k_proj.weight");
+        s->enc_n_kv_heads = fe_k ? (int)(fe_k->ne[1] / cfg->head_dim) : 2;
+        /* gate_proj ne[1] = intermediate_size */
+        struct ggml_tensor * fe_gate = resolve_weight(model, "feat_encoder.blk.0.mlp.gate_proj.weight");
+        s->enc_intermediate_size = fe_gate ? (int)fe_gate->ne[1] : 4096;
+        s->enc_feat_dim = 64;  /* from in_proj.weight ne[0] */
+    }
+
+    s->fe_in_proj_weight  = resolve_weight(model, "feat_encoder.in_proj.weight");
+    s->fe_in_proj_bias    = resolve_weight(model, "feat_encoder.in_proj.bias");
+    s->fe_special_token   = resolve_weight(model, "feat_encoder.special_token");
+    s->fe_norm            = resolve_weight(model, "feat_encoder.norm.weight");
+    fill_fe_weights(model, "feat_encoder.blk",
+                    s->fe_layer_weights, s->enc_n_layers);
+
+    /* Fusion projection: concat(enc_output, feat_embed) → RALM input */
+    s->fusion_concat_proj = resolve_weight(model, "fusion_concat_proj.weight");
+
+    /* Stop predictor */
+    s->stop_head_weight = resolve_weight(model, "stop_head.weight");
+    s->stop_proj_weight = resolve_weight(model, "stop_proj.weight");
+    s->stop_proj_bias   = resolve_weight(model, "stop_proj.bias");
+
+    /* DiT timestep MLP (learned, replaces sinusoidal) */
+    s->dit_time_mlp_w1 = resolve_weight(model, "feat_decoder.estimator.time_mlp.linear_1.weight");
+    s->dit_time_mlp_b1 = resolve_weight(model, "feat_decoder.estimator.time_mlp.linear_1.bias");
+    s->dit_time_mlp_w2 = resolve_weight(model, "feat_decoder.estimator.time_mlp.linear_2.weight");
+    s->dit_time_mlp_b2 = resolve_weight(model, "feat_decoder.estimator.time_mlp.linear_2.bias");
+    s->dit_delta_time_mlp_w1 = resolve_weight(model, "feat_decoder.estimator.delta_time_mlp.linear_1.weight");
+    s->dit_delta_time_mlp_b1 = resolve_weight(model, "feat_decoder.estimator.delta_time_mlp.linear_1.bias");
+    s->dit_delta_time_mlp_w2 = resolve_weight(model, "feat_decoder.estimator.delta_time_mlp.linear_2.weight");
+    s->dit_delta_time_mlp_b2 = resolve_weight(model, "feat_decoder.estimator.delta_time_mlp.linear_2.bias");
 
     /* Resolve FSQ */
     s->fsq_scale  = resolve_weight(model, "fsq.scale");
     s->fsq_offset = resolve_weight(model, "fsq.offset");
+    s->fsq_in_proj_weight = resolve_weight(model, "fsq.in_proj.weight");
+    s->fsq_in_proj_bias   = resolve_weight(model, "fsq.in_proj.bias");
+    s->fsq_out_proj_weight = resolve_weight(model, "fsq.out_proj.weight");
+    s->fsq_out_proj_bias   = resolve_weight(model, "fsq.out_proj.bias");
 
-    /* Resolve projections */
+    /* Resolve projections (top-level GGUF names, no prefix) */
     s->enc_to_lm_proj  = resolve_weight(model, "enc_to_lm_proj.weight");
     s->lm_to_dit_proj  = resolve_weight(model, "lm_to_dit_proj.weight");
     s->res_to_dit_proj = resolve_weight(model, "res_to_dit_proj.weight");
 
-    /* Resolve LocDiT weights */
-    s->dit_input_proj  = resolve_weight(model, "feat_decoder.estimator.in_proj.weight");
-    s->dit_output_proj = resolve_weight(model, "feat_decoder.estimator.out_proj.weight");
-    s->dit_norm        = resolve_weight(model, "feat_decoder.estimator.norm.weight");
-    s->dit_cond_proj   = resolve_weight(model, "feat_decoder.estimator.cond_proj.weight");
+    /* Resolve LocDiT weights — try multiple name prefixes */
+    s->dit_input_proj  = resolve_weight(model, "feat_decoder.in_proj.weight");
+    if (!s->dit_input_proj)  s->dit_input_proj  = resolve_weight(model, "feat_decoder.estimator.in_proj.weight");
+    s->dit_output_proj = resolve_weight(model, "feat_decoder.out_proj.weight");
+    if (!s->dit_output_proj) s->dit_output_proj = resolve_weight(model, "feat_decoder.estimator.out_proj.weight");
+    s->dit_norm        = resolve_weight(model, "feat_decoder.norm.weight");
+    if (!s->dit_norm)        s->dit_norm        = resolve_weight(model, "feat_decoder.estimator.norm.weight");
+    s->dit_cond_proj   = resolve_weight(model, "feat_decoder.cond_proj.weight");
+    if (!s->dit_cond_proj)   s->dit_cond_proj   = resolve_weight(model, "feat_decoder.estimator.cond_proj.weight");
     /* No separate timestep_embed MLP in this model — use sinusoidal embedding */
     fill_dit_weights(model, s->dit_layer_weights, s->dit_n_layers);
+
+    /* Weight loading diagnostics — enable with --debug if needed
+    if (s->base_layer_weights[0].q_proj_weight) { ... } */
 
     /* DiT head counts: override from actual weight shapes.
      * GGUF metadata may be wrong — trust the weights. */
@@ -277,40 +311,30 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
         s->ralm_kv_cache[i].n_used = 0;
     }
 
+    /* Allocate prev_latent buffer (zero-filled) */
+    s->prev_latent = (float *)calloc((size_t)s->enc_feat_dim, sizeof(float));
+    if (!s->prev_latent) {
+        free(s->base_kv_cache);
+        free(s->ralm_kv_cache);
+        ggml_free(s->step_ctx);
+        free(s);
+        return NULL;
+    }
+
     s->seq_len = 0;
     return s;
 }
 
-/* ---- Single step: predict one latent patch ---- */
-
-vcpm_status vcpm_gen_step(vcpm_generate_state * state,
-                           const int32_t * token_ids,
-                           const int32_t * text_mask,
-                           const int32_t * audio_mask,
-                           int seq_len,
-                           int fill_pos,
-                           float * output_patch) {
-    if (!state || !token_ids || !output_patch) return VCPM_ERR_INVALID_ARG;
-    (void)text_mask;
-    (void)audio_mask;
-
-    struct ggml_context * ctx = state->step_ctx;
-    struct ggml_cgraph * graph = state->step_graph;
-
-    /* Reset graph for new step (forward-only: no gradients needed) */
-    ggml_graph_clear(graph);
-
-    /* DEBUG: show what tokens are at this position */
-    if (fill_pos >= 0 && fill_pos < seq_len) {
-        fprintf(stderr, "DEBUG step: seq_len=%d fill_pos=%d token=%d text_mask=%d audio_mask=%d\n",
-                seq_len, fill_pos, token_ids[fill_pos],
-                text_mask ? text_mask[fill_pos] : -1,
-                audio_mask ? audio_mask[fill_pos] : -1);
-    }
-
-    /* ---- Step 1: Base LM forward ---- */
-
-    /* Build MiniCPM4 config for base_lm */
+/* ---- Forward helper: process N text tokens through Base LM ---- */
+/* Populates base_lm KV cache only (no feat_encoder override).
+ * For text prompt positions where normal token lookup is correct. */
+static vcpm_status gen_forward_text(vcpm_generate_state * state,
+                                     struct ggml_context * ctx,
+                                     struct ggml_cgraph * graph,
+                                     const int32_t * token_ids,
+                                     int n_tokens,
+                                     int pos_start,
+                                     struct ggml_tensor ** out_hidden) {
     vcpm_minicpm4_config base_cfg;
     vcpm_minicpm4_config_from_model(&base_cfg,
                                      state->hidden_size,
@@ -320,34 +344,32 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                                      state->intermediate_size,
                                      state->head_dim,
                                      state->rms_norm_eps,
-                                     0,       /* rope_theta — set from config */
+                                     state->rope_theta,
                                      state->max_seq_len,
                                      state->vocab_size,
-                                     0);      /* no_rope=0 */
+                                     0);  /* no_rope=0 */
 
-    /* Build base_lm weights struct — embed_tokens, norm, head, layer ptrs */
     vcpm_minicpm4_weights base_w;
     base_w.embed_tokens_weight = state->base_embed_tokens;
     base_w.norm_weight         = state->base_norm;
     base_w.lm_head_weight      = state->base_lm_head;
     base_w.layer_weights       = state->base_layer_weights;
 
-    /* Build base_lm KV cache from our gen_cache_unit array */
     vcpm_kv_cache base_cache;
     base_cache.layers     = (vcpm_kv_cache_unit *)state->base_kv_cache;
     base_cache.n_layers   = state->n_base_layers;
     base_cache.max_seq_len = state->max_seq_len;
 
-    /* Embed token ids: manual lookup (f16 weights, convert to f32 output). */
+    /* Manual token embedding lookup (f16 weights → f32) */
     struct ggml_tensor * hidden = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
-                                                      state->hidden_size, seq_len);
+                                                       state->hidden_size, n_tokens);
     if (hidden && hidden->data && state->base_embed_tokens && state->base_embed_tokens->data) {
         const ggml_fp16_t * embed_data = (const ggml_fp16_t *)state->base_embed_tokens->data;
-        int64_t stride = state->base_embed_tokens->ne[0];  /* hidden_size */
-        int64_t n_rows = state->base_embed_tokens->ne[1];  /* vocab_size */
+        int64_t stride = state->base_embed_tokens->ne[0];
+        int64_t n_rows = state->base_embed_tokens->ne[1];
         float * hdata = (float *)hidden->data;
-        for (int i = 0; i < seq_len; i++) {
-            int idx = token_ids[i];
+        for (int i = 0; i < n_tokens; i++) {
+            int idx = token_ids[pos_start + i];
             if (idx < 0 || idx >= n_rows) idx = 0;
             for (int j = 0; j < stride; j++) {
                 hdata[i * stride + j] = ggml_fp16_to_fp32(embed_data[idx * stride + j]);
@@ -356,162 +378,251 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     }
     if (!hidden) return VCPM_ERR_BACKEND;
     ggml_set_name(hidden, "base_embed");
-    if (!hidden) return VCPM_ERR_BACKEND;
-    ggml_set_name(hidden, "base_embed");
 
-    /* Forward pass through base_lm layers + norm
-     * CRITICAL: use pos=0 for absolute positional encoding [0..seq_len-1].
-     * Using fill_pos would shift ALL positions and make hidden states at
-     * every audio position identical (since only relative positions matter). */
-    struct ggml_tensor * base_hidden = vcpm_minicpm4_forward(ctx, graph,
-                                                               hidden, &base_cfg,
-                                                               &base_w, &base_cache,
-                                                               0);
-    if (!base_hidden) return VCPM_ERR_BACKEND;
+    *out_hidden = vcpm_minicpm4_forward(ctx, graph, hidden, &base_cfg,
+                                          &base_w, &base_cache, pos_start);
+    if (!*out_hidden) return VCPM_ERR_BACKEND;
+    return VCPM_OK;
+}
 
-    /* ---- Step 2: RALM forward (if configured) ---- */
-    struct ggml_tensor * ralm_hidden = NULL;
-    if (state->res_n_layers > 0 && state->ralm_layer_weights[0].q_proj_weight) {
-        vcpm_minicpm4_config ralm_cfg;
-        vcpm_minicpm4_config_from_model(&ralm_cfg,
-                                         state->res_hidden_size,
-                                         state->res_n_layers,
-                                         state->res_n_heads,
-                                         state->res_n_kv_heads,
-                                         state->intermediate_size,
-                                         state->head_dim,
-                                         state->rms_norm_eps,
-                                         0,       /* rope_theta unused */
-                                         state->max_seq_len,
-                                         0,       /* vocab_size = 0 */
-                                         1);      /* no_rope=1 */
+/* ---- Forward one token through RALM with given hidden input ---- */
+/* RALM always uses the provided hidden tensor as input (no token embedding).
+ * Uses no_rope=1 config. Populates RALM KV cache. */
+static struct ggml_tensor * gen_forward_ralm(vcpm_generate_state * state,
+                                              struct ggml_context * ctx,
+                                              struct ggml_cgraph * graph,
+                                              struct ggml_tensor * ralm_input,
+                                              int pos) {
+    if (!state->ralm_layer_weights[0].q_proj_weight) return NULL;
+    vcpm_minicpm4_config ralm_cfg;
+    vcpm_minicpm4_config_from_model(&ralm_cfg,
+                                     state->res_hidden_size,
+                                     state->res_n_layers,
+                                     state->res_n_heads,
+                                     state->res_n_kv_heads,
+                                     state->intermediate_size,
+                                     state->head_dim,
+                                     state->rms_norm_eps,
+                                     0, 0, 0, 1);  /* no_rope=1 */
 
-        vcpm_minicpm4_weights ralm_w;
-        memset(&ralm_w, 0, sizeof(ralm_w));
-        ralm_w.embed_tokens_weight = state->base_embed_tokens; /* shared embed */
-        ralm_w.norm_weight         = state->ralm_norm;
-        ralm_w.lm_head_weight      = NULL;  /* vocab_size=0 */
-        ralm_w.layer_weights       = state->ralm_layer_weights;
+    vcpm_minicpm4_weights ralm_w;
+    memset(&ralm_w, 0, sizeof(ralm_w));
+    ralm_w.embed_tokens_weight = NULL;
+    ralm_w.norm_weight         = state->ralm_norm;
+    ralm_w.lm_head_weight      = NULL;
+    ralm_w.layer_weights       = state->ralm_layer_weights;
 
-        vcpm_kv_cache ralm_cache;
-        ralm_cache.layers     = (vcpm_kv_cache_unit *)state->ralm_kv_cache;
-        ralm_cache.n_layers   = state->res_n_layers;
-        ralm_cache.max_seq_len = state->max_seq_len;
+    vcpm_kv_cache ralm_cache;
+    ralm_cache.layers     = (vcpm_kv_cache_unit *)state->ralm_kv_cache;
+    ralm_cache.n_layers   = state->res_n_layers;
+    ralm_cache.max_seq_len = state->max_seq_len;
 
-        ralm_hidden = vcpm_minicpm4_forward(ctx, graph, hidden,
-                                             &ralm_cfg, &ralm_w, &ralm_cache,
-                                             0);
+    return vcpm_minicpm4_forward(ctx, graph, ralm_input,
+                                  &ralm_cfg, &ralm_w, &ralm_cache, pos);
+}
+
+/* ---- Build feat_encoder(prev_latent) → enc_to_lm_proj audio embedding ---- */
+/* Returns ggml tensor [2048, 1] — the audio position embedding.
+ * Also returns fe_out [1024, 1] for the fusion path. */
+static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
+                                                    struct ggml_context * ctx,
+                                                    struct ggml_cgraph * graph,
+                                                    struct ggml_tensor ** fe_out) {
+    /* Build LocEnc config from state */
+    vcpm_locenc_config le_cfg;
+    vcpm_locenc_config_fill(&le_cfg,
+                             state->enc_hidden_size,
+                             state->enc_n_layers,
+                             state->enc_n_heads,
+                             state->enc_n_kv_heads,
+                             state->enc_intermediate_size,
+                             state->head_dim,
+                             state->rms_norm_eps,
+                             1,  /* max_seq_len=1 (single patch) */
+                             state->enc_feat_dim,
+                             1); /* patch_size=1 */
+
+    vcpm_locenc_weights le_w;
+    le_w.in_proj_weight  = state->fe_in_proj_weight;
+    le_w.in_proj_bias    = state->fe_in_proj_bias;
+    le_w.special_token   = state->fe_special_token;
+    le_w.norm_weight     = state->fe_norm;
+    le_w.layer_weights   = state->fe_layer_weights;
+
+    /* Create prev_latent tensor [64, 1] */
+    struct ggml_tensor * latent_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
+                                                         state->enc_feat_dim, 1);
+    if (latent_t && latent_t->data && state->prev_latent) {
+        memcpy(latent_t->data, state->prev_latent,
+               (size_t)state->enc_feat_dim * sizeof(float));
     }
+    ggml_set_name(latent_t, "fe_input");
 
-    /* ---- Step 3: Project to DiT conditioning ---- */
-    int hd = state->hidden_size;
-    /* DEBUG: check if different positions have different hidden states */
+    /* Forward through feat_encoder. use_special=1 for first position
+     * (all zeros), 0 otherwise.
+     * Since prev_latent is initialized to zeros, the first call gets special_token. */
+    int use_special = 1;
+    /* Check if prev_latent is all zeros */
     {
-        float *bh = (float *)base_hidden->data;
-        fprintf(stderr, "DEBUG base_hidden[%d][0..2] = %.6f %.6f %.6f\n",
-                fill_pos, (double)bh[fill_pos*hd+0], (double)bh[fill_pos*hd+1],
-                (double)bh[fill_pos*hd+2]);
-        fprintf(stderr, "DEBUG base_hidden[%d][0..2] = %.6f %.6f %.6f\n",
-                0, (double)bh[0], (double)bh[1], (double)bh[2]);
-        fprintf(stderr, "DEBUG base_hidden[%d][0..2] = %.6f %.6f %.6f\n",
-                1, (double)bh[1*hd+0], (double)bh[1*hd+1], (double)bh[1*hd+2]);
-    }
-    struct ggml_tensor * lm_feat = ggml_view_2d(ctx, base_hidden, hd, 1,
-                                                   base_hidden->nb[1],
-                                                   fill_pos * hd * sizeof(float));
-    ggml_set_name(lm_feat, "lm_feat");
-
-    /* Project to DiT dim */
-    struct ggml_tensor * cond = NULL;
-    if (state->lm_to_dit_proj) {
-        cond = vcpm_linear_proj(ctx, lm_feat, state->lm_to_dit_proj);
-        ggml_set_name(cond, "lm_cond");
-    }
-
-    /* Add RALM projection if available */
-    if (ralm_hidden && state->res_to_dit_proj) {
-        int rhd = state->res_hidden_size;
-        struct ggml_tensor * res_feat = ggml_view_2d(ctx, ralm_hidden, rhd, 1,
-                                                      ralm_hidden->nb[1],
-                                                      fill_pos * rhd * sizeof(float));
-        struct ggml_tensor * res_cond = vcpm_linear_proj(ctx, res_feat,
-                                                          state->res_to_dit_proj);
-        ggml_set_name(res_cond, "res_cond");
-        if (cond) {
-            cond = vcpm_fusion_add(ctx, cond, res_cond);
-        } else {
-            cond = res_cond;
+        int all_zero = 1;
+        for (int i = 0; i < state->enc_feat_dim && all_zero; i++) {
+            if (state->prev_latent[i] != 0.0f) all_zero = 0;
         }
+        use_special = all_zero;
+    }
+    struct ggml_tensor * fe_output = vcpm_locenc_forward(ctx, graph, latent_t,
+                                                          &le_cfg, &le_w, use_special);
+    if (!fe_output) return NULL;
+    ggml_set_name(fe_output, "fe_output");
+    if (fe_out) *fe_out = fe_output;
+
+    /* Project feat_encoder output to LM hidden size */
+    struct ggml_tensor * audio_embed = vcpm_linear_proj(ctx, fe_output,
+                                                          state->enc_to_lm_proj);
+    ggml_set_name(audio_embed, "audio_embed");
+    return audio_embed;
+}
+
+/* ---- FSQ on base_lm hidden: in_proj [2048→512] → scalar quant → out_proj [512→2048] ---- */
+static struct ggml_tensor * gen_fsq_hidden(vcpm_generate_state * state,
+                                            struct ggml_context * ctx,
+                                            struct ggml_cgraph * graph,
+                                            struct ggml_tensor * h) {
+    if (!state->fsq_in_proj_weight) return h;  /* identity if no FSQ proj loaded */
+    struct ggml_tensor * fsq_h = ggml_mul_mat(ctx, state->fsq_in_proj_weight, h);
+    if (state->fsq_in_proj_bias) {
+        fsq_h = ggml_add(ctx, fsq_h, ggml_cast(ctx, state->fsq_in_proj_bias, GGML_TYPE_F32));
+    }
+    ggml_set_name(fsq_h, "fsq_proj");
+
+    /* Scalar quantization on 512-dim */
+    if (state->fsq_scale) {
+        vcpm_fsq_weights fw;
+        memset(&fw, 0, sizeof(fw));
+        fw.scale      = state->fsq_scale;
+        fw.offset     = state->fsq_offset;
+        fsq_h = vcpm_fsq_forward(ctx, graph, fsq_h, &fw);
     }
 
-    /* ---- Step 4: CFM solver loop around LocDiT ---- */
+    /* Project back to 2048 */
+    struct ggml_tensor * fsq_out = ggml_mul_mat(ctx, state->fsq_out_proj_weight, fsq_h);
+    if (state->fsq_out_proj_bias) {
+        fsq_out = ggml_add(ctx, fsq_out, ggml_cast(ctx, state->fsq_out_proj_bias, GGML_TYPE_F32));
+    }
+    ggml_set_name(fsq_out, "fsq_out");
+    return fsq_out;
+}
+
+/* ---- Single token generation step ---- */
+
+vcpm_status vcpm_gen_step(vcpm_generate_state * state,
+                           const int32_t * token_ids,
+                           int fill_pos,
+                           float * output_patch) {
+    if (!state || !token_ids || !output_patch) return VCPM_ERR_INVALID_ARG;
+    struct ggml_context * ctx = state->step_ctx;
+    struct ggml_cgraph * graph = state->step_graph;
+    ggml_graph_clear(graph);
 
     int latent_dim = state->vae_cfg.latent_dim;
+    int hidden_size = state->hidden_size;
 
-    /* Compute graph to populate cond (and all earlier tensors) */
-    if (cond) ggml_build_forward_expand(graph, cond);
+    /* ========== Step 1: Build audio embedding from prev_latent ========== */
+    struct ggml_tensor * fe_out = NULL;
+    struct ggml_tensor * audio_embed = gen_build_audio_embed(state, ctx, graph, &fe_out);
+    if (!audio_embed) return VCPM_ERR_BACKEND;
+    ggml_set_name(audio_embed, "audio_embed");
+
+    /* ========== Step 2: Forward through base_lm with audio_embed ========== */
+    vcpm_minicpm4_config base_cfg;
+    vcpm_minicpm4_config_from_model(&base_cfg,
+                                     hidden_size, state->n_base_layers,
+                                     state->n_base_heads, state->n_base_kv_heads,
+                                     state->intermediate_size, state->head_dim,
+                                     state->rms_norm_eps, state->rope_theta,
+                                     state->max_seq_len, state->vocab_size,
+                                     0);
+
+    vcpm_minicpm4_weights base_w;
+    base_w.embed_tokens_weight = state->base_embed_tokens;
+    base_w.norm_weight         = state->base_norm;
+    base_w.lm_head_weight      = state->base_lm_head;
+    base_w.layer_weights       = state->base_layer_weights;
+
+    vcpm_kv_cache base_cache;
+    base_cache.layers     = (vcpm_kv_cache_unit *)state->base_kv_cache;
+    base_cache.n_layers   = state->n_base_layers;
+    base_cache.max_seq_len = state->max_seq_len;
+
+    /* Use audio_embed as the input instead of token embedding */
+    struct ggml_tensor * base_hidden = vcpm_minicpm4_forward(ctx, graph,
+                                                               audio_embed, &base_cfg,
+                                                               &base_w, &base_cache,
+                                                               fill_pos);
+    if (!base_hidden) return VCPM_ERR_BACKEND;
+    ggml_set_name(base_hidden, "base_hidden");
+
+    /* ========== Step 3: FSQ on base_hidden ========== */
+    struct ggml_tensor * fsq_out = gen_fsq_hidden(state, ctx, graph, base_hidden);
+    ggml_set_name(fsq_out, "fsq_out");
+
+    /* ========== Step 4: Fusion concat for RALM input ========== */
+    /* concat(fsq_out[2048], audio_embed[2048]) → [4096] → fusion_concat_proj → [2048] */
+    struct ggml_tensor * fusion_in = ggml_concat(ctx, fsq_out, audio_embed, 0);
+    ggml_set_name(fusion_in, "fusion_in");
+    struct ggml_tensor * ralm_in = vcpm_linear_proj(ctx, fusion_in,
+                                                      state->fusion_concat_proj);
+    ggml_set_name(ralm_in, "ralm_in");
+
+    /* ========== Step 5: Forward RALM ========== */
+    struct ggml_tensor * ralm_hidden = gen_forward_ralm(state, ctx, graph,
+                                                          ralm_in, fill_pos);
+    if (ralm_hidden) ggml_set_name(ralm_hidden, "ralm_hidden");
+
+    /* ========== Step 6: Build mu (DiT conditioning) ========== */
+    /* mu = concat(lm_to_dit_proj(base_hidden)[1024], res_to_dit_proj(ralm_hidden)[1024]) */
+    struct ggml_tensor * mu = NULL;
+    if (state->lm_to_dit_proj && ralm_hidden) {
+        struct ggml_tensor * lm_cond = vcpm_linear_proj(ctx, base_hidden,
+                                                          state->lm_to_dit_proj);
+        ggml_set_name(lm_cond, "lm_cond");
+        struct ggml_tensor * res_cond = vcpm_linear_proj(ctx, ralm_hidden,
+                                                           state->res_to_dit_proj);
+        ggml_set_name(res_cond, "res_cond");
+        mu = ggml_concat(ctx, lm_cond, res_cond, 0);
+        ggml_set_name(mu, "dit_mu");
+    } else if (state->lm_to_dit_proj) {
+        mu = vcpm_linear_proj(ctx, base_hidden, state->lm_to_dit_proj);
+        ggml_set_name(mu, "dit_mu_lm_only");
+    }
+
+    /* ========== Step 7: Compute graph to materialize all tensors ========== */
+    /* Build all forward edges and compute once */
+    if (mu) ggml_build_forward_expand(graph, mu);
     ggml_graph_compute_with_ctx(ctx, graph, 1);
 
-    /* DEBUG: check if different positions have different hidden states */
-    if (base_hidden && base_hidden->data) {
-        float *bh = (float *)base_hidden->data;
-        fprintf(stderr, "DEBUG base_hidden[%d][0..2] = %.6f %.6f %.6f\n",
-                fill_pos, (double)bh[fill_pos*hd+0], (double)bh[fill_pos*hd+1],
-                (double)bh[fill_pos*hd+2]);
-        fprintf(stderr, "DEBUG base_hidden[0][0..2] = %.6f %.6f %.6f\n",
-                (double)bh[0], (double)bh[1], (double)bh[2]);
-        fprintf(stderr, "DEBUG base_hidden[1][0..2] = %.6f %.6f %.6f\n",
-                (double)bh[1*hd+0], (double)bh[1*hd+1], (double)bh[1*hd+2]);
-        /* Print ALL positions to check within-pass variation */
-        for (int pi = 0; pi < seq_len && pi < 8; pi++) {
-            fprintf(stderr, "DEBUG  base_hidden_all[%d][0..3] = %.6f %.6f %.6f %.6f\n",
-                    pi, (double)bh[pi*hd+0], (double)bh[pi*hd+1],
-                    (double)bh[pi*hd+2], (double)bh[pi*hd+3]);
-        }
+    /* Extract mu data for CFM loop */
+    float * mu_data = NULL;
+    int mu_len = 0;
+    if (mu && mu->data) {
+        mu_len = (int)(ggml_nbytes(mu) / sizeof(float));
+        mu_data = (float *)malloc((size_t)mu_len * sizeof(float));
+        if (mu_data) memcpy(mu_data, mu->data, (size_t)mu_len * sizeof(float));
     }
 
-    /* Extract cond data to persistent buffer (DiT forward will be called
-     * multiple times, so we need cond data outside the graph) */
-    float * cond_raw = NULL;
-    int cond_len = 0;
-    if (cond && cond->data) {
-        cond_len = (int)(ggml_nbytes(cond) / sizeof(float));
-        cond_raw = (float *)malloc((size_t)cond_len * sizeof(float));
-        if (cond_raw) memcpy(cond_raw, cond->data, (size_t)cond_len * sizeof(float));
+    /* Extract prev_latent for DiT cond_proj */
+    float * prev_data = (float *)malloc((size_t)latent_dim * sizeof(float));
+    if (prev_data && state->prev_latent) {
+        memcpy(prev_data, state->prev_latent, (size_t)latent_dim * sizeof(float));
     }
 
-    /* DEBUG: show conditioning for this position */
-    {
-        double csum = 0.0, csumsq = 0.0;
-        float cmin = cond_raw ? cond_raw[0] : 0, cmax = cond_raw ? cond_raw[0] : 0;
-        for (int i = 0; i < cond_len && i < 5000; i++) {
-            csum += cond_raw[i]; csumsq += (double)cond_raw[i] * cond_raw[i];
-            if (cond_raw[i] < cmin) cmin = cond_raw[i];
-            if (cond_raw[i] > cmax) cmax = cond_raw[i];
-        }
-        fprintf(stderr, "DEBUG fill_pos=%d cond=%d min=%.4f max=%.4f mean=%.4f rms=%.4f\n",
-                fill_pos, cond_len,
-                (double)cmin, (double)cmax,
-                (double)(csum / (cond_len > 0 ? cond_len : 1)),
-                (double)(cond_len > 0 ? sqrt(csumsq / cond_len) : 0.0));
-        if (cond_raw) {
-            fprintf(stderr, "DEBUG cond[0..4]: %.6f %.6f %.6f %.6f %.6f\n",
-                    (double)cond_raw[0], (double)cond_raw[1], (double)cond_raw[2],
-                    (double)cond_raw[3], (double)cond_raw[4]);
-        }
-    }
-
-    /* Initialize noise: x_1 ~ N(0, I) with proper PRNG
-     *
-     * Uses a splitmix64-style deterministic RNG seeded from latent_dim + fill_pos
-     * to produce independent uniform(0,1) values per dimension,
-     * then Box-Muller to convert to normal. */
+    /* ========== Step 7: CFM Euler integration ========== */
+    /* Initialize noise: x_1 ~ N(0, I) */
     float * noise = (float *)malloc((size_t)latent_dim * sizeof(float));
     float * x_data = (float *)malloc((size_t)latent_dim * sizeof(float));
     if (noise && x_data) {
         uint64_t rng_state = (uint64_t)(latent_dim + fill_pos + 1) ^ 0x9E3779B97F4A7C15ULL;
         for (int i = 0; i < latent_dim; i++) {
-            /* SplitMix64 step */
             rng_state += 0x9E3779B97F4A7C15ULL;
             uint64_t z = rng_state;
             z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
@@ -519,8 +630,6 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             z = z ^ (z >> 31);
             float u1 = (float)(z >> 11) * (1.0f / 9007199254740992.0f);
             u1 = fmaxf(1e-6f, fminf(u1, 1.0f - 1e-6f));
-
-            /* SplitMix64 step for u2 */
             rng_state += 0x9E3779B97F4A7C15ULL;
             z = rng_state;
             z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
@@ -528,15 +637,15 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             z = z ^ (z >> 31);
             float u2 = (float)(z >> 11) * (1.0f / 9007199254740992.0f);
             u2 = fmaxf(1e-6f, fminf(u2, 1.0f - 1e-6f));
-
             noise[i] = sqrtf(-2.0f * logf(u1)) * cosf(2.0f * (float)M_PI * u2);
         }
     }
     memcpy(x_data, noise, (size_t)latent_dim * sizeof(float));
+    free(noise);
 
-    /* DiT config — use n_tokens=1 for per-step KV cache (1 KB instead of 8 MB) */
-    vcpm_locdit_config cfm_dc;
-    vcpm_locdit_config_fill(&cfm_dc,
+    /* DiT config */
+    vcpm_locdit_config dit_cfg;
+    vcpm_locdit_config_fill(&dit_cfg,
                              state->dit_hidden_size,
                              state->dit_n_layers,
                              state->dit_n_heads,
@@ -544,57 +653,68 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                              state->dit_intermediate_size,
                              state->head_dim,
                              state->rms_norm_eps,
-                             1);  /* n_tokens = 1 */
+                             1);
 
-    vcpm_locdit_weights cfm_dw;
-    memset(&cfm_dw, 0, sizeof(cfm_dw));
-    cfm_dw.input_proj_weight    = state->dit_input_proj;
-    cfm_dw.output_proj_weight   = state->dit_output_proj;
-    cfm_dw.norm_weight          = state->dit_norm;
-    cfm_dw.cond_proj_weight     = state->dit_cond_proj;
-    cfm_dw.layer_weights        = state->dit_layer_weights;
+    vcpm_locdit_weights dit_w;
+    memset(&dit_w, 0, sizeof(dit_w));
+    dit_w.input_proj_weight    = state->dit_input_proj;
+    dit_w.output_proj_weight   = state->dit_output_proj;
+    dit_w.norm_weight          = state->dit_norm;
+    dit_w.cond_proj_weight     = state->dit_cond_proj;
+    dit_w.layer_weights        = state->dit_layer_weights;
+    /* Time MLP */
+    dit_w.time_mlp_w1          = state->dit_time_mlp_w1;
+    dit_w.time_mlp_b1          = state->dit_time_mlp_b1;
+    dit_w.time_mlp_w2          = state->dit_time_mlp_w2;
+    dit_w.time_mlp_b2          = state->dit_time_mlp_b2;
+    /* Delta Time MLP */
+    dit_w.delta_time_mlp_w1    = state->dit_delta_time_mlp_w1;
+    dit_w.delta_time_mlp_b1    = state->dit_delta_time_mlp_b1;
+    dit_w.delta_time_mlp_w2    = state->dit_delta_time_mlp_w2;
+    dit_w.delta_time_mlp_b2    = state->dit_delta_time_mlp_b2;
 
-    /* CFM Euler integration: t=1 → 0, dt = -1/n_steps */
+    /* CFM Euler integration: t=1 → 0 */
     int n_steps = 10;
     float dt = -1.0f / n_steps;
     float t = 1.0f;
 
     for (int step = 0; step < n_steps; step++) {
-        /* Clear graph for fresh computation */
         ggml_graph_clear(graph);
 
-        /* Create x_t tensor from persistent buffer */
         struct ggml_tensor * x_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
                                                        latent_dim, 1);
-        if (!x_t) { free(noise); free(cond_raw); free(x_data); return VCPM_ERR_OOM; }
+        if (!x_t) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_OOM; }
         memcpy(x_t->data, x_data, (size_t)latent_dim * sizeof(float));
         ggml_set_name(x_t, "cfm_x_t");
 
-        /* Create cond tensor from persistent buffer */
+        /* prev_latent → cond (for cond_proj) */
         struct ggml_tensor * cond_t = NULL;
-        if (cond_raw) {
-            cond_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, cond_len, 1);
-            if (!cond_t) { free(noise); free(cond_raw); free(x_data); return VCPM_ERR_OOM; }
-            memcpy(cond_t->data, cond_raw, (size_t)cond_len * sizeof(float));
-            ggml_set_name(cond_t, "cfm_cond");
+        if (prev_data) {
+            cond_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, latent_dim, 1);
+            if (!cond_t) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_OOM; }
+            memcpy(cond_t->data, prev_data, (size_t)latent_dim * sizeof(float));
+            ggml_set_name(cond_t, "cfm_prev");
         }
 
-        /* Build timestep embedding at current t */
+        /* timestep scalar */
         struct ggml_tensor * t_tensor = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
         if (t_tensor->data) ((float *)t_tensor->data)[0] = t;
 
-        struct ggml_tensor * t_feat = vcpm_timestep_embed(ctx, t_tensor,
-                                                           state->dit_hidden_size,
-                                                           10000.0f);
+        /* mu conditioning */
+        struct ggml_tensor * mu_t = NULL;
+        if (mu_data) {
+            mu_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, mu_len, 1);
+            if (!mu_t) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_OOM; }
+            memcpy(mu_t->data, mu_data, (size_t)mu_len * sizeof(float));
+            ggml_set_name(mu_t, "cfm_mu");
+        }
 
-        /* Build LocDiT forward for velocity prediction */
+        /* DiT forward (new API: timestep is scalar, mu is 2048) */
         struct ggml_tensor * velocity = vcpm_locdit_forward(ctx, graph,
-                                                             x_t, cond_t,
-                                                             t_feat,
-                                                             &cfm_dc, &cfm_dw);
-        if (!velocity) { free(noise); free(cond_raw); free(x_data); return VCPM_ERR_BACKEND; }
+                                                              x_t, cond_t, t_tensor, mu_t,
+                                                              &dit_cfg, &dit_w);
+        if (!velocity) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_BACKEND; }
 
-        /* Euler update: x_{t+dt} = x_t + dt * v_t */
         struct ggml_tensor * dt_t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
         if (dt_t->data) ((float *)dt_t->data)[0] = dt;
 
@@ -602,38 +722,18 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         struct ggml_tensor * x_next = ggml_add(ctx, x_t, step_v);
         ggml_set_name(x_next, "cfm_x_next");
 
-        /* Compute and extract result */
         ggml_build_forward_expand(graph, x_next);
         ggml_graph_compute_with_ctx(ctx, graph, 1);
-
         memcpy(x_data, x_next->data, (size_t)latent_dim * sizeof(float));
-
         t += dt;
     }
 
-    free(noise);
-    free(cond_raw);
+    free(mu_data);
+    free(prev_data);
 
-    /* ---- Step 5: FSQ quantize on final x_data ---- */
-
-    /* DEBUG: CFM output before FSQ */
-    {
-        double sum = 0.0, sumsq = 0.0;
-        float minv = x_data[0], maxv = x_data[0];
-        for (int i = 0; i < latent_dim; i++) {
-            sum += x_data[i]; sumsq += (double)x_data[i] * x_data[i];
-            if (x_data[i] < minv) minv = x_data[i];
-            if (x_data[i] > maxv) maxv = x_data[i];
-        }
-        fprintf(stderr, "DEBUG cfm_out: min=%.4f max=%.4f mean=%.4f rms=%.4f\n",
-                (double)minv, (double)maxv,
-                (double)(sum / latent_dim),
-                (double)sqrt(sumsq / latent_dim));
-    }
-
-    /* Create tensor from final x_data */
+    /* ========== Step 8: FSQ quantize on final denoised latent ========== */
     struct ggml_tensor * denoised = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
-                                                        latent_dim, 1);
+                                                         latent_dim, 1);
     if (denoised && denoised->data) {
         memcpy(denoised->data, x_data, (size_t)latent_dim * sizeof(float));
     }
@@ -645,48 +745,91 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         memset(&fw, 0, sizeof(fw));
         fw.scale      = state->fsq_scale;
         fw.offset     = state->fsq_offset;
-        fw.num_levels = 0;  /* auto-detect if possible */
-
+        fw.num_levels = 0;
         ggml_graph_clear(graph);
         quantized = vcpm_fsq_forward(ctx, graph, denoised, &fw);
         if (quantized) ggml_build_forward_expand(graph, quantized);
         ggml_graph_compute_with_ctx(ctx, graph, 1);
     }
 
-    /* Copy output patch */
+    /* Copy output and update prev_latent */
     if (quantized && quantized->data) {
-        float * q = (float*)quantized->data;
-        double sum = 0.0, sumsq = 0.0;
-        float minv = q[0], maxv = q[0];
-        for (int i = 0; i < latent_dim; i++) {
-            sum += q[i]; sumsq += (double)q[i] * q[i];
-            if (q[i] < minv) minv = q[i];
-            if (q[i] > maxv) maxv = q[i];
-        }
-        fprintf(stderr, "DEBUG latent patch: min=%.4f max=%.4f mean=%.4f rms=%.4f\n",
-                (double)minv, (double)maxv,
-                (double)(sum / latent_dim),
-                (double)sqrt(sumsq / latent_dim));
-        memcpy(output_patch, q, (size_t)latent_dim * sizeof(float));
+        memcpy(output_patch, quantized->data, (size_t)latent_dim * sizeof(float));
+        memcpy(state->prev_latent, quantized->data, (size_t)latent_dim * sizeof(float));
     } else {
-        double sum = 0.0, sumsq = 0.0;
-        float minv = x_data[0], maxv = x_data[0];
-        for (int i = 0; i < latent_dim; i++) {
-            sum += x_data[i]; sumsq += (double)x_data[i] * x_data[i];
-            if (x_data[i] < minv) minv = x_data[i];
-            if (x_data[i] > maxv) maxv = x_data[i];
-        }
-        fprintf(stderr, "DEBUG latent patch(raw): min=%.4f max=%.4f mean=%.4f rms=%.4f\n",
-                (double)minv, (double)maxv,
-                (double)(sum / latent_dim),
-                (double)sqrt(sumsq / latent_dim));
-        memcpy(output_patch, x_data,
-               (size_t)latent_dim * sizeof(float));
+        memcpy(output_patch, x_data, (size_t)latent_dim * sizeof(float));
+        memcpy(state->prev_latent, x_data, (size_t)latent_dim * sizeof(float));
     }
 
     free(x_data);
+    return VCPM_OK;
+}
 
-    state->seq_len = seq_len;
+/* ---- Prompt eval: process text tokens to populate KV caches ---- */
+/* Runs both base_lm AND RALM on text token embeddings to fill both KV caches. */
+
+static vcpm_status gen_prompt_eval(vcpm_generate_state * state,
+                                   struct ggml_context * ctx,
+                                   struct ggml_cgraph * graph,
+                                   const int32_t * token_ids,
+                                   int n_text_tokens) {
+    if (n_text_tokens <= 0) return VCPM_OK;
+
+    /* Step 1: Forward text tokens through base_lm */
+    struct ggml_tensor * base_hidden = NULL;
+    vcpm_status st = gen_forward_text(state, ctx, graph, token_ids,
+                                       n_text_tokens, 0, &base_hidden);
+    if (st != VCPM_OK) return st;
+    if (!base_hidden) return VCPM_ERR_BACKEND;
+
+    /* Step 2: Forward text embeddings through RALM too.
+     * RALM needs text hidden states in its KV cache for the full sequence. */
+    if (state->res_n_layers > 0 && state->ralm_layer_weights[0].q_proj_weight) {
+        /* For text positions, RALM input = base_lm input embeddings.
+         * We re-create the token embedding since the original might not be
+         * accessible from the base_lm forward path.
+         * Use gen_forward_text's approach: create embedding from token_ids. */
+        vcpm_minicpm4_config base_cfg;
+        vcpm_minicpm4_config_from_model(&base_cfg,
+                                         state->hidden_size,
+                                         state->n_base_layers,
+                                         state->n_base_heads,
+                                         state->n_base_kv_heads,
+                                         state->intermediate_size,
+                                         state->head_dim,
+                                         state->rms_norm_eps,
+                                         state->rope_theta,
+                                         state->max_seq_len,
+                                         state->vocab_size,
+                                         0);
+
+        struct ggml_tensor * text_embed = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
+                                                               state->hidden_size,
+                                                               n_text_tokens);
+        if (text_embed && text_embed->data && state->base_embed_tokens &&
+            state->base_embed_tokens->data) {
+            const ggml_fp16_t * ed = (const ggml_fp16_t *)state->base_embed_tokens->data;
+            int64_t stride = state->base_embed_tokens->ne[0];
+            int64_t n_rows = state->base_embed_tokens->ne[1];
+            float * dst = (float *)text_embed->data;
+            for (int i = 0; i < n_text_tokens; i++) {
+                int idx = token_ids[i];
+                if (idx < 0 || idx >= n_rows) idx = 0;
+                for (int j = 0; j < stride; j++) {
+                    dst[i * stride + j] = ggml_fp16_to_fp32(ed[idx * stride + j]);
+                }
+            }
+        }
+        ggml_set_name(text_embed, "prompt_text_embed");
+
+        struct ggml_tensor * ralm_hidden = gen_forward_ralm(state, ctx, graph,
+                                                              text_embed, 0);
+        if (ralm_hidden) ggml_set_name(ralm_hidden, "prompt_ralm_hidden");
+    }
+
+    /* CRITICAL: Compute graph to execute KV cache writes */
+    ggml_build_forward_expand(graph, base_hidden);
+    ggml_graph_compute_with_ctx(ctx, graph, 1);
     return VCPM_OK;
 }
 
@@ -704,17 +847,45 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
     if (!state || !token_ids || !latent_out || !n_patches_out) return VCPM_ERR_INVALID_ARG;
     if (seq_len <= 0 || max_patches <= 0) return VCPM_ERR_INVALID_ARG;
     (void)gen_params;
+    (void)text_mask;
 
     int latent_dim = state->vae_cfg.latent_dim;
     int n_patches = 0;
 
-    /* Iterate over audio positions in forward order (typically the last positions) */
-    for (int pos = seq_len - 1; pos >= 0 && n_patches < max_patches; pos--) {
-        if (!audio_mask || audio_mask[pos] != 1) continue;
+    int first_audio_pos = -1;
+    for (int i = 0; i < seq_len; i++) {
+        if (audio_mask[i] == 1) {
+            if (first_audio_pos < 0) first_audio_pos = i;
+        }
+    }
+    if (first_audio_pos < 0) {
+        *n_patches_out = 0;
+        return VCPM_OK;
+    }
 
+    /* Reset KV caches and prev_latent */
+    for (int i = 0; i < state->n_base_layers; i++)
+        state->base_kv_cache[i].n_used = 0;
+    for (int i = 0; i < state->res_n_layers; i++)
+        state->ralm_kv_cache[i].n_used = 0;
+    if (state->prev_latent)
+        memset(state->prev_latent, 0, (size_t)state->enc_feat_dim * sizeof(float));
+
+    struct ggml_context * ctx = state->step_ctx;
+    struct ggml_cgraph * graph = state->step_graph;
+
+    /* Step 1: Prompt eval for text positions */
+    if (first_audio_pos > 0) {
+        ggml_graph_clear(graph);
+        vcpm_status st = gen_prompt_eval(state, ctx, graph, token_ids, first_audio_pos);
+        if (st != VCPM_OK) return st;
+    }
+
+    /* Step 2: Generate audio patches one at a time */
+    for (int pos = first_audio_pos; pos < seq_len && n_patches < max_patches; pos++) {
+        if (audio_mask[pos] != 1) continue;
         float * patch = latent_out + (size_t)n_patches * latent_dim;
-        vcpm_status st = vcpm_gen_step(state, token_ids, text_mask,
-                                        audio_mask, seq_len, pos, patch);
+        vcpm_status st = vcpm_gen_step(state, token_ids, pos, patch);
         if (st != VCPM_OK) return st;
         n_patches++;
     }
@@ -763,23 +934,6 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
     }
     ggml_set_name(latent_t, "vae_input");
 
-    /* DEBUG: print latent values before VAE decode */
-    {
-        int latent_dim = state->vae_v2_cfg.latent_dim;
-        float * d = (float *)latent_t->data;
-        double sum = 0.0, sumsq = 0.0;
-        float minv = d[0], maxv = d[0];
-        for (int i = 0; i < n_patches * latent_dim && i < 10000; i++) {
-            sum += d[i]; sumsq += (double)d[i] * d[i];
-            if (d[i] < minv) minv = d[i];
-            if (d[i] > maxv) maxv = d[i];
-        }
-        fprintf(stderr, "DEBUG latent_t: count=%d min=%.6f max=%.6f mean=%.6f rms=%.6f\n",
-                n_patches * latent_dim, (double)minv, (double)maxv,
-                (double)(sum / (n_patches * latent_dim)),
-                (double)sqrt(sumsq / (n_patches * latent_dim)));
-    }
-
     /* Build V2 decoder graph */
     struct ggml_tensor * audio_t = vcpm_vae_v2_decode(ctx, graph, latent_t,
                                                        state->model,
@@ -793,24 +947,6 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
     /* Expand VAE decoder graph into computation graph and compute */
     ggml_build_forward_expand(graph, audio_t);
     ggml_graph_compute_with_ctx(ctx, graph, 1);
-
-    /* DEBUG: print VAE output values */
-    {
-        float * d = (float *)audio_t->data;
-        int n = (int)audio_t->ne[0];
-        double sum = 0.0, sumsq = 0.0;
-        float minv = d[0], maxv = d[0];
-        for (int i = 0; i < n && i < 5000; i++) {
-            sum += d[i]; sumsq += (double)d[i] * d[i];
-            if (d[i] < minv) minv = d[i];
-            if (d[i] > maxv) maxv = d[i];
-        }
-        fprintf(stderr, "DEBUG vae_out: total_samples=%d min=%.6f max=%.6f mean=%.6f rms=%.6f ne=[%d,%d]\n",
-                n, (double)minv, (double)maxv,
-                (double)(sum / (n < 5000 ? n : 5000)),
-                (double)sqrt(sumsq / (n < 5000 ? n : 5000)),
-                (int)audio_t->ne[0], (int)audio_t->ne[1]);
-    }
 
     /* Copy output to audio buffer. Output shape: [audio_len, 1] */
     int n_samples = (int)audio_t->ne[0];
@@ -832,5 +968,6 @@ void vcpm_gen_free(vcpm_generate_state * state) {
     if (state->step_ctx) ggml_free(state->step_ctx);
     free(state->base_kv_cache);
     free(state->ralm_kv_cache);
+    free(state->prev_latent);
     free(state);
 }

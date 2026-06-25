@@ -3,6 +3,7 @@
 
 #include "voxcpm.h"
 #include "minicpm4.h"
+#include "locenc.h"
 #include "locdit.h"
 #include "audio_vae.h"
 #include "audio_vae_v2.h"
@@ -49,6 +50,7 @@ typedef struct vcpm_generate_state {
     float rms_norm_eps;
     int max_seq_len;
     int vocab_size;
+    int rope_theta;
 
     int res_hidden_size;
     int res_n_layers;
@@ -74,23 +76,64 @@ typedef struct vcpm_generate_state {
     /* FSQ weights */
     struct ggml_tensor * fsq_scale;
     struct ggml_tensor * fsq_offset;
+    struct ggml_tensor * fsq_in_proj_weight;   /* [2048, 512] projection before scalar quant */
+    struct ggml_tensor * fsq_in_proj_bias;     /* [512] */
+    struct ggml_tensor * fsq_out_proj_weight;  /* [512, 2048] projection after scalar quant */
+    struct ggml_tensor * fsq_out_proj_bias;    /* [2048] */
 
     /* Projection weights */
     struct ggml_tensor * enc_to_lm_proj;
     struct ggml_tensor * lm_to_dit_proj;
     struct ggml_tensor * res_to_dit_proj;
 
+    /* FeatEncoder (alignment head) config */
+    int enc_hidden_size;
+    int enc_n_layers;
+    int enc_n_heads;
+    int enc_n_kv_heads;
+    int enc_intermediate_size;
+    int enc_feat_dim;
+
+    /* FeatEncoder weights */
+    struct ggml_tensor * fe_in_proj_weight;    /* [feat_dim, hidden_size] */
+    struct ggml_tensor * fe_in_proj_bias;      /* [hidden_size] */
+    struct ggml_tensor * fe_special_token;     /* [hidden_size] */
+    struct ggml_tensor * fe_norm;              /* [hidden_size] */
+    vcpm_minicpm4_layer_weights fe_layer_weights[VCPM_MAX_LAYERS];
+
+    /* Fusion projection: concat(enc_output, feat_embed) → RALM input */
+    struct ggml_tensor * fusion_concat_proj;   /* [4096, 2048] */
+
+    /* Stop predictor */
+    struct ggml_tensor * stop_head_weight;   /* [2048, 2] */
+    struct ggml_tensor * stop_proj_weight;   /* [2048, 2048] */
+    struct ggml_tensor * stop_proj_bias;     /* [2048] */
+
     /* LocDiT weights */
     struct ggml_tensor * dit_input_proj;
     struct ggml_tensor * dit_output_proj;
     struct ggml_tensor * dit_norm;
     struct ggml_tensor * dit_cond_proj;
+    /* Time MLP for DiT timestep embedding */
+    struct ggml_tensor * dit_time_mlp_w1;        /* [1024, 1024] */
+    struct ggml_tensor * dit_time_mlp_b1;        /* [1024] */
+    struct ggml_tensor * dit_time_mlp_w2;        /* [1024, 1024] */
+    struct ggml_tensor * dit_time_mlp_b2;        /* [1024] */
+    struct ggml_tensor * dit_delta_time_mlp_w1;  /* [1024, 1024] */
+    struct ggml_tensor * dit_delta_time_mlp_b1;  /* [1024] */
+    struct ggml_tensor * dit_delta_time_mlp_w2;  /* [1024, 1024] */
+    struct ggml_tensor * dit_delta_time_mlp_b2;  /* [1024] */
     vcpm_locdit_layer_weights dit_layer_weights[VCPM_MAX_LAYERS];
 
-    /* KV caches (mutable runtime state) */
+    /* Runtime state */
     vcpm_gen_cache_unit * base_kv_cache;  /* [n_base_layers] */
     vcpm_gen_cache_unit * ralm_kv_cache;  /* [res_n_layers] */
-    int seq_len;  /* current populated sequence length */
+    int seq_len;                          /* current populated sequence length */
+
+    /* Previous latent patch for autoregressive feat_encoder conditioning.
+     * Initialized to zeros for first audio position.
+     * Updated after each gen_step call. */
+    float * prev_latent;                  /* [feat_dim] allocated in gen_init */
 
     /* Per-step ggml execution resources */
     struct ggml_context * step_ctx;
@@ -127,22 +170,19 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
  * runs base_lm + RALM + projections + LocDiT + CFM to produce
  * one patch of latent features.
  *
+ * The KV cache (both base_lm and RALM) must be pre-populated for all
+ * positions before fill_pos via prompt eval or previous gen_step calls.
+ *
  * Parameters:
  *   state: initialized generation state
- *   token_ids: token id sequence [seq_len]
- *   text_mask: text/control mask [seq_len] (1 = text, 0 = audio)
- *   audio_mask: audio position mask [seq_len] (1 = audio to generate)
- *   seq_len: length of token_ids / masks
- *   fill_pos: position index to generate (audio_mask[fill_pos] must be 1)
- *   output_patch: [latent_dim * patch_size] output latent fragment
+ *   token_ids: full token id sequence [seq_len]
+ *   fill_pos: position index to generate (must be a valid audio position)
+ *   output_patch: [latent_dim] output latent patch
  *
  * Returns: VCPM_OK on success.
  */
 vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                            const int32_t * token_ids,
-                           const int32_t * text_mask,
-                           const int32_t * audio_mask,
-                           int seq_len,
                            int fill_pos,
                            float * output_patch);
 

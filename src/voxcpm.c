@@ -132,15 +132,6 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         vcpm_set_error(ctx, "sequence building failed");
         return VCPM_ERR_INVALID_ARG;
     }
-    { /* DEBUG: print token IDs */
-        fprintf(stderr, "DEBUG seq: len=%d audio_start_token=%d audio_end_token=%d\n",
-                seq.length, ctx->model->config.audio_start_token,
-                ctx->model->config.audio_end_token);
-        for (int i = 0; i < seq.length && i < 16; i++) {
-            fprintf(stderr, "DEBUG  tok[%d]=%d\n", i, seq.token_ids[i]);
-        }
-    }
-
     /* ---- Try full model inference pipeline ---- */
     vcpm_generate_state * gen_state = vcpm_gen_init(ctx->model, 0);
     if (gen_state) {

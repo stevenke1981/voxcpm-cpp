@@ -27,12 +27,12 @@ struct ggml_tensor * vcpm_fsq_forward(struct ggml_context * ctx,
     /* Step 1: center by offset if provided */
     struct ggml_tensor * centered = x;
     if (w->offset) {
-        centered = ggml_sub(ctx, x, w->offset);
+        centered = ggml_sub(ctx, x, ggml_cast(ctx, w->offset, GGML_TYPE_F32));
         ggml_set_name(centered, "fsq_centered");
     }
 
     /* Step 2: scale (divide by scale) */
-    struct ggml_tensor * scaled = ggml_div(ctx, centered, w->scale);
+    struct ggml_tensor * scaled = ggml_div(ctx, centered, ggml_cast(ctx, w->scale, GGML_TYPE_F32));
     ggml_set_name(scaled, "fsq_scaled");
 
     /* Step 3: round to nearest integer */
@@ -40,13 +40,13 @@ struct ggml_tensor * vcpm_fsq_forward(struct ggml_context * ctx,
     ggml_set_name(rounded, "fsq_rounded");
 
     /* Step 4: unscale (multiply by scale) */
-    struct ggml_tensor * unscaled = ggml_mul(ctx, rounded, w->scale);
+    struct ggml_tensor * unscaled = ggml_mul(ctx, rounded, ggml_cast(ctx, w->scale, GGML_TYPE_F32));
     ggml_set_name(unscaled, "fsq_unscaled");
 
     /* Step 5: add offset back if provided */
     struct ggml_tensor * out = unscaled;
     if (w->offset) {
-        out = ggml_add(ctx, unscaled, w->offset);
+        out = ggml_add(ctx, unscaled, ggml_cast(ctx, w->offset, GGML_TYPE_F32));
         ggml_set_name(out, "fsq_output");
     }
 

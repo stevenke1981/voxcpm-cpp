@@ -50,12 +50,22 @@ typedef struct vcpm_locdit_weights {
     struct ggml_tensor * input_proj_weight;   /* [in_dim, hidden_size] */
     struct ggml_tensor * output_proj_weight;  /* [hidden_size, out_dim] */
     struct ggml_tensor * norm_weight;         /* final RMSNorm weight */
-    struct ggml_tensor * cond_proj_weight;    /* [hidden_size, cond_dim] conditioning proj */
-    /* Optional timestep embedding MLP (2-layer): [hidden_size, hidden_size] each */
-    struct ggml_tensor * t_embed_weight_0;
-    struct ggml_tensor * t_embed_bias_0;
-    struct ggml_tensor * t_embed_weight_1;
-    struct ggml_tensor * t_embed_bias_1;
+    struct ggml_tensor * cond_proj_weight;    /* [feat_dim, hidden_size] prev_latent projection */
+
+    /* Timestep MLP (learned, replaces sinusoidal):
+     *   t_feat[1024] -> silu(linear1(t_feat)) -> linear2 -> [1024] */
+    struct ggml_tensor * time_mlp_w1;         /* [1024, 1024] */
+    struct ggml_tensor * time_mlp_b1;         /* [1024] */
+    struct ggml_tensor * time_mlp_w2;         /* [1024, 1024] */
+    struct ggml_tensor * time_mlp_b2;         /* [1024] */
+
+    /* Delta time MLP: processes mu_left (LM cond, 1024-dim) into conditioning
+     *   mu_left[1024] -> silu(linear1(mu_left)) -> linear2 -> [1024] */
+    struct ggml_tensor * delta_time_mlp_w1;   /* [1024, 1024] */
+    struct ggml_tensor * delta_time_mlp_b1;   /* [1024] */
+    struct ggml_tensor * delta_time_mlp_w2;   /* [1024, 1024] */
+    struct ggml_tensor * delta_time_mlp_b2;   /* [1024] */
+
     vcpm_locdit_layer_weights * layer_weights;  /* [n_layers] */
 } vcpm_locdit_weights;
 
@@ -77,19 +87,45 @@ struct ggml_tensor * vcpm_timestep_embed(struct ggml_context * ctx,
                                           int dim,
                                           float max_period);
 
+/* Build learned timestep embedding from sinusoidal features.
+ * t_feat: sinusoidal timestep embedding [dim, 1]
+ * w:      time_mlp weights (w1/b1/w2/b2)
+ * Returns: [dim, 1] learned timestep embedding.
+ */
+struct ggml_tensor * vcpm_time_mlp_forward(struct ggml_context * ctx,
+                                            struct ggml_cgraph * graph,
+                                            struct ggml_tensor * t_feat,
+                                            struct ggml_tensor * w1,
+                                            struct ggml_tensor * b1,
+                                            struct ggml_tensor * w2,
+                                            struct ggml_tensor * b2);
+
 /* Build LocDiT forward graph.
+ *
  * x:           noisy latent [in_dim, seq_len]
- * cond:        conditioning hidden states [hidden_size, seq_len]
- *              (output of projected LM + residual LM fusion)
- * timestep_emb: [hidden_size, 1] timestep embedding (or NULL)
- * Returns: predicted output/velocity [out_dim, seq_len]
+ * cond:        prev_latent conditioning [feat_dim, seq_len] (routed through cond_proj)
+ * timestep:    scalar timestep t [1, 1] (float value)
+ * mu:          LM+RALM conditioning [2048, seq_len] or NULL
+ *              Left 1024 = LM cond (→ delta_time_mlp), right 1024 = RALM cond (→ add)
+ *
+ * Internally:
+ *   1. x projected via input_proj to hidden_size
+ *   2. cond (prev_latent) projected via cond_proj to hidden_size, added
+ *   3. timestep embedded via sinusoidal → time_mlp → time_feat
+ *   4. mu_left[1024] → delta_time_mlp → delta_feat, added to time_feat
+ *   5. mu_right[1024] added directly to hidden states
+ *   6. N × DiT blocks (no_rope=1, non-causal)
+ *   7. Final norm + output_proj
+ *
+ * Returns: predicted velocity [out_dim, seq_len]
  */
 struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
-                                          struct ggml_cgraph * graph,
-                                          struct ggml_tensor * x,
-                                          struct ggml_tensor * cond,
-                                          struct ggml_tensor * timestep_emb,
-                                          const vcpm_locdit_config * cfg,
-                                          const vcpm_locdit_weights * w);
+                                           struct ggml_cgraph * graph,
+                                           struct ggml_tensor * x,
+                                           struct ggml_tensor * cond,
+                                           struct ggml_tensor * timestep,
+                                           struct ggml_tensor * mu,
+                                           const vcpm_locdit_config * cfg,
+                                           const vcpm_locdit_weights * w);
 
 #endif /* VCPM_LOCDIT_H */

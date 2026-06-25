@@ -1,21 +1,25 @@
 /* LocDiT — Local Diffusion Transformer backbone.
  *
- * Skeleton MVP implementation. Processes noisy latent features
- * conditioned on LM hidden states and diffusion timestep.
+ * Processes noisy latent features conditioned on LM hidden states
+ * (mu) and diffusion timestep, with learned time_mlp and delta_time_mlp.
  *
  * Architecture:
- *   1. Input projection (in_dim → hidden_size)
- *   2. Timestep embedding added to each position
- *   3. Conditioning (cond) added to hidden states
- *   4. N × DiT transformer blocks (based on MiniCPM4 block)
- *   5. Final RMSNorm
- *   6. Output projection (hidden_size → out_dim)
+ *   1. Input projection (64 → hidden_size)
+ *   2. cond_proj(prev_latent[64]) added to hidden states
+ *   3. Timestep: scalar t → sinusoidal → time_mlp → time_feat
+ *   4. mu_left[1024] → delta_time_mlp → delta_feat, added to time_feat
+ *   5. mu_right[1024] added directly to hidden states
+ *   6. N × DiT transformer blocks (no_rope=1, non-causal)
+ *   7. Final RMSNorm + output projection (hidden_size → 64)
  *
  * Tensor naming (GGUF):
- *   feat_decoder.layers.{n}.{proj}.weight
- *   feat_decoder.norm.weight
- *   feat_decoder.timestep_embed.{0,1}.{weight,bias}
- *   feat_decoder.input_proj.weight / feat_decoder.output_proj.weight
+ *   feat_decoder.estimator.blk.{n}.self_attn.q_proj.weight etc.
+ *   feat_decoder.estimator.in_proj.weight    [64, 1024]
+ *   feat_decoder.estimator.out_proj.weight   [1024, 64]
+ *   feat_decoder.estimator.norm.weight       [1024]
+ *   feat_decoder.estimator.cond_proj.weight  [64, 1024]
+ *   feat_decoder.estimator.time_mlp.linear_1.{weight,bias}  [1024,1024] / [1024]
+ *   feat_decoder.estimator.delta_time_mlp.linear_1.{weight,bias}
  */
 #include "locdit.h"
 #include "minicpm4.h"
@@ -43,90 +47,124 @@ void vcpm_locdit_config_fill(vcpm_locdit_config * cfg,
     cfg->max_seq_len       = max_seq_len;
 }
 
-struct ggml_tensor * vcpm_timestep_embed(struct ggml_context * ctx,
-                                          struct ggml_tensor * t,
-                                          int dim,
-                                          float max_period) {
-    /*
-     * Create sinusoidal timestep embedding using the standard
-     * Transformer sinusoidal position encoding formula:
-     *
-     *   emb[2i]   = sin(t / max_period^(2i/dim))
-     *   emb[2i+1] = cos(t / max_period^(2i/dim))
-     *
-     * Input t: scalar tensor [1, 1], value = timestep (float)
-     * Output:  [dim, 1] tensor
-     *
-     * We compute this by building a graph of ggml operations:
-     *   freq = 1 / max_period^(2i/dim)  — computed using ggml operations
-     *
-     * For simplicity, we precompute the frequencies as a constant tensor.
-     */
+/* ---- Learned timestep embedding via time_mlp ---- */
 
-    /* Create frequency tensor: [dim/2, 1] (half the dim for sin+cos pairs) */
+struct ggml_tensor * vcpm_time_mlp_forward(struct ggml_context * ctx,
+                                            struct ggml_cgraph * graph,
+                                            struct ggml_tensor * t_feat,
+                                            struct ggml_tensor * w1,
+                                            struct ggml_tensor * b1,
+                                            struct ggml_tensor * w2,
+                                            struct ggml_tensor * b2) {
+    (void)graph;
+    /* 2-layer MLP: linear1 → SiLU → linear2
+     * t_feat: [dim, 1]  (dim = 1024, sinusoidal embedding) */
+    struct ggml_tensor * h = ggml_mul_mat(ctx, w1, t_feat);
+    if (b1) h = ggml_add(ctx, h, ggml_cast(ctx, b1, GGML_TYPE_F32));
+    h = ggml_silu(ctx, h);
+    h = ggml_mul_mat(ctx, w2, h);
+    if (b2) h = ggml_add(ctx, h, ggml_cast(ctx, b2, GGML_TYPE_F32));
+    ggml_set_name(h, "time_mlp_out");
+    return h;
+}
+
+/* ---- Sinusoidal timestep embedding (kept for time_mlp input) ---- */
+
+static struct ggml_tensor * dit_sinusoidal_t_embed(struct ggml_context * ctx,
+                                                     struct ggml_tensor * t,
+                                                     int dim) {
     int half_dim = dim / 2;
     struct ggml_tensor * freqs = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, half_dim);
     float * freq_data = (float *)freqs->data;
+    float max_period = 10000.0f;
     for (int i = 0; i < half_dim; i++) {
         freq_data[i] = 1.0f / (float)pow(max_period, 2.0 * i / dim);
     }
-    ggml_set_name(freqs, "t_embed_freqs");
-
-    /* t * freqs (broadcast): result [half_dim, 1].
-     * First arg 'a' is [half_dim,1], second arg 'b' is [1,1] (scalar t).
-     * ggml requires b to be broadcastable to a's shape — t is [1,1] so it
-     * broadcasts to [half_dim,1] correctly when placed as the second arg. */
+    ggml_set_name(freqs, "dit_sin_freqs");
     struct ggml_tensor * angles = ggml_mul(ctx, freqs, t);
-    ggml_set_name(angles, "t_embed_angles");
-
-    /* sin(angles) and cos(angles) */
+    ggml_set_name(angles, "dit_sin_angles");
     struct ggml_tensor * sin_emb = ggml_sin(ctx, angles);
     struct ggml_tensor * cos_emb = ggml_cos(ctx, angles);
-
-    /* Concat sin and cos along dim 0 */
     struct ggml_tensor * emb = ggml_concat(ctx, sin_emb, cos_emb, 0);
-    ggml_set_name(emb, "t_embed");
-
+    ggml_set_name(emb, "dit_sin_embed");
     return emb;
 }
+
+/* ---- Main LocDiT forward ---- */
 
 struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
                                           struct ggml_cgraph * graph,
                                           struct ggml_tensor * x,
                                           struct ggml_tensor * cond,
-                                          struct ggml_tensor * timestep_emb,
+                                          struct ggml_tensor * timestep,
+                                          struct ggml_tensor * mu,
                                           const vcpm_locdit_config * cfg,
                                           const vcpm_locdit_weights * w) {
     (void)graph;
+    int hidden = cfg->hidden_size;  /* = 1024 */
 
+    /* ---- Step 1: Input projection (64 → hidden_size) ---- */
     struct ggml_tensor * h = ggml_mul_mat(ctx, w->input_proj_weight, x);
     ggml_set_name(h, "dit_input_proj");
 
-    /* Step 2: Add conditioning to hidden states
-     *   cond: [hidden_size, seq_len] — projected from LM hidden
-     *   h += cond
-     */
-    struct ggml_tensor * cond_to_add = cond;
-    if (cond && w->cond_proj_weight && cond->ne[0] == w->cond_proj_weight->ne[0]) {
-        /* Project cond through cond_proj to hidden size */
-        cond_to_add = ggml_mul_mat(ctx, w->cond_proj_weight, cond);
-        ggml_set_name(cond_to_add, "dit_cond_proj");
-    }
-    if (cond_to_add) {
-        h = ggml_add(ctx, h, cond_to_add);
-        ggml_set_name(h, "dit_add_cond");
+    /* ---- Step 2: cond_proj(prev_latent) → conditioning ---- */
+    /* cond = prev_latent [feat_dim=64, seq_len=1] → cond_proj [64→1024] */
+    if (cond && w->cond_proj_weight) {
+        struct ggml_tensor * c = ggml_mul_mat(ctx, w->cond_proj_weight, cond);
+        ggml_set_name(c, "dit_cond_proj");
+        h = ggml_add(ctx, h, c);
+        ggml_set_name(h, "dit_after_cond");
     }
 
-    /* Step 3: Add timestep embedding to every position */
-    if (timestep_emb) {
-        h = ggml_add(ctx, h, timestep_emb);
-        ggml_set_name(h, "dit_add_t_embed");
+    /* ---- Step 3: Timestep embedding ---- */
+    /* timestep: scalar [1,1] float value */
+    if (timestep && w->time_mlp_w1 && w->time_mlp_w2) {
+        /* Sinusoidal → time_mlp */
+        struct ggml_tensor * t_sin = dit_sinusoidal_t_embed(ctx, timestep, hidden);
+        ggml_set_name(t_sin, "dit_t_sin");
+
+        struct ggml_tensor * t_feat = vcpm_time_mlp_forward(ctx, graph, t_sin,
+                                                              w->time_mlp_w1, w->time_mlp_b1,
+                                                              w->time_mlp_w2, w->time_mlp_b2);
+        ggml_set_name(t_feat, "dit_t_feat");
+        h = ggml_add(ctx, h, t_feat);
+        ggml_set_name(h, "dit_after_t");
     }
 
-    /* Step 4: Process through DiT transformer blocks.
-     * Each block: RMSNorm -> Self-Attention -> Residual -> RMSNorm -> SwiGLU MLP -> Residual
-     * no_rope=1, no causal mask for DiT.
-     */
+    /* ---- Step 4: mu conditioning ---- */
+    /* mu [2048, seq_len]: left 1024 = LM cond → delta_time_mlp → add to h
+     *                     right 1024 = RALM cond → add directly to h */
+    if (mu && w->delta_time_mlp_w1 && w->delta_time_mlp_w2) {
+        /* Split mu into left and right halves.
+         * Since ggml has no slicing op, we view with offset.
+         * mu layout: [2048, seq_len] = ne[0]=2048, ne[1]=seq_len
+         * left: first 1024 rows, right: second 1024 rows */
+        int seq = (int)mu->ne[1];
+        struct ggml_tensor * mu_left = ggml_view_2d(ctx, mu, hidden, seq,
+                                                     mu->nb[1], 0);
+        ggml_set_name(mu_left, "dit_mu_left");
+
+        struct ggml_tensor * mu_right = ggml_view_2d(ctx, mu, hidden, seq,
+                                                      mu->nb[1],
+                                                      hidden * sizeof(float));
+        ggml_set_name(mu_right, "dit_mu_right");
+
+        /* delta_time_mlp(mu_left) → add to h */
+        struct ggml_tensor * mu_delta = vcpm_time_mlp_forward(ctx, graph, mu_left,
+                                                                w->delta_time_mlp_w1,
+                                                                w->delta_time_mlp_b1,
+                                                                w->delta_time_mlp_w2,
+                                                                w->delta_time_mlp_b2);
+        ggml_set_name(mu_delta, "dit_mu_delta");
+        h = ggml_add(ctx, h, mu_delta);
+        ggml_set_name(h, "dit_after_mu_left");
+
+        /* mu_right → add directly to h */
+        h = ggml_add(ctx, h, mu_right);
+        ggml_set_name(h, "dit_after_mu_right");
+    }
+
+    /* ---- Step 5: DiT transformer blocks (no_rope=1, non-causal) ---- */
     for (int i = 0; i < cfg->n_layers; i++) {
         vcpm_minicpm4_layer_weights lw;
         memset(&lw, 0, sizeof(lw));
@@ -140,42 +178,35 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
         lw.input_layernorm_weight     = w->layer_weights[i].input_layernorm_weight;
         lw.post_attention_layernorm_weight = w->layer_weights[i].post_attention_layernorm_weight;
 
-        /* DiT processes all positions in parallel, so we create a
-         * full-sequence KV cache. Setting n_used to max_seq_len means
-         * the attention will attend to all positions (bidirectional-like
-         * for a full cache, though attention is still causal in the
-         * MiniCPM4 block — the n_used acts as the sequence length for
-         * the attention mask).
-         */
+        /* Fresh KV cache per forward (DiT is non-causal, no KV reuse) */
         int64_t k_cache_ne[3] = {
             cfg->head_dim,
             cfg->n_kv_heads,
             cfg->max_seq_len
         };
         struct ggml_tensor * k_cache = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,
-                                                           k_cache_ne[0],
-                                                           k_cache_ne[1],
-                                                           k_cache_ne[2]);
+                                                            k_cache_ne[0],
+                                                            k_cache_ne[1],
+                                                            k_cache_ne[2]);
         struct ggml_tensor * v_cache = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,
-                                                           k_cache_ne[0],
-                                                           k_cache_ne[1],
-                                                           k_cache_ne[2]);
+                                                            k_cache_ne[0],
+                                                            k_cache_ne[1],
+                                                            k_cache_ne[2]);
 
         vcpm_kv_cache_unit cache_unit;
         cache_unit.k = k_cache;
         cache_unit.v = v_cache;
-        cache_unit.n_used = cfg->max_seq_len; /* attend to all positions */
+        cache_unit.n_used = 0;
 
-        /* DiT: no RoPE, no KV caching across calls (fresh each forward) */
         h = vcpm_minicpm4_block(ctx, graph, h, &lw, &cache_unit,
                                  cfg->n_heads, cfg->n_kv_heads,
                                  cfg->head_dim,
                                  0,        /* pos = 0 */
-                                 0,        /* rope_theta = 0 (unused with no_rope=1) */
+                                 0,        /* rope_theta = 0 (unused) */
                                  1);       /* no_rope = 1 */
     }
 
-    /* Step 5: Final RMSNorm */
+    /* ---- Step 6: Final RMSNorm + Output projection ---- */
     h = vcpm_rms_norm(ctx, h, w->norm_weight, cfg->rms_norm_eps);
     ggml_set_name(h, "dit_norm");
 
