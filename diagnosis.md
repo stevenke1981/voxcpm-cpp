@@ -303,3 +303,54 @@ The high-frequency-noise failure is no longer present in this smoke metric.
 Remaining risk is intelligibility/parity of the autoregressive latent sequence:
 the CFM structural test still compares raw velocity shape/finite output, not full
 multi-step latent parity against Python.
+
+---
+
+## 11. 2026-06-26 Update: Tokenizer Parity Fix
+
+After the CFM sampler fix, ASR confirmed the WAV was no longer dominated by
+high-frequency noise, but the spoken content did not match the input text. The
+next diagnostic split was tokenizer parity.
+
+Python fixture `fixtures/ref/input_text.npy` for `"Hello world."` contains:
+
+```
+[21045, 2809, 72, 101]
+```
+
+where `101` is `<|audio_start|>`. Before this slice, the C CLI emitted:
+
+```
+Tokens (4): 15934, 72181, 11262, 72
+```
+
+The GGUF does not contain `tokenizer.ggml.merges`, so C was using the no-merges
+longest-match fallback. That fallback scanned the raw input string, so it matched
+`Hello`, literal space, `world`, `.` instead of the SentencePiece-style tokens
+`▁Hello`, `▁world`, `.`.
+
+Fix:
+
+- Normalize text through the existing VoxCPM/SentencePiece-style normalization
+  path before the no-merges longest-match scan.
+- Use `<0xXX>` byte fallback tokens when present, before falling back to raw byte
+  ids.
+- Add `test_tokenizer_parity.c` to assert the exact fixture ids for
+  `"Hello world."`.
+
+Validation:
+
+- `voxcpm-c.exe tokenize --model voxcpm2_v2_full.gguf --text "Hello world."`
+  now emits `Tokens (3): 21045, 2809, 72`.
+- `test_tokenizer_parity.exe voxcpm2_v2_full.gguf` passes.
+- `test_model_tts_smoke.exe voxcpm2_v2_full.gguf` still passes normal and stream
+  smoke paths.
+
+Remaining risk:
+
+- Tokenizer parity is fixed for this fixture, but generated C latents are still
+  far from Python `generated_feat.npy` (`cosine ~= -0.018`, RMS too large). The
+  next root-cause slice should compare prefill/decode state ordering against the
+  Python and `bluryar/VoxCPM.cpp` runtime: base LM hidden, residual LM hidden,
+  FSQ/fusion inputs, and whether CFM is run before or after the autoregressive
+  state update for each generated audio patch.

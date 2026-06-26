@@ -104,6 +104,11 @@ if(VCPM_BUILD_TESTS)
     target_link_libraries(test_sequence PRIVATE voxcpm)
     add_test(NAME sequence COMMAND test_sequence)
 
+    add_executable(test_tokenizer_parity tests/test_tokenizer_parity.c)
+    target_include_directories(test_tokenizer_parity PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_tokenizer_parity PRIVATE voxcpm)
+    add_test(NAME tokenizer_parity COMMAND test_tokenizer_parity voxcpm2_v2_full.gguf)
+
     add_executable(test_minicpm4 tests/test_minicpm4.c)
     target_include_directories(test_minicpm4 PRIVATE
         ${VCPM_TEST_PRIVATE_INCLUDES}

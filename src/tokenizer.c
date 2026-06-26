@@ -262,7 +262,9 @@ int vcpm_tokenizer_encode(const vcpm_tokenizer * tok,
     int n_tokens = 0;
 
     if (tok->n_merges <= 0) {
-        const unsigned char * p = (const unsigned char *)text;
+        char * normalized = normalize_voxcpm_text(text);
+        if (!normalized) return -1;
+        const unsigned char * p = (const unsigned char *)normalized;
         while (*p && n_tokens < max_len) {
             int best_len = 0;
             int best_id  = -1;
@@ -284,10 +286,14 @@ int vcpm_tokenizer_encode(const vcpm_tokenizer * tok,
                 ids[n_tokens++] = best_id;
                 p += best_len;
             } else {
-                ids[n_tokens++] = (int32_t)*p;
+                char byte_tok[8];
+                snprintf(byte_tok, sizeof(byte_tok), "<0x%02X>", (unsigned char)*p);
+                int byte_id = token_id_by_str(tok, byte_tok);
+                ids[n_tokens++] = byte_id >= 0 ? byte_id : (int32_t)*p;
                 p++;
             }
         }
+        free(normalized);
         return n_tokens;
     }
 

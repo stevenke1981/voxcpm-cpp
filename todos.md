@@ -50,7 +50,9 @@
 - [x] Preserve upstream handling of Chinese multi-character tokens (removed unconditional CJK expansion in append_expanded_token).
 - [x] Add special speech tokens.
 - [x] Add `voxcpm-c tokenize`.
-- [ ] Test exact ids vs Python.
+- [x] Test exact ids vs Python.
+  - [x] `test_tokenizer_parity.exe voxcpm2_v2_full.gguf` verifies `"Hello world."`
+    matches fixture ids `[21045, 2809, 72]`.
 
 ## 5. Sequence Builder
 
@@ -140,6 +142,7 @@
   - [x] **Export Python reference latents via converter/fixture script** — ✅ Done: 128 .npy files + reference audio in `fixtures/ref/`. Python produces real speech (RMS=0.116, range [-0.66, 0.73]).
   - [x] **Verify DiT structural forward path** — test_cfm_parity.c loads GGUF + fixtures, runs LocDiT forward, verifies finite output and expected [64,4] shape. Current fixture compares raw velocity against final denoised output only as a diagnostic, not as a parity assertion.
   - [x] **Align CFM sampler semantics with reference** — `generate.c` now uses sway t-span, LocDiT `dt=0.0`, first-step CFG-Zero* zero velocity, and scaled-uncond CFG blend matching `bluryar/VoxCPM.cpp` / Python UnifiedCFM behavior.
+  - [x] **Fix tokenizer no-merges fallback for text conditioning** — GGUF lacks `tokenizer.ggml.merges`, so the fallback must scan normalized SentencePiece-style text (`▁Hello`, `▁world`) instead of raw spaces. Verified `"Hello world."` token ids now match Python.
   - [ ] **Verify CFM integration produces equivalent latents** with a deterministic Python trajectory fixture (`cfm_traj_step*` or equivalent initial noise + final latent).
   - [x] **Fix autoregressive loop: produce patch_size=4 latent vectors per step** — Fixed in commit `0625814`: `vcpm_gen_step` writes `total_patch_dim = latent_dim * patch_size` floats per step; `vcpm_gen_run` advances by `total_patch_dim` per patch. C now generates `patch_size=4` latent vectors per step (matching Python).
   - [x] **VAE decoder upconv proven correct** — ggml_conv_transpose_1d matches manual computation exactly (F32 cos_sim=1.0). Root cause of previous −0.04 vs −0.10 discrepancy was a buggy manual scatter implementation (broken ggml_view_2d stride + ggml_add).
@@ -191,6 +194,7 @@
 - [x] **test_vae_only access violation in depthwise_conv1d (F3)**: Data pointer override (`out->data = malloc'd`) confused ggml allocator during graph compute. **Fix**: Use tensor's own data pointer from ggml allocation; fill directly; free temp malloc buffers.
 - [x] **Wrong tensor indexing in test_depthwise_only (F5)**: Used `md[ol * C + ch]` instead of `md[ol + ch * ne0]` (ggml stores dim0 fastest). **This was the ONLY cause of the apparent "mul_mat wrong output" — no ggml bug exists in the diagonal expansion path.** After correcting indexing: max_err=7.45e-09 vs manual dot product.
 - [x] **Manual depthwise_conv1d reads uninitialized graph-build-time data (F4)**: The old `depthwise_conv1d()` accessed `input->data` during graph BUILD to manually pad and compute convolution. But graph operation result tensors have `data=NULL` at build time (allocator manages memory, valid only after graph COMPUTE). This caused the padded input to be all zeros, producing near-zero depthwise conv output (RMS=0.047 vs expected 0.273), causing ~380× amplitude loss in the VAE decoder output. **Fix**: Replaced manual F32 loop with pure ggml-graph operations: `ggml_cpy` for zero pre-padding + `ggml_conv_1d_dw` (depthwise grouped conv) + `ggml_add` for bias. Data now accessed at compute time. Verified: model.2 output RMS = 0.930 (matches Python 0.930), depthwise conv RMS = 0.273 (matches Python 0.273).
+- [x] **Tokenizer no-merges fallback scanned raw text (F4/F5)**: The converted GGUF lacks BPE merges, so `vcpm_tokenizer_encode` used the no-merges longest-match fallback. It scanned raw `"Hello world."`, producing `[15934, 72181, 11262, 72]` instead of Python fixture ids `[21045, 2809, 72]`. **Fix**: normalize text before fallback scanning and prefer `<0xXX>` byte fallback tokens. Verified by `test_tokenizer_parity.exe`.
 
 ## 15. CI
 

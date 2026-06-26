@@ -236,3 +236,23 @@
 | Step_ctx size | ✅ | Reduced from 14 GB to 256 MB |
 | KV cache persists | ✅ | KV cache in kv_ctx survives across all steps; generation quality unchanged |
 | Build | ✅ | MSVC Release: 0 errors |
+
+#### Additional Fixes (Session 9 — Tokenizer Parity)
+
+24. **No-merges tokenizer fallback normalized to SentencePiece-style text** (`src/tokenizer.c`)
+     - **Symptom**: C tokenizer emitted `[15934, 72181, 11262, 72]` for `"Hello world."`, while Python fixture text tokens are `[21045, 2809, 72]` before `<|audio_start|>`.
+     - **Root cause**: The converted GGUF has no `tokenizer.ggml.merges`, so C used the no-merges longest-match fallback. That fallback scanned raw input with literal spaces instead of normalized `▁`-prefixed token text.
+     - **Fix**: Run `normalize_voxcpm_text()` before the no-merges scan and prefer `<0xXX>` byte fallback tokens when available.
+     - **Verification**:
+       - `voxcpm-c.exe tokenize --model voxcpm2_v2_full.gguf --text "Hello world."` emits `Tokens (3): 21045, 2809, 72`.
+       - `test_tokenizer_parity.exe voxcpm2_v2_full.gguf` passes.
+       - `test_model_tts_smoke.exe voxcpm2_v2_full.gguf` still passes normal and stream smoke paths.
+
+### Acceptance Evidence Update
+
+| Gate | Status | Evidence |
+|------|--------|----------|
+| Tokenizer Python fixture parity | ✅ | `"Hello world."` C ids match `[21045, 2809, 72]` |
+| Build | ✅ | MSVC Release target build completed for `voxcpm-c`, `test_tokenizer_parity`, `test_model_tts_smoke` |
+| TTS smoke after tokenizer fix | ✅ | `test_model_tts_smoke.exe voxcpm2_v2_full.gguf` passes normal + stream |
+| Full latent parity | ❌ | C generated latent dump still has cosine about `-0.018` vs Python `generated_feat.npy`; next fix is runtime state/decode ordering |

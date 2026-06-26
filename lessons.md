@@ -55,3 +55,9 @@
 **Trigger:** CFM output remained suspicious after LocDiT view and fixed-latent VAE tests passed.
 **Rule:** Treat sampler details as model contract: match the reference CFM `t_span`, LocDiT `dt` embedding input, CFG-Zero* zero steps, and CFG blend before judging audio quality from generated latents.
 **Source:** VoxCPM C/C++ CFM sampler semantics fix
+
+---
+## Lesson #17 — 2026-06-26
+**Trigger:** VoxCPM C output produced valid speech-like audio but ASR content did not match the input text after WAV/VAE/CFM fixes.
+**Rule:** Before judging TTS semantic quality, verify tokenizer ids against Python fixtures. For GGUFs without `tokenizer.ggml.merges`, run the no-merges longest-match fallback on normalized SentencePiece-style text, not raw input spaces.
+**Source:** VoxCPM C/C++ tokenizer parity fix
