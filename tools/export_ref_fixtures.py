@@ -308,19 +308,38 @@ def _make_cfm_patch(orig_bound_forward):
 
 
 def _patch_cfm_sampler(cfm_module):
-    """Patch CFM sampler to dump intermediate latent steps."""
+    """Patch CFM sampler to dump intermediate diffusion trajectory.
+
+    Uses compound naming 'ar{ARstep}_d{Dstep}_cfm_traj_state' to avoid
+    collision between autoregressive step counters and diffusion step indices.
+
+    Dumps:
+      - ar0000_d0000_cfm_traj_state.npy  (initial noise x_1 for AR step 0)
+      - ar0000_d0001_cfm_traj_state.npy (intermediate state)
+      - ar0000_cfm_noise.npy            (initial noise, convenience alias)
+      - ar0000_cfm_clean.npy            (final denoised, convenience alias)
+      ...
+    """
     if hasattr(cfm_module, '_sample') and not hasattr(cfm_module, '_sample_orig'):
         cfm_module._sample_orig = cfm_module._sample
 
         def _patched_sample(mu, patch_size, cond, n_timesteps, cfg_value):
-            log.info("    CFM _sample: mu=%s n_steps=%d", list(mu.shape), n_timesteps)
+            ar_step = _STEP_COUNTER[0]
+            log.info("    CFM _sample (AR step %d): mu=%s n_steps=%d",
+                     ar_step, list(mu.shape), n_timesteps)
             traj = cfm_module._sample_orig(mu, patch_size, cond, n_timesteps, cfg_value)
             # traj shape: [n_steps+1, batch*patches, d]
+            # traj[0] = initial noise (x_1), traj[-1] = clean
             if isinstance(traj, torch.Tensor):
                 for s in range(traj.shape[0]):
-                    _dump_tensor(f"cfm_traj_step", traj[s:s+1], s)
-                log.info("    CFM trajectory: %s steps, %s",
-                         traj.shape[0], list(traj.shape))
+                    compound_name = f"ar{ar_step:04d}_d{s:04d}_cfm_traj_state"
+                    _dump_tensor(compound_name, traj[s:s+1])
+                # Convenience aliases
+                _dump_tensor(f"ar{ar_step:04d}_cfm_noise", traj[0:1])
+                _dump_tensor(f"ar{ar_step:04d}_cfm_clean", traj[-1:])
+                log.info("    CFM trajectory (AR step %d): %s steps, %s -> noise=%s clean=%s",
+                         ar_step, traj.shape[0], list(traj.shape),
+                         list(traj[0].shape), list(traj[-1].shape))
             return traj
 
         cfm_module._sample = _patched_sample
