@@ -212,12 +212,11 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
             vcpm_set_error(ctx, "failed to read reference audio WAV");
             return VCPM_ERR_IO;
         }
-
         /* ---- Convert to mono ---- */
         float * ref_mono = ref_wav;
         int64_t ref_mono_n = ref_n;
+        int ref_wav_owned = 1; /* ref_wav needs explicit free unless already freed below */
         if (ref_ch > 1) {
-            /* Simple channel average */
             ref_mono = (float *)malloc((size_t)ref_n * sizeof(float));
             if (!ref_mono) { free(ref_wav); return VCPM_ERR_OOM; }
             int64_t per_ch = ref_n / ref_ch;
@@ -230,6 +229,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
             }
             ref_mono_n = per_ch;
             free(ref_wav);
+            ref_wav_owned = 0;
         }
 
         /* ---- Resample to VAE sample rate (16kHz) ---- */
@@ -239,7 +239,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         if (vae_sr <= 0) vae_sr = 16000;
         if (ref_sr != vae_sr) {
             ref_16k_n = vcpm_resample_f32(ref_mono, ref_mono_n, ref_sr, vae_sr, &ref_16k);
-            if (ref_mono != ref_wav) free(ref_mono); /* only if we allocated mono buffer */
+            if (ref_mono != ref_wav) free(ref_mono);
         }
         if (ref_16k_n <= 0 || !ref_16k) {
             if (ref_16k && ref_16k != ref_wav) free(ref_16k);
@@ -251,8 +251,14 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         int latent_dim = ctx->model->config.vae_latent_dim > 0
                         ? ctx->model->config.vae_latent_dim : 64;
 
-        /* Allocate VAE encoder context */
-        size_t vae_enc_mem = 0x200000000ULL; /* 8 GB */
+        /* Estimate VAE encoder ggml context memory.
+         * Peak tensor is encoder_dim * N * 4 (block.0 output),
+         * with ~10x overhead for residual intermediates. */
+        size_t vae_enc_mem = (size_t)ref_16k_n * 2048 * 4 * 10;
+        if (vae_enc_mem < 512ULL * 1024 * 1024)
+            vae_enc_mem = 512ULL * 1024 * 1024;
+        if (vae_enc_mem > 4ULL * 1024 * 1024 * 1024)
+            vae_enc_mem = 4ULL * 1024 * 1024 * 1024;
         struct ggml_init_params vae_enc_params = {
             .mem_size   = vae_enc_mem,
             .mem_buffer = NULL,
@@ -261,6 +267,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         struct ggml_context * vae_enc_ctx = ggml_init(vae_enc_params);
         if (!vae_enc_ctx) {
             if (ref_16k != ref_wav) free(ref_16k);
+            if (ref_wav_owned) free(ref_wav);
             vcpm_set_error(ctx, "out of memory for VAE encoder");
             return VCPM_ERR_OOM;
         }
@@ -268,6 +275,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         if (!vae_enc_graph) {
             ggml_free(vae_enc_ctx);
             if (ref_16k != ref_wav) free(ref_16k);
+            if (ref_wav_owned) free(ref_wav);
             vcpm_set_error(ctx, "out of memory for VAE encoder graph");
             return VCPM_ERR_OOM;
         }
@@ -278,6 +286,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         if (!audio_t || !audio_t->data) {
             ggml_free(vae_enc_ctx);
             if (ref_16k != ref_wav) free(ref_16k);
+            if (ref_wav_owned) free(ref_wav);
             vcpm_set_error(ctx, "out of memory for VAE encoder input");
             return VCPM_ERR_OOM;
         }
@@ -305,6 +314,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         if (!mean) {
             ggml_free(vae_enc_ctx);
             if (ref_16k != ref_wav) free(ref_16k);
+            if (ref_wav_owned) free(ref_wav);
             vcpm_set_error(ctx, "VAE encoder failed");
             return VCPM_ERR_BACKEND;
         }
@@ -317,6 +327,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         if (!vae_enc_work) {
             ggml_free(vae_enc_ctx);
             if (ref_16k != ref_wav) free(ref_16k);
+            if (ref_wav_owned) free(ref_wav);
             vcpm_set_error(ctx, "out of memory for VAE encoder work buffer");
             return VCPM_ERR_OOM;
         }
@@ -328,15 +339,17 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         if (!mean->data) {
             ggml_free(vae_enc_ctx);
             if (ref_16k != ref_wav) free(ref_16k);
+            if (ref_wav_owned) free(ref_wav);
             vcpm_set_error(ctx, "VAE encoder produced empty output");
             return VCPM_ERR_BACKEND;
         }
 
-        n_ref_latents = (int)mean->ne[1];  /* number of latent time steps */
-        ref_latent_dim = (int)mean->ne[0]; /* latent dimension */
+        n_ref_latents = (int)mean->ne[1];
+        ref_latent_dim = (int)mean->ne[0];
         if (n_ref_latents <= 0 || ref_latent_dim <= 0) {
             ggml_free(vae_enc_ctx);
             if (ref_16k != ref_wav) free(ref_16k);
+            if (ref_wav_owned) free(ref_wav);
             vcpm_set_error(ctx, "VAE encoder produced invalid shape");
             return VCPM_ERR_BACKEND;
         }
@@ -345,6 +358,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         if (!ref_latents) {
             ggml_free(vae_enc_ctx);
             if (ref_16k != ref_wav) free(ref_16k);
+            if (ref_wav_owned) free(ref_wav);
             vcpm_set_error(ctx, "out of memory for reference latents");
             return VCPM_ERR_OOM;
         }
@@ -353,6 +367,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
 
         ggml_free(vae_enc_ctx);
         if (ref_16k != ref_wav) free(ref_16k);
+        if (ref_wav_owned) free(ref_wav);
 
         fprintf(stderr, "VCPM_DEBUG reference audio: %d latents, dim=%d, audio_len=%lld\n",
                 n_ref_latents, ref_latent_dim, (long long)ref_16k_n);
