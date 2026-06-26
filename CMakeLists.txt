@@ -127,6 +127,12 @@ add_executable(voxcpm-c src/main.c)
 target_link_libraries(voxcpm-c PRIVATE voxcpm)
 install(TARGETS voxcpm-c RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+# ---- Quantize tool (always built, no model weights needed) ----
+add_executable(quantize tools/quantize.c)
+target_include_directories(quantize PRIVATE ${ggml_SOURCE_DIR}/include)
+target_link_libraries(quantize PRIVATE ggml)
+install(TARGETS quantize RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 # ---- Tests ----
 if(VCPM_BUILD_TESTS)
     enable_testing()
