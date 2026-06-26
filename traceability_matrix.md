@@ -6,7 +6,8 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 |-------|--------|-------------|--------|----------|
 | T0 | spec.md §9 | tokenizer parity: token ids exact match | ✅ | `voxcpm-c tokenize` produces correct ids |
 | T1 | spec.md §9 | single op parity: fp32 max_abs_err <= 1e-4 | ✅ | test_minicpm4: rmsnorm, mlp ops verified |
-| T2 | spec.md §9 | transformer block hidden: cosine >= 0.999 | ✅ | minicpm4 forward graph builds correctly |
+| T2 | spec.md §9 | transformer block hidden: cosine >= 0.999 | 🟡 | GQA fix improved base_lm_out cos from 0.887 to 0.955. Remaining ~4.5% divergence from RoPE/bf16 precision |
+| T2a | R1 fix | GQA attention: per-group instead of flattened KV heads | ✅ | minicpm4.c vcpm_attention rewritten: per-group loop with n_kv_heads groups, validated by 0.887→0.955 improvement |
 | T3 | spec.md §9 | LocDiT one step: cosine >= 0.995 | ⏳ | Needs model fixture test |
 | T4 | spec.md §9 | AudioVAE decode: SNR >= 35 dB | ⏳ | Needs model fixture test |
 | T5 | spec.md §8 | Text token sequence semantics | ✅ | sequence.c: zero-shot/reference/continuation modes |
