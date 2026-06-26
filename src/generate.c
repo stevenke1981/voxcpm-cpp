@@ -38,6 +38,9 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+#ifndef M_PI_2
+#define M_PI_2 1.57079632679489661923
+#endif
 
 static int vcpm_debug_shapes(void) {
     const char * v = getenv("VCPM_DEBUG_SHAPES");
@@ -52,6 +55,36 @@ static void vcpm_debug_tensor_shape(const char * label, const struct ggml_tensor
     }
     fprintf(stderr, "VCPM_DEBUG %s: [%" PRId64 ", %" PRId64 ", %" PRId64 ", %" PRId64 "] type=%s\n",
             label, t->ne[0], t->ne[1], t->ne[2], t->ne[3], ggml_type_name(t->type));
+}
+
+static float vcpm_cfm_sway_t(int step, int n_steps) {
+    if (n_steps <= 0) return 0.0f;
+    const float base = 1.0f - (float)step / (float)n_steps;
+    return base + (cosf((float)M_PI_2 * base) - 1.0f + base);
+}
+
+static int vcpm_cfm_zero_star_steps(int n_steps) {
+    if (n_steps <= 1) return 0;
+    int zero_steps = (int)(((float)n_steps + 1.0f) * 0.04f);
+    return zero_steps > 1 ? zero_steps : 1;
+}
+
+static void vcpm_cfm_apply_cfg_zero_star(float * uncond,
+                                         const float * cond,
+                                         int n,
+                                         float cfg_value) {
+    double dot = 0.0;
+    double norm = 0.0;
+    for (int i = 0; i < n; ++i) {
+        dot += (double)cond[i] * (double)uncond[i];
+        norm += (double)uncond[i] * (double)uncond[i];
+    }
+
+    const float scale = (float)(dot / (norm + 1.0e-8));
+    for (int i = 0; i < n; ++i) {
+        const float uncond_scaled = uncond[i] * scale;
+        uncond[i] = uncond_scaled + cfg_value * (cond[i] - uncond_scaled);
+    }
 }
 
 /* ---- Weight resolution helpers ---- */
@@ -763,7 +796,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
      */
     /* Initialize noise: x_1 ~ N(0, I) for patch_size latent vectors */
     float * x_data = (float *)malloc((size_t)total_patch_dim * sizeof(float));
-    if (x_data) {
+    if (!x_data) { free(mu_data); free(prev_data); return VCPM_ERR_OOM; }
+    {
         uint64_t rng_state = (uint64_t)(latent_dim + fill_pos + 1) ^ 0x9E3779B97F4A7C15ULL;
         for (int j = 0; j < total_patch_dim; j++) {
             rng_state += 0x9E3779B97F4A7C15ULL;
@@ -818,15 +852,22 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     int n_steps = (gen_params && gen_params->inference_steps > 0)
                 ? gen_params->inference_steps
                 : 10;
-    float step_size = -1.0f / n_steps;
-    float t = 1.0f;
     int use_cfg = (cfg_value != 1.0f && mu_data != NULL);
+    int zero_star_steps = vcpm_cfm_zero_star_steps(n_steps);
 
     /* Per-substep context size: DiT forward needs ~200 MB per pass (CFG: 2 passes).
      * 1 GB provides headroom for tensor metadata + work buffer. */
     size_t sub_mem = 1ULL * 1024 * 1024 * 1024;
 
     for (int step = 0; step < n_steps; step++) {
+        const float t = vcpm_cfm_sway_t(step, n_steps);
+        const float next_t = vcpm_cfm_sway_t(step + 1, n_steps);
+        const float step_size = -(t - next_t);
+
+        if (step < zero_star_steps) {
+            continue;
+        }
+
         /* Create per-substep context — tensor data freed after Euler update */
         struct ggml_init_params sub_params = {
             .mem_size   = sub_mem,
@@ -860,7 +901,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
 
         /* dt scalar */
         struct ggml_tensor * dt_tensor = ggml_new_tensor_1d(sub_ctx, GGML_TYPE_F32, 1);
-        if (dt_tensor->data) ((float *)dt_tensor->data)[0] = step_size;
+        if (dt_tensor->data) ((float *)dt_tensor->data)[0] = 0.0f;
 
         /* mu conditioning */
         struct ggml_tensor * mu_t = NULL;
@@ -906,7 +947,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             if (t2->data) ((float *)t2->data)[0] = t;
 
             struct ggml_tensor * dt2 = ggml_new_tensor_1d(sub_ctx, GGML_TYPE_F32, 1);
-            if (dt2->data) ((float *)dt2->data)[0] = step_size;
+            if (dt2->data) ((float *)dt2->data)[0] = 0.0f;
 
             struct ggml_tensor * v_uncond = vcpm_locdit_forward(sub_ctx, graph,
                                                                   x_t2, cond_t2,
@@ -919,13 +960,12 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             ggml_build_forward_expand(graph, v_uncond);
             ggml_graph_compute_with_ctx(sub_ctx, graph, 1);
 
-            /* CPU blend: v = v_uncond + cfg * (v_cond - v_uncond) */
+            /* CPU blend: CFG-Zero* scales the unconditioned branch before CFG. */
             float * cond_data = (float *)(v_cond->data ? v_cond->data : NULL);
             float * uncond_data = (float *)(v_uncond->data ? v_uncond->data : NULL);
             if (cond_data && uncond_data) {
-                for (int j = 0; j < total_patch_dim; j++) {
-                    uncond_data[j] = uncond_data[j] + cfg_value * (cond_data[j] - uncond_data[j]);
-                }
+                vcpm_cfm_apply_cfg_zero_star(uncond_data, cond_data,
+                                             total_patch_dim, cfg_value);
                 float * vel = uncond_data;
                 for (int j = 0; j < total_patch_dim; j++) {
                     x_data[j] = x_data[j] + step_size * vel[j];
@@ -953,8 +993,6 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
 
         /* Free per-substep context — reclaim ALL DiT forward tensor memory */
         ggml_free(sub_ctx);
-
-        t += step_size;
     }
 
     free(mu_data);

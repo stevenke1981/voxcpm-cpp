@@ -180,12 +180,36 @@
        - Computes velocity RMS, cosine similarity vs `cfm_pred_feat`, max error, RMS error
        - Verifies structural sanity (finite values, non-zero velocity)
      - **Added to CMakeLists.txt** as `test_cfm_parity` target
-     - **Status**: Test code complete. Requires compiled binary + full GGUF to execute.
+     - **Status**: Test code complete and now executed against `voxcpm2_v2_full.gguf`.
+
+#### Additional Fixes (Session 8 — CFM Sampler Semantics)
+
+23. **LocDiT CFM output view stride fixed** (`src/locdit.c`)
+     - **Symptom**: WAV output was valid but dominated by noise-like content.
+     - **Root cause**: `ggml_view_2d` used element-size offsets for token rows instead of full row byte strides.
+     - **Fix**: `mu` token view uses `hidden * ggml_type_size(mu->type)` and final x-slice uses `(size_t)x_start * h->nb[1]`.
+     - **Verification**: Full TTS smoke produces finite 48 kHz WAV; `test_cfm_parity.exe` builds and runs structural LocDiT verification.
+
+24. **Unified CFM sampler aligned with reference semantics** (`src/generate.c`)
+     - **Reference checked**: `bluryar/VoxCPM.cpp` HEAD `34652f0f35dc8f10b6a58a421209a3a6d4f8452e`.
+     - **Fixes**:
+       - Replaced linear CFM schedule with sway sampling t-span.
+       - LocDiT `delta_time_mlp` input is now `0.0` during CFM, matching the reference runtime.
+       - Enabled CFG-Zero* first-step zero velocity.
+       - Replaced plain CFG blend with scaled-unconditioned CFG-Zero* blend.
+     - **Verification**:
+       - MSVC Release build: `voxcpm-c`, `test_model_tts_smoke`, `test_vae_reference`, `test_wav_writer`, `test_cfm_parity`.
+       - `test_wav_writer.exe`: PASS.
+       - `test_vae_reference.exe voxcpm2_v2_full.gguf fixtures\ref\feat_pred_latent.bin`: PASS; fixed-latent VAE matches Python closely.
+       - `test_cfm_parity.exe voxcpm2_v2_full.gguf fixtures\ref`: PASS structural LocDiT verification.
+       - `test_model_tts_smoke.exe voxcpm2_v2_full.gguf`: PASS for normal and stream smoke paths.
+       - `voxcpm-c.exe tts ... --out cfm_sway_zero_star.wav`: 122880 samples, 48 kHz, NaN=0, Inf=0, `>8 kHz` power ratio `0.00016`.
+     - **Remaining risk**: Full CFM multi-step latent parity against Python is still pending because the available fixture contains final denoised output but not a deterministic initial noise/trajectory for exact comparison.
 
 ### Remaining Risks
 
-1. **Audio quality still has 50 Hz periodic content**: Output RMS=0.129 (with max_len=64, steps=5). Spectrum shows 50 Hz peak. The VAE decoder is verified correct (RMS=0.116 with fixture latent), so the issue is in the CFM/DiT latent generation pipeline, not the decoder.
-2. **CFM/DiT velocity parity test written but not executed**: `test_cfm_parity.c` is complete but requires compiled binary + full GGUF to run. Ready for next full-build cycle.
+1. **Full latent parity still pending**: Latest smoke no longer shows high-frequency dominance (`>8 kHz` power ratio `0.00016`), but C autoregressive latents still need deterministic comparison against Python with the same initial noise/trajectory.
+2. **CFM/DiT structural test is executed, not full parity**: `test_cfm_parity.c` verifies shape/finite output and catches gross LocDiT regressions. It does not yet assert equality against a Python raw-velocity fixture or full CFM trajectory.
 3. **C generated latents differ from Python**: C latents from `c_latent_dump.bin` have RMS=1.54 but correlation ~0 with Python `generated_feat.npy`. Different text inputs, but the divergence likely indicates a conditioning issue (prev_latent, sr_cond, or FSQ quantization).
 4. **Stop predictor firing**: Was firing at patch 2-3; with current output, fires at patch 17 for medium text with steps=5. Need to verify stop prediction against Python reference (`step*_stop_logits.npy`).
 5. **Converter implemented**: ✅ `convert_voxcpm2_to_gguf.py` works.

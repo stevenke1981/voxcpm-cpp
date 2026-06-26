@@ -257,3 +257,49 @@ To mark this task complete:
 **Remaining risk**: Hypothesis A (VAE conv_transpose config mismatch) remains the
 most likely root cause. Cross-check all 6 upsample stages' output_padding and
 dilation against Python `voxcpm2/modules/vae_v2.py`.
+
+---
+
+## 10. 2026-06-26 Update: CFM Sampler Semantics
+
+The fixed-latent AudioVAE path is now verified: `test_vae_reference.exe
+voxcpm2_v2_full.gguf fixtures\ref\feat_pred_latent.bin` produces C/Python VAE
+output with cosine `0.9999786` and relative RMS error about `0.00831`.
+
+The high-frequency-noise symptom was first reduced by fixing LocDiT tensor views
+in `src/locdit.c`: `mu` row stride now uses `hidden * type_size`, and the final
+hidden slice offset now uses `x_start * h->nb[1]`.
+
+The next divergence found by comparing against `bluryar/VoxCPM.cpp` was the CFM
+sampler:
+
+- C++/Python uses a sway time span, not a linear `1.0, 0.9, ...` schedule.
+- C++/Python feeds `dt=0.0` into LocDiT's `delta_time_mlp` during Unified CFM.
+- C++/Python enables CFG-Zero*: first diffusion step is zero velocity, and CFG
+  scales the unconditioned branch before mixing.
+
+`src/generate.c` now mirrors those sampler semantics without changing the public
+C ABI.
+
+Validation after this slice:
+
+- `cmake --build build_msvc --config Release --target voxcpm-c test_model_tts_smoke test_vae_reference test_wav_writer test_cfm_parity`
+- `test_wav_writer.exe` PASS
+- `test_vae_reference.exe voxcpm2_v2_full.gguf fixtures\ref\feat_pred_latent.bin` PASS
+- `test_cfm_parity.exe voxcpm2_v2_full.gguf fixtures\ref` PASS structural LocDiT check
+- `test_model_tts_smoke.exe voxcpm2_v2_full.gguf` PASS
+- CLI smoke: `cfm_sway_zero_star.wav`, 122880 samples, 48 kHz, NaN=0, Inf=0
+
+Spectrum for `cfm_sway_zero_star.wav`:
+
+| Band | Power ratio |
+|---|---:|
+| `<80 Hz` | 0.01431 |
+| `80-4 kHz` | 0.98465 |
+| `4-8 kHz` | 0.00088 |
+| `>8 kHz` | 0.00016 |
+
+The high-frequency-noise failure is no longer present in this smoke metric.
+Remaining risk is intelligibility/parity of the autoregressive latent sequence:
+the CFM structural test still compares raw velocity shape/finite output, not full
+multi-step latent parity against Python.

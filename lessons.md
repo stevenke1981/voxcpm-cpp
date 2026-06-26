@@ -49,3 +49,9 @@
 **Trigger:** LocDiT produced high-frequency/noise-like audio even though WAV writer and AudioVAE fixed-latent parity passed.
 **Rule:** When using `ggml_view_2d` to reinterpret token rows, compute `nb1` and `offset` in bytes from the full row stride (`row_index * tensor->nb[1]` or `hidden * type_size`), not from element counts like `row_index * sizeof(float)`.
 **Source:** VoxCPM C/C++ high-frequency WAV noise fix
+
+---
+## Lesson #16 — 2026-06-26
+**Trigger:** CFM output remained suspicious after LocDiT view and fixed-latent VAE tests passed.
+**Rule:** Treat sampler details as model contract: match the reference CFM `t_span`, LocDiT `dt` embedding input, CFG-Zero* zero steps, and CFG blend before judging audio quality from generated latents.
+**Source:** VoxCPM C/C++ CFM sampler semantics fix

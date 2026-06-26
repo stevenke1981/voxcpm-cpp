@@ -136,14 +136,16 @@
   - [x] Reject incomplete/mock GGUFs before graph execution instead of returning dummy audio or crashing.
 - [x] Implement stop predictor (CPU-based, uses stop_proj + SiLU + stop_head + sigmoid/softmax).
 - [x] Implement max/min length handling (min_len/max_len from gen_params).
-- [ ] **Debug audio quality**: pipeline runs end-to-end but output has low-frequency hum (~47 Hz dominant). Needs Python reference latents for DiT/CFM parity check.
+- [ ] **Debug audio quality / intelligibility**: pipeline runs end-to-end and no longer shows high-frequency-noise dominance in the latest smoke metric, but full autoregressive latent parity and subjective intelligibility still need verification.
   - [x] **Export Python reference latents via converter/fixture script** — ✅ Done: 128 .npy files + reference audio in `fixtures/ref/`. Python produces real speech (RMS=0.116, range [-0.66, 0.73]).
-  - [x] **Verify DiT velocity predictions match Python** — test_cfm_parity.c written + CMake target added. Test loads GGUF, fixtures, runs LocDiT forward, and compares velocity output. Prerequisite: compiled binary + full GGUF.
-  - [ ] **Verify CFM integration produces equivalent latents**.
+  - [x] **Verify DiT structural forward path** — test_cfm_parity.c loads GGUF + fixtures, runs LocDiT forward, verifies finite output and expected [64,4] shape. Current fixture compares raw velocity against final denoised output only as a diagnostic, not as a parity assertion.
+  - [x] **Align CFM sampler semantics with reference** — `generate.c` now uses sway t-span, LocDiT `dt=0.0`, first-step CFG-Zero* zero velocity, and scaled-uncond CFG blend matching `bluryar/VoxCPM.cpp` / Python UnifiedCFM behavior.
+  - [ ] **Verify CFM integration produces equivalent latents** with a deterministic Python trajectory fixture (`cfm_traj_step*` or equivalent initial noise + final latent).
   - [x] **Fix autoregressive loop: produce patch_size=4 latent vectors per step** — Fixed in commit `0625814`: `vcpm_gen_step` writes `total_patch_dim = latent_dim * patch_size` floats per step; `vcpm_gen_run` advances by `total_patch_dim` per patch. C now generates `patch_size=4` latent vectors per step (matching Python).
   - [x] **VAE decoder upconv proven correct** — ggml_conv_transpose_1d matches manual computation exactly (F32 cos_sim=1.0). Root cause of previous −0.04 vs −0.10 discrepancy was a buggy manual scatter implementation (broken ggml_view_2d stride + ggml_add).
   - [x] **Latent buffer offset bug fixed** — `vcpm_gen_run` advanced output pointer by only `latent_dim` per patch but `vcpm_gen_step` writes `latent_dim * patch_size` floats. This caused progressive data corruption on all patches after the first. Fixed by advancing by `total_patch_dim` per patch.
-  - [ ] Verify VAE decoder reconstructs expected audio from both Python and C latents (need model file to run).
+  - [x] Verify VAE decoder reconstructs expected audio from Python latents — `test_vae_reference.exe voxcpm2_v2_full.gguf fixtures\ref\feat_pred_latent.bin` matches Python VAE output with cosine `0.9999786`, relative RMS error about `0.00831`.
+  - [ ] Verify C autoregressive latents match Python latents for the same seed/noise trajectory.
 - [ ] Implement `vcpm_generate_stream()`.
   - [x] One-shot callback baseline implemented by generating full audio then invoking the stream callback once.
   - [ ] True chunked autoregressive/AudioVAE streaming is still pending.
