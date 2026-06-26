@@ -1,0 +1,4 @@
+-std=c11
+-I../include
+-I../build_msvc/_deps/ggml-src/include
+-I../build_msvc/_deps/ggml-src/src

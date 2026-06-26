@@ -1,0 +1,14 @@
+CompileFlags:
+  Add:
+    - -std=c11
+    - -Iinclude
+    - -Ibuild_msvc/_deps/ggml-src/include
+    - -Ibuild_msvc/_deps/ggml-src/src
+  Remove:
+    - -march=*
+    - -mtune=*
+    - -mfma
+    - -mf16c
+    - -mavx*
+    - -fopenmp
+    - -openmp
