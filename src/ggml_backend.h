@@ -37,4 +37,17 @@ int  vcpm_backend_alloc_ctx(vcpm_backend * be, struct ggml_context * ctx, int is
 /* Get default buffer type for this backend */
 struct ggml_backend_buffer_type * vcpm_backend_buft(vcpm_backend * be);
 
+/* Get human-readable backend type name (for logging / CLI) */
+const char * vcpm_backend_type_name(vcpm_backend * be);
+
+/* Device-agnostic graph compute wrapper.
+ * Allocates context tensors on the backend (if not already allocated),
+ * then computes the graph. Returns 0 on success.
+ *
+ * For CPU backend this behaves like ggml_graph_compute_with_ctx.
+ * For CUDA/Vulkan/Metal this allocates device buffers and copies as needed.
+ */
+int vcpm_backend_compute_graph(vcpm_backend * be, struct ggml_context * ctx,
+                                struct ggml_cgraph * graph, int n_threads);
+
 #endif /* VCPM_GGML_BACKEND_H */

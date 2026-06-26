@@ -245,7 +245,10 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
     }
 
     /* ---- Full model inference pipeline ---- */
-    vcpm_generate_state * gen_state = vcpm_gen_init(ctx->model, 0);
+    vcpm_generate_state * gen_state = vcpm_gen_init(ctx->model,
+                                                     ctx->params.backend,
+                                                     ctx->params.n_threads,
+                                                     0);
     if (!gen_state) {
         vcpm_set_error(ctx, "failed to initialize generation state");
         return VCPM_ERR_BACKEND;

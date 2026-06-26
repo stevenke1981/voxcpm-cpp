@@ -7,6 +7,7 @@
 #include "locdit.h"
 #include "audio_vae.h"
 #include "audio_vae_v2.h"
+#include "ggml_backend.h"
 
 /*
  * generate.h — Full VoxCPM2 autoregressive generation pipeline.
@@ -167,6 +168,10 @@ typedef struct vcpm_generate_state {
     struct ggml_cgraph * step_graph;
     size_t step_mem_size;
 
+    /* Backend (CPU / CUDA / Metal / Vulkan) */
+    vcpm_backend backend;
+    int backend_initialized;
+
     /* AudioVAE configs */
     vcpm_audio_vae_config vae_cfg;
     vcpm_audio_vae_v2_config vae_v2_cfg;  /* V2 decoder config */
@@ -178,16 +183,20 @@ typedef struct vcpm_generate_state {
 /*
  * Initialize generation state from loaded model.
  *
- * Resolves all weight pointers from GGUF tensors and allocates
- * per-layer KV caches and step execution context.
+ * Resolves all weight pointers from GGUF tensors, initializes the
+ * selected backend (CPU/CUDA/etc.), and allocates per-layer KV caches
+ * and step execution context.
  *
  * Parameters:
- *   model: loaded model (from vcpm_model_load)
- *   step_mem: per-step ggml context memory size (0 = auto)
+ *   model:       loaded model (from vcpm_model_load)
+ *   backend_type: VCPM_BACKEND_AUTO / VCPM_BACKEND_CPU / VCPM_BACKEND_CUDA / etc.
+ *   n_threads:   thread count (ignored for GPU backends)
+ *   step_mem:    per-step ggml context memory size (0 = auto)
  *
  * Returns: allocated state, or NULL on error.
  */
 vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
+                                     int backend_type, int n_threads,
                                      size_t step_mem);
 
 /*

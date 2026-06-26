@@ -111,11 +111,21 @@ static int fill_dit_weights(const struct vcpm_model * model,
 /* ---- Main API ---- */
 
 vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
+                                     int backend_type, int n_threads,
                                      size_t step_mem) {
     if (!model) return NULL;
 
     vcpm_generate_state * s = (vcpm_generate_state *)calloc(1, sizeof(vcpm_generate_state));
     if (!s) return NULL;
+
+    /* Initialize backend */
+    if (vcpm_backend_init(&s->backend, backend_type, n_threads) != 0) {
+        fprintf(stderr, "error: vcpm_backend_init failed\n");
+        free(s);
+        return NULL;
+    }
+    s->backend_initialized = 1;
+    fprintf(stderr, "vcpm_gen_init: backend=%s\n", vcpm_backend_type_name(&s->backend));
 
     const vcpm_model_config * cfg = &model->config;
 
@@ -414,6 +424,10 @@ void vcpm_gen_free(vcpm_generate_state * state) {
     if (!state) return;
     if (state->kv_ctx) ggml_free(state->kv_ctx);
     if (state->step_ctx) ggml_free(state->step_ctx);
+    if (state->backend_initialized) {
+        vcpm_backend_free(&state->backend);
+        state->backend_initialized = 0;
+    }
     free(state->base_kv_cache);
     free(state->ralm_kv_cache);
     free(state->prev_patch);
