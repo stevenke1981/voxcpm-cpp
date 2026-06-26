@@ -144,6 +144,9 @@ typedef struct vcpm_generate_state {
      * Updated after each gen_step with fsq_out data. */
     float * last_lm_hidden;               /* [hidden_size] or NULL */
 
+    /* Long-lived context for KV cache tensors (survives per-step context swaps) */
+    struct ggml_context * kv_ctx;
+
     /* Per-step ggml execution resources */
     struct ggml_context * step_ctx;
     struct ggml_cgraph * step_graph;

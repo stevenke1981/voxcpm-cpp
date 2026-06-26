@@ -39,6 +39,7 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 
 | Date | Change | AC/Gate | Evidence |
 |------|--------|---------|----------|
+| 2026-06-26 | **Memory exhaustion root cause fixed: ggml linear allocator accumulation across steps/CFM** | F3, todos.md §12 | **Root cause**: Single `step_ctx` (linear ggml allocator) accumulated ALL tensor data — KV cache (~2.8 GB) + pre-CFM (~1 GB/step) + CFM DiT forwards (~2 GB each × 10 steps = ~20 GB). Exhausted within 2-3 gen_step calls. **Fix**: KV cache moved to dedicated `kv_ctx` (long-lived). Pre-CFM uses `scratch_ctx` (freed each gen_step). CFM loop uses per-substep contexts (freed each Euler iteration). Step_ctx reduced from 14 GB to 256 MB. Verified: smoke test with max_len=64, steps=5 runs without OOM. |
 | 2026-06-25 | Bug fix: RALM KV cache not populated during prompt eval | F3, G4 | Added ggml_build_forward_expand(graph, ralm_hidden) in gen_prompt_eval |
 | 2026-06-25 | Bug fix: audio placeholder count too small (4→~80) | F4, T7 | Updated sequence.c zero-shot builder to max(patch_size*16, n_text*8) |
 | 2026-06-25 | Bug fix: stop predictor matmul transposed indexing | F4, spec.md §8.10 | Changed W[j*hs+i] to W[i*hs+j] in both stop_proj and stop_head |

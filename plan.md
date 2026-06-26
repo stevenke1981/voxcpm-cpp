@@ -201,7 +201,7 @@ Goal: practical speed and memory。
 
 Tasks:
 
-1. ggml graph reuse.
+1. [x] ggml graph reuse — fixed memory accumulation (single linear context → per-step scratch contexts).
 2. CPU threading.
 3. CUDA/Metal backend selection.
 4. Quantization experiments.

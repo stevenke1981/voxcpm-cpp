@@ -102,10 +102,19 @@ int vcpm_write_wav_pcm16(const char * path, const float * samples,
     /* Convert f32 [-1..1] to PCM16 */
     for (uint64_t i = 0; i < total_samples; i++) {
         float s = samples[i];
-        /* Clamp */
+        /* Clamp to [-1, 1] */
         if (s > 1.0f) s = 1.0f;
         if (s < -1.0f) s = -1.0f;
-        int16_t val = (int16_t)(s * 32767.0f);
+        /* Scale to int16 range with round-to-nearest (not truncation) */
+        float scaled = s * 32767.0f;
+        if (scaled >= 0.0f)
+            scaled += 0.5f;
+        else
+            scaled -= 0.5f;
+        /* Final clamp to int16 range before truncation */
+        if (scaled > 32767.0f) scaled = 32767.0f;
+        if (scaled < -32768.0f) scaled = -32768.0f;
+        int16_t val = (int16_t)scaled;
         if (fwrite(&val, sizeof(int16_t), 1, f) != 1) {
             fclose(f);
             remove(path);

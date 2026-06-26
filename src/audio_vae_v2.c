@@ -320,8 +320,29 @@ static struct ggml_tensor * conv1d_layer(struct ggml_context * ctx,
         return depthwise_conv1d(ctx, graph, weight, bias, input, stride, pad, dilate, model);
     }
 
-    /* Regular conv1d (F32 precision) */
-    out = conv1d_f32(ctx, weight, input, stride, pad, dilate);
+    /* Regular conv1d (F32 precision)
+     * For pad > 0 with single output channel (model.9), use causal left-padding.
+     * Python CausalConv1d applies F.pad(x, (pad*dilation*2, 0)) then Conv1d(pad=0).
+     * This avoids the 3-sample future leakage that causes high-frequency distortion.
+     * For multi-output-channel convs (fc_mu, fc_logvar, encoder block.0), keep
+     * symmetric padding as trained. */
+    if (pad > 0 && weight->ne[2] == 1) {
+        /* Causal left-pad: left_pad = pad * 2 * dilate */
+        int left_pad = pad * 2 * (dilate > 0 ? dilate : 1);
+        int64_t N = input->ne[0], IC = input->ne[1];
+        struct ggml_tensor * padded = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
+                                                           N + left_pad, IC);
+        if (!padded) return NULL;
+        struct ggml_tensor * dst_slice = ggml_view_2d(ctx, padded, N, IC,
+                                                        padded->nb[1],
+                                                        left_pad * sizeof(float));
+        struct ggml_tensor * cpy = ggml_cpy(ctx, input, dst_slice);
+        ggml_set_name(cpy, "causal_pad");
+        ggml_build_forward_expand(graph, cpy);
+        out = conv1d_f32(ctx, weight, padded, stride, 0, dilate);
+    } else {
+        out = conv1d_f32(ctx, weight, input, stride, pad, dilate);
+    }
     if (!out) return NULL;
     out = ggml_reshape_2d(ctx, out, out->ne[0], out->ne[1]);
 

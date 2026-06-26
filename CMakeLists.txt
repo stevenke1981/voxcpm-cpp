@@ -94,6 +94,11 @@ if(VCPM_BUILD_TESTS)
     target_link_libraries(test_wav PRIVATE voxcpm)
     add_test(NAME wav COMMAND test_wav)
 
+    add_executable(test_wav_writer tests/audio/test_wav_writer.c)
+    target_include_directories(test_wav_writer PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_wav_writer PRIVATE voxcpm)
+    add_test(NAME wav_writer COMMAND test_wav_writer)
+
     add_executable(test_sequence tests/test_sequence.c)
     target_include_directories(test_sequence PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_sequence PRIVATE voxcpm)

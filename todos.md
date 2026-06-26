@@ -155,10 +155,14 @@
 ## 12. Performance
 
 - [ ] Add `bench` command.
-- [ ] Reuse graph memory.
-  - [x] Raised the default generation arena to 6 GiB so 10-step f16 smoke can run without ggml arena exhaustion.
-  - [ ] Split/reuse graph memory properly for long generation.
-- [ ] Reuse KV cache.
+- [x] Reuse graph memory.
+  - [x] **Root cause fixed**: replaced single linear ggml context with per-step scratch contexts.
+    - KV cache now lives in its own long-lived `kv_ctx` (~2.8 GB).
+    - Pre-CFM tensors use `scratch_ctx` (freed each `gen_step` call).
+    - CFM loop uses per-substep `sub_ctx` (freed after each Euler iteration).
+    - Post-CFM FSQ uses a temp `post_ctx` (freed immediately).
+    - Step_ctx reduced from 14 GB to 256 MB (just graph metadata + work buffer).
+  - [ ] Reuse KV cache.
 - [ ] Add CPU thread setting.
 - [ ] Add backend selection.
 - [ ] Add first q8_0 quantization preset.
@@ -178,7 +182,7 @@
 - [x] **Audio placeholder count too small (F4)**: Zero-shot builder created only `patch_size` (4) audio placeholders, yielding ~0.08s max audio. Updated to `max(patch_size*16, n_text_tokens*8)` for minimum ~2.5s budget.
 - [x] **Stop predictor matmul transposed (F4)**: Both `stop_proj` (2048×2048) and `stop_head` (2048×2) CPU matmuls computed `W^T @ x` instead of `W @ x`. Fixed indexing from `W[j*hs+i]` to `W[i*hs+j]`.
 - [x] **Missing `gen_predict_stop` forward declaration (F4)**: Static function used before definition with no prototype; MSVC assumed `int` return, causing float return value to be read as int (65535.0).
-- [x] **step_ctx memory exhaustion (F3)**: 3GB pool too small for full prompt eval graph (28 LM layers + 8 RALM layers). Increased to 8GB.
+- [x] **step_ctx memory exhaustion (F3)**: Single linear ggml context accumulated tensor data across all steps + CFM substeps. KV cache (~2.8 GB) + pre-CFM (~1 GB) + 10× CFM DiT forwards (~2 GB each) caused exhaustion by step 2-3. **Permanent fix**: KV cache moved to `kv_ctx` (long-lived). Pre-CFM uses `scratch_ctx` freed each step. CFM loop uses per-substep contexts freed each Euler iteration. Step_ctx reduced from 14 GB to 256 MB.
 - [x] **ggml_conv_1d hardcodes F16 im2col (F4)**: Replaced `ggml_conv_1d` with custom `conv1d_f32()` using `ggml_im2col(GGML_TYPE_F32)` + F32 matmul. Depthwise conv also updated for F32 weight expansion. Verified correct: relative error < 0.001% vs manual im2col reference. Output identical to original F16 path (no numerical regression).
 - [x] **Manual model.9 verification used wrong input (F5)**: Test code used `dbg[7]` (block.7 output) instead of `dbg[8]` (model.8 snake output) as model.9 input, causing 56% relative error. Fixed by switching to `dbg[8]`. After fix, manual reference matches C conv1d_f32 output to 0.0006%.
 - [x] **ggml_conv_1d_dw 4D batch matmul produces 8-channel block bug (F4)**: model.0.weight depthwise conv produced only 8 unique values per frame (frames 2-7), grouped in blocks of 8 channels. **Root cause**: ggml_mul_mat with 4D tensors has batch-dimension grouping bug. **Fix**: Replaced ggml_conv_1d_dw with manual F32 triple-loop depthwise conv.
