@@ -487,48 +487,21 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     free(prev_data);
 
     /*
-     * ========== PHASE 3: Post-CFM FSQ quantize ==========
+     * ========== PHASE 3: Store raw CFM feature ==========
+     *
+     * Python feeds feat_decoder output directly into feat_encoder and the next
+     * prefix condition. FSQ is applied later to the base LM hidden state, not to
+     * the generated acoustic feature.
      */
-    size_t post_mem = 512ULL * 1024 * 1024;
-    struct ggml_init_params post_params = {
-        .mem_size   = post_mem,
-        .mem_buffer = NULL,
-        .no_alloc   = false,
-    };
-    struct ggml_context * post_ctx = ggml_init(post_params);
-    if (!post_ctx) { free(x_data); return VCPM_ERR_OOM; }
-
-    ggml_graph_clear(graph);
-    struct ggml_tensor * denoised = ggml_new_tensor_2d(post_ctx, GGML_TYPE_F32,
-                                                         latent_dim, patch_size);
-    if (denoised && denoised->data) {
-        memcpy(denoised->data, x_data, (size_t)total_patch_dim * sizeof(float));
-    }
-    ggml_set_name(denoised, "denoised");
-
-    struct ggml_tensor * quantized = denoised;
-    if (state->fsq_scale) {
-        vcpm_fsq_weights fw;
-        memset(&fw, 0, sizeof(fw));
-        fw.scale      = state->fsq_scale;
-        fw.offset     = state->fsq_offset;
-        fw.num_levels = 0;
-        ggml_graph_clear(graph);
-        quantized = vcpm_fsq_forward(post_ctx, graph, denoised, &fw);
-        if (quantized) ggml_build_forward_expand(graph, quantized);
-        ggml_graph_compute_with_ctx(post_ctx, graph, 1);
-    }
-
-    const float * output_src = (quantized && quantized->data) ? (const float *)quantized->data : x_data;
+    const float * output_src = x_data;
     if (vcpm_debug_shapes_env()) {
-        char qlabel[64];
-        snprintf(qlabel, sizeof(qlabel), "quant_out_%04d", ar_step_counter);
-        vcpm_dump_tensor(qlabel, output_src, latent_dim, patch_size, 0);
+        char out_label[64];
+        snprintf(out_label, sizeof(out_label), "post_cfm_feat_%04d", ar_step_counter);
+        vcpm_dump_tensor(out_label, output_src, latent_dim, patch_size, 0);
     }
     memcpy(output_patch, output_src, (size_t)total_patch_dim * sizeof(float));
     memcpy(state->prev_patch, output_src, (size_t)total_patch_dim * sizeof(float));
 
-    ggml_free(post_ctx);
     free(x_data);
 
     /* Phase 4: LM update (shared with reference audio conditioning) */

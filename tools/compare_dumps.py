@@ -39,13 +39,13 @@ def compare_one(label, c_data, c_shape, py_data, py_shape):
     print(f"\n{'='*60}")
     print(f"COMPARING: {label}")
     print(f"{'='*60}")
-    print(f"  C  shape: {c_shape} data: {c_data.shape} floats={len(c_data)}")
-    print(f"  Py shape: {py_shape} data: {py_data.shape} floats={len(py_data)}")
+    print(f"  C  shape: {c_shape} data: {c_data.shape} floats={c_data.size}")
+    print(f"  Py shape: {py_shape} data: {py_data.shape} floats={py_data.size}")
 
     c_flat = c_data.flatten()
     py_flat = py_data.flatten()
-    n_c = len(c_flat)
-    n_py = len(py_flat)
+    n_c = c_flat.size
+    n_py = py_flat.size
 
     if n_c == n_py:
         print(f"  Sizes: MATCH ({n_c})")
@@ -64,9 +64,12 @@ def compare_one(label, c_data, c_shape, py_data, py_shape):
 
     c_rms = np.sqrt(np.mean(c_flat[:n] ** 2))
     py_rms = np.sqrt(np.mean(py_flat[:n] ** 2))
-    cos_sim = np.dot(c_flat[:n], py_flat[:n]) / (
-        np.linalg.norm(c_flat[:n]) * np.linalg.norm(py_flat[:n]) + 1e-30
-    )
+    norm_c = np.linalg.norm(c_flat[:n])
+    norm_py = np.linalg.norm(py_flat[:n])
+    if norm_c == 0.0 and norm_py == 0.0:
+        cos_sim = 1.0
+    else:
+        cos_sim = np.dot(c_flat[:n], py_flat[:n]) / (norm_c * norm_py + 1e-30)
 
     print(f"  C   RMS: {c_rms:.6f}")
     print(f"  Py  RMS: {py_rms:.6f}")
@@ -76,8 +79,12 @@ def compare_one(label, c_data, c_shape, py_data, py_shape):
     print(f"  Mean abs error: {np.mean(abs_err):.6f}")
     print(f"  Max rel error: {np.max(rel_err):.6f}")
 
+    exact_zero_match = norm_c == 0.0 and norm_py == 0.0 and np.max(abs_err) == 0.0
     matched = False
-    if cos_sim > 0.99:
+    if exact_zero_match:
+        print("  [MATCH] (both tensors are exactly zero)")
+        matched = True
+    elif cos_sim > 0.99:
         print(f"  [MATCH] (cos={cos_sim:.6f})")
         matched = True
     elif cos_sim > 0.9:
@@ -135,8 +142,45 @@ def reshape_c_to_py(dump_name, c_data, c_shape, py_data, py_shape):
             return c_flat, py_data.flatten()
         elif len(py_shape) == 1:
             return c_flat, py_data
+    elif dump_name.startswith("dump_lm_hidden_step_"):
+        c_flat = c_data.flatten()
+        if len(py_shape) == 2 and py_shape[1] == c_flat.shape[0] and py_shape[0] == 1:
+            return c_flat, py_data.flatten()
+        elif len(py_shape) == 1:
+            return c_flat, py_data
+    elif dump_name.startswith("dump_residual_hidden_step_"):
+        c_flat = c_data.flatten()
+        if len(py_shape) == 2 and py_shape[1] == c_flat.shape[0] and py_shape[0] == 1:
+            return c_flat, py_data.flatten()
+        elif len(py_shape) == 1:
+            return c_flat, py_data
+    elif dump_name.startswith("dump_stop_hidden_"):
+        c_flat = c_data.flatten()
+        if len(py_shape) == 2 and py_shape[1] == c_flat.shape[0] and py_shape[0] == 1:
+            return c_flat, py_data.flatten()
+        elif len(py_shape) == 1:
+            return c_flat, py_data
+    elif dump_name.startswith("dump_stop_logits_"):
+        c_flat = c_data.flatten()
+        if len(py_shape) == 2 and py_shape[1] == c_flat.shape[0] and py_shape[0] == 1:
+            return c_flat, py_data.flatten()
+        elif len(py_shape) == 1:
+            return c_flat, py_data
 
     return c_data, py_data
+
+
+def infer_prompt_len(fixtures_dir):
+    """Infer the initial text prompt length used as C fill_pos offset."""
+    input_text = os.path.join(fixtures_dir, "input_text.npy")
+    if not os.path.exists(input_text):
+        return 0
+    arr = load_npy(input_text)
+    if arr.ndim >= 2:
+        return int(arr.shape[1])
+    if arr.ndim == 1:
+        return int(arr.shape[0])
+    return 0
 
 
 def find_fixture_for_step(fixtures_dir, step_num, suffix_patterns):
@@ -208,6 +252,11 @@ def main():
         print(f"Generation params: {gen_params}")
         print()
 
+    prompt_len = infer_prompt_len(args.fixtures_dir)
+    if prompt_len:
+        print(f"Inferred prompt length for fill_pos dumps: {prompt_len}")
+        print()
+
     # Discover all dump_*.bin files
     all_dumps = sorted([f for f in os.listdir(args.dump_dir)
                         if f.endswith(".bin") and f.startswith("dump_")])
@@ -223,21 +272,21 @@ def main():
         ("dump_base_lm_out.bin",  "base_lm_out.npy"),
     ]
 
-    # Step-specific dump mappings: (dump_prefix, step_suffixes_for_dump, fixture_suffix_list, step_offset)
-    # step_offset: number of steps to add to the C dump step number to get the correct Python fixture step.
-    # C's ar_step_counter starts at 0 for the first generation step.
-    # For CFM/FE outputs, step_counter=0 maps to Python step0000.
-    # For LM/RESIDUAL hidden states, step_counter=N maps to Python step(N+1) because
-    #   the hidden state is dumped AFTER the LM update, which produces the state for
-    #   the NEXT step. Step0000 = initial state (pre-audio), step0001 = after first audio.
-    # e.g. dump_lm_hidden_ar_0000.bin matches step0001_lm_hidden_step.npy
+    # Step-specific dump mappings: (dump_prefix, fixture_suffix_list, step_offset).
+    # C's ar_step_counter starts at 0 for the first generation step, matching the
+    # Python fixture's step0000 after the first generated audio patch.
     step_pairs = [
         ("dump_step_cond_",       ["prefix_feat_cond"],       0),
         ("dump_step_noise_",      None,                       0),  # no Python fixture for noise
         ("dump_step_pred_feat_",  ["cfm_pred_feat"],          0),
+        ("dump_post_cfm_feat_",   ["cfm_pred_feat"],          0),
         ("dump_mu_init_",         ["dit_hidden"],             0),
-        ("dump_lm_hidden_ar_",    ["lm_hidden_step"],         1),
-        ("dump_residual_hidden_ar_", ["residual_hidden_step"], 1),
+        ("dump_lm_hidden_ar_",    ["lm_hidden_step"],         0),
+        ("dump_residual_hidden_ar_", ["residual_hidden_step"], 0),
+        ("dump_lm_hidden_step_",  ["lm_hidden_step"],         -prompt_len),
+        ("dump_residual_hidden_step_", ["residual_hidden_step"], -prompt_len),
+        ("dump_stop_hidden_",     ["stop_hidden"],            0),
+        ("dump_stop_logits_",     ["stop_logits"],            0),
     ]
 
     results = []
@@ -319,6 +368,9 @@ def main():
 
             # Find matching step fixture (apply step_offset for post-update states)
             fixture_step = step_num + step_offset
+            if fixture_step < 0:
+                print(f"\n--- {os.path.basename(dump_path)}: fill_pos maps before step0000 (prompt_len={prompt_len}) ---")
+                continue
             fixture_path = find_fixture_for_step(args.fixtures_dir, fixture_step, suffix_list)
             if fixture_path is None:
                 print(f"\n--- {os.path.basename(dump_path)}: No matching fixture for step {fixture_step} (C step {step_num} + offset {step_offset}) ---")

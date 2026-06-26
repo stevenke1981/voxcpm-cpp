@@ -61,3 +61,9 @@
 **Trigger:** VoxCPM C output produced valid speech-like audio but ASR content did not match the input text after WAV/VAE/CFM fixes.
 **Rule:** Before judging TTS semantic quality, verify tokenizer ids against Python fixtures. For GGUFs without `tokenizer.ggml.merges`, run the no-merges longest-match fallback on normalized SentencePiece-style text, not raw input spaces.
 **Source:** VoxCPM C/C++ tokenizer parity fix
+
+---
+## Lesson #18 — 2026-06-27
+**Trigger:** Same-text C/Python latent comparison showed AR conditioning stayed off after first-step CFM, and Python reference feeds `feat_decoder` output directly into `feat_encoder`.
+**Rule:** Do not apply FSQ to CFM acoustic features before storing `prev_patch`; FSQ belongs to the base LM hidden-state path, not the generated `pred_feat` path.
+**Source:** VoxCPM C/C++ post-CFM feature parity fix

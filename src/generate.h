@@ -342,6 +342,6 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
 /* Stop predictor: compute stop probability from last_lm_hidden.
  * Returns [0,1] or -1 on error.
  * Defined in gen_stop.c, called by gen_run.c. */
-float gen_predict_stop(vcpm_generate_state * state);
+float gen_predict_stop(vcpm_generate_state * state, int ar_step);
 
 #endif /* VCPM_GENERATE_H */

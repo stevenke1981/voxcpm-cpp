@@ -32,7 +32,10 @@
 - [x] Write GGUF metadata (all voxcpm.* keys from config).
 - [x] Write GGUF tensors (sort by module order, 813 tensors, 8.88 GB).
 - [x] Emit `shapes.json` (optional --emit-shape-manifest flag).
-- [ ] Add converter smoke tests (minor - converter is already verified working).
+- [x] Add Q8_0 quantization tool (`tools/quantize.c`, commit 45f9340).
+  - [x] 664/813 tensors quantized, 149 skipped (small non-divisible dims).
+  - [x] Source 4.44 GB (F16 mixed) → Q8_0 2.44 GB (45% reduction).
+- [ ] Add converter smoke tests (minor — converter is already verified working).
 
 ## 3. Model Loader
 
@@ -47,12 +50,10 @@
 
 - [x] Load tokenizer metadata from GGUF.
 - [x] Implement encode for UTF-8.
-- [x] Preserve upstream handling of Chinese multi-character tokens (removed unconditional CJK expansion in append_expanded_token).
+- [x] Preserve upstream handling of Chinese multi-character tokens.
 - [x] Add special speech tokens.
 - [x] Add `voxcpm-c tokenize`.
-- [x] Test exact ids vs Python.
-  - [x] `test_tokenizer_parity.exe voxcpm2_v2_full.gguf` verifies `"Hello world."`
-    matches fixture ids `[21045, 2809, 72]`.
+- [x] Test exact ids vs Python. `"Hello world."` → `[21045, 2809, 72]`.
 
 ## 5. Sequence Builder
 
@@ -63,17 +64,17 @@
 - [x] Implement reference+continuation mode.
 - [x] Implement `text_mask` / `audio_mask` construction.
 - [x] Implement audio feature placeholder construction.
-- [ ] Test against Python fixtures.
+- [ ] Test against Python fixtures (sequence-level).
 
 ## 6. Audio IO
 
 - [x] Implement WAV reader mono f32.
 - [x] Implement WAV writer PCM16 and f32.
 - [x] Add resample abstraction (vcpm_resample_f32 with linear interpolation).
-- [ ] Add optional miniaudio/dr_wav integration or internal simple WAV parser.
 - [x] Validate sample rate handling.
+- [ ] Add optional miniaudio/dr_wav integration or internal simple WAV parser.
 
-## 7. MiniCPM4
+## 7. MiniCPM4 (Base LM)
 
 - [x] Parse MiniCPM4 config.
 - [x] Implement embeddings.
@@ -83,118 +84,139 @@
 - [x] Implement MLP.
 - [x] Implement final norm.
 - [x] Add layer-by-layer fixture tests.
+- [x] **GQA fix**: per-group attention loop with n_kv_heads groups (cos 0.887→0.955).
+- [x] **KV cache write_pos fix** (commit 1aba093): causal attention now spans `write_pos + ti + 1` instead of just `ti + 1`. Previously new tokens could only attend to cache entry 0 during autoregressive generation.
 
 ## 8. LocEnc / FSQ / RALM / Projections
 
-- [x] Implement LocEnc (skeleton → full: fixed GGUF prefix feat_encoder.blk, in_proj+bias, special_token, no_rope=1).
-- [x] Implement `enc_to_lm_proj` (inline in projections.h).
+- [x] Implement LocEnc (all-P parallel, CLS prepend, bidirectional attention).
+- [x] Implement `enc_to_lm_proj` + `enc_to_lm_bias` (bias was missing, fixed in 1aba093).
 - [x] Implement FSQ/scalar quantization layer.
 - [x] Implement residual LM with `vocab_size=0` path.
-- [x] Implement `fusion_concat_proj` (loaded in generate.c).
-- [x] Implement `lm_to_dit_proj` and `res_to_dit_proj` (inline in projections.h).
-- [ ] Test `dit_hidden` parity.
+- [x] Implement `fusion_concat_proj`.
+- [x] Implement `lm_to_dit_proj` and `res_to_dit_proj`.
+- [ ] Test `dit_hidden` parity against Python fixture.
 
 ## 9. LocDiT / Unified CFM
 
-- [x] Implement DiT block ops (skeleton, based on MiniCPM4 block).
+- [x] Implement DiT block ops.
 - [x] Implement time embedding (sinusoidal).
 - [x] Implement conditioning path.
-- [x] Implement CFM schedule (callback-based config).
-- [x] Implement CFG.
+- [x] Implement CFM schedule (sway t-span, aligned with bluryar/VoxCPM.cpp).
+- [x] Implement CFG (scaled-unconditioned CFG-Zero* blend).
 - [x] Implement diffusion loop (Euler + Midpoint solver).
-- [ ] Test one-step and multi-step fixtures.
+- [ ] **Test one-step and multi-step fixtures** — `test_cfm_parity` does structural check only (shape/finite). Needs real velocity parity against Python.
 
 ## 10. AudioVAE V2
 
 - [x] Map AudioVAE V2 config.
-- [ ] Implement conv/downsample encoder (skeleton).
-- [ ] Implement latent reshape to `[T, P, D]`.
-- [x] Implement decoder/upsample (skeleton — model.0–model.10 all wired).
-  - [x] model.0: Conv1d (k=7, 1→64) — verified correct.
-  - [x] model.1: Pointwise Conv1d (k=1, 64→2048) — verified correct.
+- [x] VAE decoder (model.0–model.10 all wired and verified):
+  - [x] model.0: Conv1d (k=7, 1→64) with depthwise conv fix.
+  - [x] model.1: Pointwise Conv1d (k=1, 64→2048).
   - [x] model.2–7: CausalDecoderBlocks (upconv + 3× residual units).
-    - [x] upconv_transpose1d uses ggml_conv_transpose_1d — **proven correct** (standalone test F32: cos_sim=1.0, max_diff=1.5e-5; F16: cos_sim=1.0, max_diff=0.024).
-    - [x] Residual units enabled (DIAG return removed).
-    - [x] 3 residual units per block with dilations 1, 3, 9.
-    - [x] **Depthwise conv fix**: replaced manual F32 loop (read `input->data` at graph BUILD time, was uninitialized) with pure ggml-graph ops (`ggml_cpy` for pre-padding + `ggml_conv_1d_dw` + `ggml_add` for bias). Now data accessed at COMPUTE time. Model.2 output RMS=0.930 matches Python 0.930.
-  - [x] model.8: Snake activation (alpha → F32 → ggml_sin).
-  - [x] model.9: Output Conv1d (k=7, 32→1) — **verified correct**: conv1d_f32 (F32 im2col + F32 matmul) matches manual im2col reference to 0.0006% relative error. Matches original F16 ggml_conv_1d path (identical RMS). The earlier 8× discrepancy was caused by the Python reference having no dilation/wrong im2col layout AND the manual verification using block.7 instead of model.8 (snake-activated) input.
+  - [x] model.8: Snake activation.
+  - [x] model.9: Output Conv1d (k=7, 32→1) verified <0.001% error.
   - [x] model.10: Tanh output bound.
-- [ ] **Verify block.2 upconv output matches Python reference** (blocked: no model file available locally).
+- [x] VAE encoder implemented (block.0–4 + fc_mu/fc_logvar).
+- [x] VAE decoder per-time-step matches Python: cos=0.9999786 for known latent.
+- [x] VAE encoder/decoder memory now scales with input size (commit 6c00b92).
+- [x] VAE split into encoder/decoder/shared (commit f0c3ef0).
+- [ ] **Test encode WAV fixture** — encoder structural code exists but hasn't been run end-to-end.
 - [ ] Implement streaming decoder state.
-- [ ] Test decode latent fixture.
-- [ ] Test encode WAV fixture.
 
 ## 11. Full Generation
 
-- [x] Implement model weight loading for all submodules (including feat_encoder, fusion, stop, time_mlp).
-- [ ] **Rewrite generate.c pipeline**: combined_embed → base_lm → FSQ → fusion_concat → RALM → concat cond → CFM → prev_latent feedback loop.
-- [ ] Implement stop predictor.
-- [ ] Implement max/min length handling.
-  - [x] `max_len` now controls the number of generated audio patches for zero-shot TTS.
-  - [ ] `min_len` and stop predictor are still pending.
-- [ ] Implement context trimming for prompt audio.
-- [x] Implement `vcpm_generate()` full pipeline.
-  - [x] Reject incomplete/mock GGUFs before graph execution instead of returning dummy audio or crashing.
-- [x] Implement stop predictor (CPU-based, uses stop_proj + SiLU + stop_head + sigmoid/softmax).
-- [x] Implement max/min length handling (min_len/max_len from gen_params).
-- [ ] **Debug audio quality / intelligibility**: pipeline runs end-to-end and no longer shows high-frequency-noise dominance in the latest smoke metric, but full autoregressive latent parity and subjective intelligibility still need verification.
-  - [x] **Export Python reference latents via converter/fixture script** — ✅ Done: 128 .npy files + reference audio in `fixtures/ref/`. Python produces real speech (RMS=0.116, range [-0.66, 0.73]).
-  - [x] **Verify DiT structural forward path** — test_cfm_parity.c loads GGUF + fixtures, runs LocDiT forward, verifies finite output and expected [64,4] shape. Current fixture compares raw velocity against final denoised output only as a diagnostic, not as a parity assertion.
-  - [x] **Align CFM sampler semantics with reference** — `generate.c` now uses sway t-span, LocDiT `dt=0.0`, first-step CFG-Zero* zero velocity, and scaled-uncond CFG blend matching `bluryar/VoxCPM.cpp` / Python UnifiedCFM behavior.
-  - [x] **Fix tokenizer no-merges fallback for text conditioning** — GGUF lacks `tokenizer.ggml.merges`, so the fallback must scan normalized SentencePiece-style text (`▁Hello`, `▁world`) instead of raw spaces. Verified `"Hello world."` token ids now match Python.
-  - [ ] **Verify CFM integration produces equivalent latents** with a deterministic Python trajectory fixture (`cfm_traj_step*` or equivalent initial noise + final latent).
-  - [x] **Fix autoregressive loop: produce patch_size=4 latent vectors per step** — Fixed in commit `0625814`: `vcpm_gen_step` writes `total_patch_dim = latent_dim * patch_size` floats per step; `vcpm_gen_run` advances by `total_patch_dim` per patch. C now generates `patch_size=4` latent vectors per step (matching Python).
-  - [x] **VAE decoder upconv proven correct** — ggml_conv_transpose_1d matches manual computation exactly (F32 cos_sim=1.0). Root cause of previous −0.04 vs −0.10 discrepancy was a buggy manual scatter implementation (broken ggml_view_2d stride + ggml_add).
-  - [x] **Latent buffer offset bug fixed** — `vcpm_gen_run` advanced output pointer by only `latent_dim` per patch but `vcpm_gen_step` writes `latent_dim * patch_size` floats. This caused progressive data corruption on all patches after the first. Fixed by advancing by `total_patch_dim` per patch.
-  - [x] Verify VAE decoder reconstructs expected audio from Python latents — `test_vae_reference.exe voxcpm2_v2_full.gguf fixtures\ref\feat_pred_latent.bin` matches Python VAE output with cosine `0.9999786`, relative RMS error about `0.00831`.
-  - [ ] Verify C autoregressive latents match Python latents for the same seed/noise trajectory.
-- [ ] Implement `vcpm_generate_stream()`.
-  - [x] One-shot callback baseline implemented by generating full audio then invoking the stream callback once.
-  - [ ] True chunked autoregressive/AudioVAE streaming is still pending.
-- [ ] Implement `tts`, `design`, `clone`, `batch` CLI.
-  - [x] `tts` CLI is wired to `vcpm_generate()`.
-  - [x] `stream` CLI smoke path is wired to `vcpm_generate_stream()`.
-  - [x] `clone` CLI has a consent gate and explicit not-implemented failure.
+### 11a. Working
+
+- [x] `vcpm_generate()` full pipeline — end-to-end audio generation milestone (commit 1bc7d0c).
+- [x] `text_embed` cosine similarity vs Python: **1.0**.
+- [x] `mu_init` cosine similarity vs Python: **0.9935**.
+- [x] Stop predictor: CPU-based, uses stop_proj + SiLU + stop_head + sigmoid.
+- [x] Max/min length handling (min_len/max_len from gen_params).
+- [x] Autoregressive loop ordering corrected to match Python (mu→CFM→LM→FSQ→RALM).
+- [x] LocEnc rewritten to all-P parallel + CLS prepend + bidirectional attention.
+- [x] CFM sampler aligned with reference (sway t-span, dt=0.0, CFG-Zero*).
+- [x] `prev_patch` transpose fix (commit 1aba093): dim-major → column-major for FeatEncoder.
+- [x] CLI commands: `tts`, `inspect`, `tokenize`, `bench`, `clone` (with consent gate).
+- [x] Reference voice cloning pipeline (R14, commit d154730).
+- [x] `bench` command (R10) with wall clock / CPU time / RTF / CSV output.
+
+### 11b. Remaining for Audio Quality (最重要)
+
+C generates 2.6s audio with RMS=0.169, range [-0.97, 0.98], no NaN/Inf. **Sounds close to speech but not yet natural.** Likely causes and investigation steps:
+
+1. **[HIGH] Run `compare_dumps.py` with same text** — C currently uses different text than Python fixtures ("Hello world."). Need to generate C dump with same text and compare:
+   - `mu_init` vs `dit_hidden.npy`
+   - `step_pred_feat` vs `cfm_pred_feat.npy`
+   - `lm_hidden_ar` vs `lm_hidden_step.npy`
+   - `residual_hidden_ar` vs `residual_hidden_step.npy`
+   - Use `VCPM_DEBUG_SHAPES=1` to dump all intermediates.
+   - Command: `tools/compare_dumps.py fixtures/ref/`
+   - 2026-06-27 update: same-text dump now runs in `.codex/run-dumps/p0-hello-world-post-cfm-raw`.
+     `text_embed` matches exactly, `mu_init_0000` matches (cos=0.9935), first CFM output still mismatches.
+     Removed the incorrect post-CFM FSQ pass so `prev_patch` now keeps raw `feat_decoder` output like Python.
+     `compare_dumps.py` now handles zero tensors, correct AR step offsets, prompt `fill_pos` dumps, and stop logits.
+
+2. **[HIGH] Deterministic CFM trajectory parity** — Python references have CFM trajectory dumps (`cfm_traj_step*`). Compare:
+   - Initial noise (same seed)
+   - Per-step velocity
+   - Final denoised latent
+   - Then isolate whether error is in LocDiT forward, conditioning, or sampler.
+   - 2026-06-27 update: `tools/export_ref_fixtures.py` now accepts `--seed` and hooks `UnifiedCFM.solve_euler()`,
+     producing `arXXXX_cfm_noise.npy`, `arXXXX_dYYYY_cfm_traj_state.npy`, and `arXXXX_cfm_clean.npy`.
+     Next slice: feed the exported initial noise into C or implement a compatible deterministic CFM noise path.
+
+3. **[MED] Verify stop predictor against Python** — Compare `step*_stop_logits.npy` from Python fixture vs C `gen_predict_stop` output. Early stopping could truncate audio.
+
+4. **[MED] CUDA OOM on 8 GB GPU** — 9 GB model can't fully offload to RTX 3060 Ti (8 GB). Options:
+   - Use Q8_0 quantized model (2.44 GB) for GPU inference.
+   - Implement partial / layer-by-layer offload.
+   - Fall back to CPU (slow but works — ~2-5 min for 2.6s audio).
+
+5. **[LOW] VAE encoder not end-to-end tested** — encoder code exists and compiles but hasn't been validated against Python encoder output.
+
+### 11c. Future Features (not started)
+
+- [ ] True chunked streaming (`vcpm_generate_stream` with chunked AudioVAE decode).
+- [ ] `design` CLI (voice design with control prefix).
+- [ ] `batch` CLI (batch generation from text file).
+- [ ] Sidecar JSON metadata for AI-generated content labeling.
 
 ## 12. Performance
 
-- [ ] Add `bench` command.
-- [x] Reuse graph memory.
-  - [x] **Root cause fixed**: replaced single linear ggml context with per-step scratch contexts.
-    - KV cache now lives in its own long-lived `kv_ctx` (~2.8 GB).
-    - Pre-CFM tensors use `scratch_ctx` (freed each `gen_step` call).
-    - CFM loop uses per-substep `sub_ctx` (freed after each Euler iteration).
-    - Post-CFM FSQ uses a temp `post_ctx` (freed immediately).
-    - Step_ctx reduced from 14 GB to 256 MB (just graph metadata + work buffer).
-  - [ ] Reuse KV cache.
-- [ ] Add CPU thread setting.
-- [ ] Add backend selection.
-- [ ] Add first q8_0 quantization preset.
-- [ ] Compare RTF by backend.
+- [x] Graph memory reuse: step_ctx 14 GB → 256 MB.
+- [x] KV cache in dedicated `kv_ctx` (persistent across steps).
+- [x] CUDA GPU backend with weight offload (`ggml-cuda`, commit c258207).
+- [x] `voxcpm-c bench` command with RTF measurement.
+- [x] Q8_0 quantization (45% size reduction, 2.44 GB).
+- [ ] **Fix CUDA OOM** — 9 GB model on 8 GB VRAM crashes. Use Q8_0 or partial offload.
+- [ ] Add CPU thread setting (`--threads N`).
+- [ ] Reuse KV cache across generations.
+- [ ] Compare RTF: CPU vs CUDA vs Q8_0-CUDA.
 
 ## 13. Quality and Safety
 
-- [x] Add AI-generated content warning in CLI help.
-- [x] Require `--i-have-consent` for clone CLI.
+- [x] AI-generated content warning in CLI help.
+- [x] `--i-have-consent` gate for clone CLI.
 - [ ] Add optional sidecar JSON metadata.
 - [ ] Add long-input guard.
 - [ ] Add badcase/retry guard if needed.
 
 ## 14. Bugs Fixed in This Session
 
-- [x] **RALM KV cache not populated (F2)**: Added `ggml_build_forward_expand(graph, ralm_hidden)` in prompt eval so RALM output's KV cache writes execute. Without this, residual LM enters autoregressive mode with zeroed context.
-- [x] **Audio placeholder count too small (F4)**: Zero-shot builder created only `patch_size` (4) audio placeholders, yielding ~0.08s max audio. Updated to `max(patch_size*16, n_text_tokens*8)` for minimum ~2.5s budget.
-- [x] **Stop predictor matmul transposed (F4)**: Both `stop_proj` (2048×2048) and `stop_head` (2048×2) CPU matmuls computed `W^T @ x` instead of `W @ x`. Fixed indexing from `W[j*hs+i]` to `W[i*hs+j]`.
-- [x] **Missing `gen_predict_stop` forward declaration (F4)**: Static function used before definition with no prototype; MSVC assumed `int` return, causing float return value to be read as int (65535.0).
-- [x] **step_ctx memory exhaustion (F3)**: Single linear ggml context accumulated tensor data across all steps + CFM substeps. KV cache (~2.8 GB) + pre-CFM (~1 GB) + 10× CFM DiT forwards (~2 GB each) caused exhaustion by step 2-3. **Permanent fix**: KV cache moved to `kv_ctx` (long-lived). Pre-CFM uses `scratch_ctx` freed each step. CFM loop uses per-substep contexts freed each Euler iteration. Step_ctx reduced from 14 GB to 256 MB.
-- [x] **ggml_conv_1d hardcodes F16 im2col (F4)**: Replaced `ggml_conv_1d` with custom `conv1d_f32()` using `ggml_im2col(GGML_TYPE_F32)` + F32 matmul. Depthwise conv also updated for F32 weight expansion. Verified correct: relative error < 0.001% vs manual im2col reference. Output identical to original F16 path (no numerical regression).
-- [x] **Manual model.9 verification used wrong input (F5)**: Test code used `dbg[7]` (block.7 output) instead of `dbg[8]` (model.8 snake output) as model.9 input, causing 56% relative error. Fixed by switching to `dbg[8]`. After fix, manual reference matches C conv1d_f32 output to 0.0006%.
-- [x] **ggml_conv_1d_dw 4D batch matmul produces 8-channel block bug (F4)**: model.0.weight depthwise conv produced only 8 unique values per frame (frames 2-7), grouped in blocks of 8 channels. **Root cause**: ggml_mul_mat with 4D tensors has batch-dimension grouping bug. **Fix**: Replaced ggml_conv_1d_dw with manual F32 triple-loop depthwise conv.
-- [x] **test_vae_only access violation in depthwise_conv1d (F3)**: Data pointer override (`out->data = malloc'd`) confused ggml allocator during graph compute. **Fix**: Use tensor's own data pointer from ggml allocation; fill directly; free temp malloc buffers.
-- [x] **Wrong tensor indexing in test_depthwise_only (F5)**: Used `md[ol * C + ch]` instead of `md[ol + ch * ne0]` (ggml stores dim0 fastest). **This was the ONLY cause of the apparent "mul_mat wrong output" — no ggml bug exists in the diagonal expansion path.** After correcting indexing: max_err=7.45e-09 vs manual dot product.
-- [x] **Manual depthwise_conv1d reads uninitialized graph-build-time data (F4)**: The old `depthwise_conv1d()` accessed `input->data` during graph BUILD to manually pad and compute convolution. But graph operation result tensors have `data=NULL` at build time (allocator manages memory, valid only after graph COMPUTE). This caused the padded input to be all zeros, producing near-zero depthwise conv output (RMS=0.047 vs expected 0.273), causing ~380× amplitude loss in the VAE decoder output. **Fix**: Replaced manual F32 loop with pure ggml-graph operations: `ggml_cpy` for zero pre-padding + `ggml_conv_1d_dw` (depthwise grouped conv) + `ggml_add` for bias. Data now accessed at compute time. Verified: model.2 output RMS = 0.930 (matches Python 0.930), depthwise conv RMS = 0.273 (matches Python 0.273).
-- [x] **Tokenizer no-merges fallback scanned raw text (F4/F5)**: The converted GGUF lacks BPE merges, so `vcpm_tokenizer_encode` used the no-merges longest-match fallback. It scanned raw `"Hello world."`, producing `[15934, 72181, 11262, 72]` instead of Python fixture ids `[21045, 2809, 72]`. **Fix**: normalize text before fallback scanning and prefer `<0xXX>` byte fallback tokens. Verified by `test_tokenizer_parity.exe`.
+- [x] **KV cache causal attention span too short (F4)**: `vcpm_attention` used `ti + 1` for causal KV view length, but after prompt eval `write_pos > 0` so new tokens only attended to cache entry 0. Fix: `kv_cache_len = write_pos + ti + 1`. (commit 1aba093)
+- [x] **Missing `enc_to_lm_bias` weight load/apply (F4)**: FeatEncoder→LM projection bias was declared in struct but never loaded or applied in forward pass. (commit 1aba093)
+- [x] **prev_patch layout mismatch with FeatEncoder (F4)**: `prev_patch` stored in dim-major `[feat_dim][patch]` but FeatEncoder expects column-major `[feat_dim]` per column in ggml layout. Fixed transpose in `gen_build_audio_embed`. (commit 1aba093)
+- [x] **RALM KV cache not populated (F2)**: Added `ggml_build_forward_expand(graph, ralm_hidden)` in prompt eval. Without this, residual LM enters autoregressive mode with zeroed context.
+- [x] **Audio placeholder count too small (F4)**: Zero-shot builder created only `patch_size` (4) placeholders. Updated to `max(patch_size*16, n_text_tokens*8)`.
+- [x] **Stop predictor matmul transposed (F4)**: `W[j*hs+i]` → `W[i*hs+j]` in both stop_proj and stop_head.
+- [x] **Missing `gen_predict_stop` forward declaration (F4)**: MSVC assumed `int` return → 65535.0 bug.
+- [x] **step_ctx memory exhaustion (F3)**: Three-level context management (kv_ctx / scratch_ctx / sub_ctx). Step_ctx 14 GB → 256 MB.
+- [x] **ggml_conv_1d F16 im2col precision (F4)**: Replaced with F32 im2col + F32 matmul via `conv1d_f32()`.
+- [x] **Depthwise conv data-read-at-build-time (F4)**: Manual F32 loop read `input->data` before graph compute (uninitialized). Fixed with pure ggml-graph ops.
+- [x] **Tokenizer no-merges fallback (F4/F5)**: Added `normalize_voxcpm_text()` + `<0xXX>` byte fallback.
+- [x] **Autoregressive loop ordering inverted (F4)**: Reordered to mu→CFM→LM→FSQ→RALM (matching Python).
+- [x] **LocEnc architecture mismatch (F4)**: Rewrote to all-P parallel + CLS prepend + bidirectional.
 
 ## 15. CI
 
@@ -203,6 +225,23 @@
 - [ ] Windows MSVC.
 - [ ] Windows MinGW.
 - [ ] macOS clang.
-- [x] Unit tests without model weights.
-- [x] Optional model fixture tests behind env var.
-  - [x] `model_tts_smoke` validates full `vcpm_generate()` and one-shot `vcpm_generate_stream()` WAV sanity with `VCPM_MODEL`.
+- [x] Unit tests without model weights (7 tests: smoke, wav, wav_writer, sequence, minicpm4, phase5, model_loader_tensors).
+- [x] Optional model fixture tests behind `VCPM_MODEL` env var.
+
+## 16. 給 Codex 的優先級建議
+
+### P0 (這週做)
+1. **跑 `compare_dumps.py`** 用相同 text "Hello world." 比對 C vs Python latent。這是診斷音質的關鍵。
+2. **修 CUDA OOM** — 用 Q8_0 模型跑 GPU，或實作 partial offload。
+
+### P1 (做完 P0 後)
+3. **CFM 完整 trajectory parity** — 需要 deterministic 的 noise seed 來逐 step 比對 velocity。
+4. **Stop predictor parity** — 比對 C vs Python stop logits。
+
+### P2
+5. **VAE encoder 端到端測試** — 目前只有 structural code，沒跑過 encode→decode roundtrip。
+6. **True streaming** — chunked AudioVAE decode。
+
+### P3
+7. **CI matrix** (Linux/macOS/MinGW)。
+8. **Design / batch CLI**。

@@ -145,7 +145,7 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
         n_patches++;
 
         if (n_patches >= min_patches) {
-            float stop_prob = gen_predict_stop(state);
+            float stop_prob = gen_predict_stop(state, n_patches - 1);
             if (stop_prob >= 0.0f) {
                 if (stop_prob > stop_threshold) {
                     if (vcpm_debug_shapes_env()) {

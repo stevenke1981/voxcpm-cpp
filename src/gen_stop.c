@@ -9,6 +9,7 @@
 #define _USE_MATH_DEFINES
 
 #include "generate.h"
+#include "debug_dump.h"
 #include "log.h"
 
 #include "ggml.h"
@@ -21,7 +22,7 @@
 
 /* ---- Stop predictor ---- */
 /* Returns stop probability in [0,1]. Returns -1 on error (no weights, no hidden, etc.). */
-float gen_predict_stop(vcpm_generate_state * state) {
+float gen_predict_stop(vcpm_generate_state * state, int ar_step) {
     if (!state || !state->last_lm_hidden) return -1.0f;
     if (!state->stop_proj_weight || !state->stop_head_weight) return -1.0f;
 
@@ -89,6 +90,11 @@ float gen_predict_stop(vcpm_generate_state * state) {
     float softmax_stop = e1 / sum_e;
 
     if (vcpm_debug_shapes_env()) {
+        char label[64];
+        snprintf(label, sizeof(label), "stop_hidden_%04d", ar_step);
+        vcpm_dump_tensor(label, proj_out, hs, 1, 0);
+        snprintf(label, sizeof(label), "stop_logits_%04d", ar_step);
+        vcpm_dump_tensor(label, logits, 2, 1, 0);
         fprintf(stderr, "VCPM_DEBUG_STOP: hidden[0]=%.4f hidden[1]=%.4f hidden[%d]=%.4f\n",
                 hidden[0], hidden[1], hs-1, hidden[hs-1]);
         fprintf(stderr, "VCPM_DEBUG_STOP: proj_out[0]=%.4f proj_out[1]=%.4f\n",
