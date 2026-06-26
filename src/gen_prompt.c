@@ -15,6 +15,7 @@
 #include "minicpm4.h"
 #include "projections.h"
 #include "log.h"
+#include "debug_dump.h"
 
 #include "ggml.h"
 #include "ggml-cpu.h"
@@ -50,6 +51,7 @@ int gen_forward_text(vcpm_generate_state * state,
                                      0,
                                      state->scale_depth);
 
+
     vcpm_minicpm4_weights base_w;
     base_w.embed_tokens_weight = state->base_embed_tokens;
     base_w.norm_weight         = state->base_norm;
@@ -63,9 +65,10 @@ int gen_forward_text(vcpm_generate_state * state,
 
     struct ggml_tensor * hidden = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
                                                        state->hidden_size, n_tokens);
+    int64_t stride = 0;
     if (hidden && hidden->data && state->base_embed_tokens && state->base_embed_tokens->data) {
         const ggml_fp16_t * embed_data = (const ggml_fp16_t *)state->base_embed_tokens->data;
-        int64_t stride = state->base_embed_tokens->ne[0];
+        stride = state->base_embed_tokens->ne[0];
         int64_t n_rows = state->base_embed_tokens->ne[1];
         float * hdata = (float *)hidden->data;
         for (int i = 0; i < n_tokens; i++) {
@@ -78,6 +81,11 @@ int gen_forward_text(vcpm_generate_state * state,
     }
     if (!hidden) return VCPM_ERR_BACKEND;
     ggml_set_name(hidden, "base_embed");
+
+    if (vcpm_debug_shapes_env()) {
+        vcpm_dump_tensor("text_embed", (const float *)hidden->data,
+                          state->hidden_size, n_tokens, 0);
+    }
 
     *out_hidden = vcpm_minicpm4_forward(ctx, graph, hidden, &base_cfg,
                                           &base_w, &base_cache, pos_start);
@@ -117,7 +125,7 @@ struct ggml_tensor * gen_forward_ralm(vcpm_generate_state * state,
     ralm_cache.max_seq_len = state->max_seq_len;
 
     return vcpm_minicpm4_forward(ctx, graph, ralm_input,
-                                  &ralm_cfg, &ralm_w, &ralm_cache, pos);
+                                   &ralm_cfg, &ralm_w, &ralm_cache, pos);
 }
 
 /* ---- Prompt eval: process text tokens to populate KV caches ---- */
@@ -167,6 +175,11 @@ int gen_prompt_eval(vcpm_generate_state * state,
     if (ralm_hidden) ggml_build_forward_expand(graph, ralm_hidden);
 
     ggml_graph_compute_with_ctx(ctx, graph, 1);
+
+    if (vcpm_debug_shapes_env() && base_hidden && base_hidden->data) {
+        vcpm_dump_tensor("base_lm_out", (const float *)base_hidden->data,
+                          state->hidden_size, n_text_tokens, 0);
+    }
 
     if (state->lm_hidden_state && base_hidden && base_hidden->data) {
         const float * src = (const float *)base_hidden->data;

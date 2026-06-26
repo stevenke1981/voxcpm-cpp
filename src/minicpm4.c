@@ -447,9 +447,10 @@ struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
                                            int32_t head_dim, int32_t pos,
                                            int32_t rope_theta, int no_rope,
                                            int no_causal,
-                                           float scale) {
+                                           float scale,
+                                           float rms_norm_eps) {
     /* Pre-attention RMSNorm */
-    struct ggml_tensor * x_norm = vcpm_rms_norm(ctx, x, w->input_layernorm_weight, 1e-6f);
+    struct ggml_tensor * x_norm = vcpm_rms_norm(ctx, x, w->input_layernorm_weight, rms_norm_eps);
     ggml_set_name(x_norm, "block_input_norm");
 
     /* Self-attention */
@@ -478,7 +479,7 @@ struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
     ggml_set_name(x_after_attn, "block_after_attn");
 
     /* Post-attention RMSNorm */
-    struct ggml_tensor * x_attn_norm = vcpm_rms_norm(ctx, x_after_attn, w->post_attention_layernorm_weight, 1e-6f);
+    struct ggml_tensor * x_attn_norm = vcpm_rms_norm(ctx, x_after_attn, w->post_attention_layernorm_weight, rms_norm_eps);
     ggml_set_name(x_attn_norm, "block_attn_norm");
 
     /* MLP */
@@ -519,7 +520,6 @@ struct ggml_tensor * vcpm_minicpm4_forward(struct ggml_context * ctx,
     if (cfg->scale_depth > 0.0f && cfg->n_layers > 0) {
         scale = cfg->scale_depth / sqrtf((float)cfg->n_layers);
     }
-
     /* Process each layer */
     for (int i = 0; i < cfg->n_layers; i++) {
         char name[64];
@@ -532,7 +532,8 @@ struct ggml_tensor * vcpm_minicpm4_forward(struct ggml_context * ctx,
                                  cfg->head_dim, pos,
                                  cfg->rope_theta, cfg->no_rope,
                                  0,  /* no_causal=0 for causal LM */
-                                 scale);
+                                 scale,
+                                 cfg->rms_norm_eps);
     }
 
     /* Final RMSNorm */

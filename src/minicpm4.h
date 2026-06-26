@@ -136,7 +136,8 @@ struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
                                           int32_t head_dim, int32_t pos,
                                           int32_t rope_theta, int no_rope,
                                           int no_causal,
-                                          float scale);
+                                          float scale,
+                                          float rms_norm_eps);
 
 /* Build full MiniCPM4 forward pass graph.
  * x: input embeddings [n_tokens, hidden_size]

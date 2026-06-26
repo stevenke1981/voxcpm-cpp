@@ -20,6 +20,7 @@
 #include "locdit.h"
 #include "projections.h"
 #include "log.h"
+#include "debug_dump.h"
 
 #include "ggml.h"
 #include "ggml-cpu.h"
@@ -157,6 +158,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                            const vcpm_generation_params * gen_params,
                            float * output_patch) {
     if (!state || !token_ids || !output_patch) return VCPM_ERR_INVALID_ARG;
+    static int ar_step_counter = -1;
+    ar_step_counter++;
     struct ggml_cgraph * graph = state->step_graph;
     ggml_graph_clear(graph);
 
@@ -234,6 +237,10 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         if (vcpm_debug_shapes_env()) {
             FILE * df = fopen("c_mu_init.bin", "wb");
             if (df) { fwrite(mu_data, sizeof(float), (size_t)mu_len, df); fclose(df); }
+            /* mu shape: ggml ne=[dit_hidden_size*2, 1] = [2048,1] in zero-shot case
+               Python step0000_cfm_cond.npy: [1, 64, 4] — need reshape comparison */
+            vcpm_dump_tensor("cfm_cond", mu_data,
+                              state->dit_hidden_size * 2, 1, 0);
         }
     }
 
@@ -251,6 +258,12 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
      */
     float * x_data = (float *)malloc((size_t)total_patch_dim * sizeof(float));
     if (!x_data) { free(mu_data); free(prev_data); return VCPM_ERR_OOM; }
+    if (vcpm_debug_shapes_env() && prev_data) {
+        /* prev_data is prev_patch: shape [latent_dim * patch_size] flat
+           Python step0000_cfm_cond.npy: [1, 64, 4] — need as [1, latent_dim, patch_size] */
+        vcpm_dump_tensor("step_cond", prev_data,
+                          latent_dim, patch_size, 0);
+    }
     {
         uint64_t rng_state = (uint64_t)(latent_dim + fill_pos + 1) ^ 0x9E3779B97F4A7C15ULL;
         for (int j = 0; j < total_patch_dim; j++) {
@@ -270,6 +283,10 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             u2 = fmaxf(1e-6f, fminf(u2, 1.0f - 1e-6f));
             x_data[j] = sqrtf(-2.0f * logf(u1)) * cosf(2.0f * (float)M_PI * u2);
         }
+    }
+    if (vcpm_debug_shapes_env()) {
+        vcpm_dump_tensor("step_noise", x_data,
+                          latent_dim, patch_size, 0);
     }
 
     vcpm_locdit_config dit_cfg;
@@ -434,6 +451,11 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         }
 
         ggml_free(sub_ctx);
+    }
+
+    if (vcpm_debug_shapes_env()) {
+        vcpm_dump_tensor("step_pred_feat", x_data,
+                          latent_dim, patch_size, 0);
     }
 
     free(mu_data);

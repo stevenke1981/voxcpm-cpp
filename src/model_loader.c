@@ -189,6 +189,24 @@ vcpm_model * vcpm_model_load(const char * path, char * err_buf, size_t err_buf_s
     cfg.bos_token_id        = get_key_i32(gguf_ctx, "tokenizer.ggml.bos_token_id", cfg.bos_token_id);
     cfg.eos_token_id        = get_key_i32(gguf_ctx, "tokenizer.ggml.eos_token_id", cfg.eos_token_id);
 
+    /* ---- Post-read sanitization ----
+     * The current GGUF for voxcpm2_v2_full.gguf was written with the
+     * Python converter's value_from_config() bug that casts floats to
+     * int, setting rms_norm_eps to 0.0.
+     *
+     * Apply VoxCPM2-safe defaults when the GGUF value is unusable.
+     *
+     * NOTE: scale_depth / res_scale_depth are intentionally NOT overridden
+     * here — Python reference does NOT apply DeepNorm scaling during
+     * inference (it is a training-time initializer).  Overwriting 0 → 1.4
+     * made base_lm_out parity worse (cos 0.887 → 0.875).
+     */
+    if (cfg.rms_norm_eps < 1.0e-7f) {
+        fprintf(stderr, "vcpm: overriding rms_norm_eps from GGUF (%.1e) to 1e-5 (Python reference)\n",
+                (double)cfg.rms_norm_eps);
+        cfg.rms_norm_eps = 1.0e-5f;   /* Python config.json: rms_norm_eps=1e-05 */
+    }
+
     model->config = cfg;
     return model;
 }

@@ -189,11 +189,20 @@ def map_tensor_name(upstream_name: str) -> Optional[Tuple[str, bool]]:
 
 
 def value_from_config(cfg: dict, *keys: str, default=0):
-    """Get first existing key from config."""
+    """Get first existing key from config.
+
+    Note: keys may be float or int; preserve the original type instead
+    of always truncating to int (bug fix: was ``int(v)`` which turns
+    1e-05 → 0).
+    """
     for k in keys:
         if k in cfg:
             v = cfg[k]
-            return int(v) if isinstance(v, (int, float)) else v
+            if isinstance(v, float):
+                return v
+            if isinstance(v, int):
+                return v
+            return v
     return default
 
 
