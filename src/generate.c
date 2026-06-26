@@ -2,14 +2,14 @@
  *
  * Implements the autoregressive loop that produces latent patches.
  * For each audio position:
- *   1. FeatEncoder(prev_latent) → enc_to_lm_proj → audio embedding
+ *   1. FeatEncoder(prev_patch last pos) → enc_to_lm_proj → audio embedding
  *   2. Base LM forward with audio embedding at fill_pos
  *   3. FSQ on base_lm output (in_proj → scalar quant → out_proj)
  *   4. Fusion: concat(FSQ_out, enc_to_lm_proj(fe_out)) → fusion_concat_proj → RALM
  *   5. RALM forward
  *   6. Build mu = concat(lm_to_dit_proj, res_to_dit_proj) [2048]
  *   7. CFM diffusion (LocDiT with time_mlp, delta_time_mlp, cond_proj)
- *   8. Output latent becomes prev_latent for next step
+ *   8. Output latent patch becomes prev_patch for next step
  *
  * At the end, latents are decoded via AudioVAE V2 to waveform.
  */
@@ -261,6 +261,14 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     if (!s->dit_norm)        s->dit_norm        = resolve_weight(model, "feat_decoder.estimator.norm.weight");
     s->dit_cond_proj   = resolve_weight(model, "feat_decoder.cond_proj.weight");
     if (!s->dit_cond_proj)   s->dit_cond_proj   = resolve_weight(model, "feat_decoder.estimator.cond_proj.weight");
+    /* Resolve DiT bias tensors */
+    s->dit_input_proj_bias  = resolve_weight(model, "feat_decoder.estimator.in_proj.bias");
+    if (!s->dit_input_proj_bias)  s->dit_input_proj_bias  = resolve_weight(model, "feat_decoder.estimator.in_proj.bias");
+    s->dit_output_proj_bias = resolve_weight(model, "feat_decoder.estimator.out_proj.bias");
+    if (!s->dit_output_proj_bias) s->dit_output_proj_bias = resolve_weight(model, "feat_decoder.estimator.out_proj.bias");
+    s->dit_cond_proj_bias   = resolve_weight(model, "feat_decoder.estimator.cond_proj.bias");
+    if (!s->dit_cond_proj_bias)   s->dit_cond_proj_bias   = resolve_weight(model, "feat_decoder.estimator.cond_proj.bias");
+
     /* No separate timestep_embed MLP in this model — use sinusoidal embedding */
     fill_dit_weights(model, s->dit_layer_weights, s->dit_n_layers);
 
@@ -359,9 +367,11 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
         s->ralm_kv_cache[i].n_used = 0;
     }
 
-    /* Allocate prev_latent buffer (zero-filled) */
-    s->prev_latent = (float *)calloc((size_t)s->enc_feat_dim, sizeof(float));
-    if (!s->prev_latent) {
+    /* Allocate prev_patch buffer (zero-filled) — stores all patch_size latent vectors */
+    int patch_size = cfg->patch_size > 0 ? cfg->patch_size : 1;
+    int prev_patch_dim = s->enc_feat_dim * patch_size;
+    s->prev_patch = (float *)calloc((size_t)prev_patch_dim, sizeof(float));
+    if (!s->prev_patch) {
         free(s->base_kv_cache);
         free(s->ralm_kv_cache);
         ggml_free(s->step_ctx);
@@ -372,7 +382,7 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     /* Allocate last_lm_hidden buffer for stop predictor (base_lm after FSQ) */
     s->last_lm_hidden = (float *)calloc((size_t)s->hidden_size, sizeof(float));
     if (!s->last_lm_hidden) {
-        free(s->prev_latent);
+        free(s->prev_patch);
         free(s->base_kv_cache);
         free(s->ralm_kv_cache);
         ggml_free(s->step_ctx);
@@ -480,7 +490,7 @@ static struct ggml_tensor * gen_forward_ralm(vcpm_generate_state * state,
                                   &ralm_cfg, &ralm_w, &ralm_cache, pos);
 }
 
-/* ---- Build feat_encoder(prev_latent) → enc_to_lm_proj audio embedding ---- */
+/* ---- Build feat_encoder(prev_patch last pos) → enc_to_lm_proj audio embedding ---- */
 /* Returns ggml tensor [2048, 1] — the audio position embedding.
  * Also returns fe_out [1024, 1] for the fusion path. */
 static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
@@ -508,24 +518,30 @@ static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
     le_w.norm_weight     = state->fe_norm;
     le_w.layer_weights   = state->fe_layer_weights;
 
-    /* Create prev_latent tensor [64, 1] */
+    /* The feat_encoder uses the last position of prev_patch for conditioning.
+     * This matches Python's z_prev[:,:,-1:] usage. */
+    int patch_size_for_fe = state->model ? state->model->config.patch_size : 1;
+    if (patch_size_for_fe < 1) patch_size_for_fe = 1;
+    int last_pos_offset = (patch_size_for_fe - 1) * state->enc_feat_dim;
+
+    /* Create prev_patch_last tensor [feat_dim, 1] */
     struct ggml_tensor * latent_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
                                                          state->enc_feat_dim, 1);
-    if (latent_t && latent_t->data && state->prev_latent) {
-        memcpy(latent_t->data, state->prev_latent,
+    if (latent_t && latent_t->data && state->prev_patch) {
+        memcpy(latent_t->data, state->prev_patch + last_pos_offset,
                (size_t)state->enc_feat_dim * sizeof(float));
     }
     ggml_set_name(latent_t, "fe_input");
 
     /* Forward through feat_encoder. use_special=1 for first position
      * (all zeros), 0 otherwise.
-     * Since prev_latent is initialized to zeros, the first call gets special_token. */
+     * Since prev_patch is initialized to zeros, the first call gets special_token. */
     int use_special = 1;
-    /* Check if prev_latent is all zeros */
+    /* Check if prev_patch last position is all zeros */
     {
         int all_zero = 1;
         for (int i = 0; i < state->enc_feat_dim && all_zero; i++) {
-            if (state->prev_latent[i] != 0.0f) all_zero = 0;
+            if (state->prev_patch[last_pos_offset + i] != 0.0f) all_zero = 0;
         }
         use_special = all_zero;
     }
@@ -591,7 +607,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     int total_patch_dim = latent_dim * patch_size;
     float cfg_value = gen_params ? gen_params->cfg_value : 2.0f;
 
-    /* ========== Step 1: Build audio embedding from prev_latent ========== */
+    /* ========== Step 1: Build audio embedding from prev_patch (last pos) ========== */
     struct ggml_tensor * fe_out = NULL;
     struct ggml_tensor * audio_embed = gen_build_audio_embed(state, ctx, graph, &fe_out);
     if (!audio_embed) return VCPM_ERR_BACKEND;
@@ -690,10 +706,11 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         if (mu_data) memcpy(mu_data, mu->data, (size_t)mu_len * sizeof(float));
     }
 
-    /* Extract prev_latent for DiT cond_proj */
-    float * prev_data = (float *)malloc((size_t)latent_dim * sizeof(float));
-    if (prev_data && state->prev_latent) {
-        memcpy(prev_data, state->prev_latent, (size_t)latent_dim * sizeof(float));
+    /* Extract prev_patch for DiT cond_proj — copy all patch_size vectors */
+    int prev_dim = latent_dim * patch_size;
+    float * prev_data = (float *)malloc((size_t)prev_dim * sizeof(float));
+    if (prev_data && state->prev_patch) {
+        memcpy(prev_data, state->prev_patch, (size_t)prev_dim * sizeof(float));
     }
 
     /* ========== Step 7: CFM Euler integration ========== */
@@ -725,7 +742,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     memcpy(x_data, noise, (size_t)total_patch_dim * sizeof(float));
     free(noise);
 
-    /* DiT config */
+    /* DiT config + weights */
     vcpm_locdit_config dit_cfg;
     vcpm_locdit_config_fill(&dit_cfg,
                              state->dit_hidden_size,
@@ -735,14 +752,17 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                              state->dit_intermediate_size,
                              state->head_dim,
                              state->rms_norm_eps,
-                             1);
+                             patch_size);
 
     vcpm_locdit_weights dit_w;
     memset(&dit_w, 0, sizeof(dit_w));
     dit_w.input_proj_weight    = state->dit_input_proj;
+    dit_w.input_proj_bias      = state->dit_input_proj_bias;
     dit_w.output_proj_weight   = state->dit_output_proj;
+    dit_w.output_proj_bias     = state->dit_output_proj_bias;
     dit_w.norm_weight          = state->dit_norm;
     dit_w.cond_proj_weight     = state->dit_cond_proj;
+    dit_w.cond_proj_bias       = state->dit_cond_proj_bias;
     dit_w.layer_weights        = state->dit_layer_weights;
     /* Time MLP */
     dit_w.time_mlp_w1          = state->dit_time_mlp_w1;
@@ -755,146 +775,141 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     dit_w.delta_time_mlp_w2    = state->dit_delta_time_mlp_w2;
     dit_w.delta_time_mlp_b2    = state->dit_delta_time_mlp_b2;
 
-    /* CFM Euler integration: t=1 → 0 */
+    /* CFM Euler integration: t=1 → 0
+     * The new LocDiT processes all patch_size positions in parallel.
+     * Each step calls vcpm_locdit_forward once (or twice for CFG). */
     int n_steps = (gen_params && gen_params->inference_steps > 0)
                 ? gen_params->inference_steps
                 : 10;
-    float dt = -1.0f / n_steps;
+    float step_size = -1.0f / n_steps;
     float t = 1.0f;
-    /* CFG: if cfg_value != 1.0f, run two DiT forwards and blend */
     int use_cfg = (cfg_value != 1.0f && mu_data != NULL);
-    float * cond_vel = (float *)malloc((size_t)total_patch_dim * sizeof(float));
-    float * pos_vel = (float *)malloc((size_t)latent_dim * sizeof(float));
 
     for (int step = 0; step < n_steps; step++) {
-        /* Process each of patch_size latent positions independently.
-         * The DiT currently uses single-token attention (seq_len=1), so we loop
-         * over positions. Each position gets the same conditioning but different noise. */
-        for (int p = 0; p < patch_size; p++) {
+        ggml_graph_clear(graph);
+
+        /* Build x_t: [feat_dim, patch_size] — current noisy latent for ALL P positions */
+        struct ggml_tensor * x_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
+                                                       latent_dim, patch_size);
+        if (!x_t) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_OOM; }
+        memcpy(x_t->data, x_data, (size_t)total_patch_dim * sizeof(float));
+        ggml_set_name(x_t, "cfm_x_t");
+
+        /* Build cond_t: [feat_dim, patch_size] — prev_patch conditioning for ALL P positions */
+        struct ggml_tensor * cond_t = NULL;
+        if (prev_data) {
+            cond_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, latent_dim, patch_size);
+            if (!cond_t) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_OOM; }
+            memcpy(cond_t->data, prev_data, (size_t)prev_dim * sizeof(float));
+            ggml_set_name(cond_t, "cfm_cond");
+        }
+
+        /* Timestep scalar t */
+        struct ggml_tensor * t_tensor = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+        if (t_tensor->data) ((float *)t_tensor->data)[0] = t;
+
+        /* dt scalar — single float, stepsize for delta_time_mlp */
+        struct ggml_tensor * dt_tensor = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+        if (dt_tensor->data) ((float *)dt_tensor->data)[0] = step_size;
+
+        /* mu conditioning: [2048, 1] — shared across all P positions */
+        struct ggml_tensor * mu_t = NULL;
+        if (mu_data) {
+            mu_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, mu_len, 1);
+            if (!mu_t) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_OOM; }
+            memcpy(mu_t->data, mu_data, (size_t)mu_len * sizeof(float));
+            ggml_set_name(mu_t, "cfm_mu");
+        }
+
+        /* ===== CFG: Two DiT forward passes ===== */
+        if (use_cfg) {
+            /* --- Pass 1: Conditioned (with mu) --- */
+            struct ggml_tensor * v_cond = vcpm_locdit_forward(ctx, graph,
+                                                                x_t, cond_t,
+                                                                t_tensor, dt_tensor, mu_t,
+                                                                &dit_cfg, &dit_w);
+            if (!v_cond) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_BACKEND; }
+            ggml_set_name(v_cond, "cfm_v_cond");
+            vcpm_debug_tensor_shape("step.v_cond", v_cond);
+
+            ggml_build_forward_expand(graph, v_cond);
+            ggml_graph_compute_with_ctx(ctx, graph, 1);
+
+            /* --- Pass 2: Unconditioned (mu_t = NULL) --- */
             ggml_graph_clear(graph);
 
-            struct ggml_tensor * x_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
-                                                           latent_dim, 1);
-            if (!x_t) { free(mu_data); free(prev_data); free(x_data); free(cond_vel); free(pos_vel); return VCPM_ERR_OOM; }
-            memcpy(x_t->data, &x_data[p * latent_dim], (size_t)latent_dim * sizeof(float));
-            ggml_set_name(x_t, "cfm_x_t");
+            struct ggml_tensor * x_t2 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
+                                                            latent_dim, patch_size);
+            if (!x_t2) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_OOM; }
+            memcpy(x_t2->data, x_data, (size_t)total_patch_dim * sizeof(float));
+            ggml_set_name(x_t2, "cfm_x_t2");
 
-            /* prev_latent → cond (for cond_proj) */
-            struct ggml_tensor * cond_t = NULL;
+            struct ggml_tensor * cond_t2 = NULL;
             if (prev_data) {
-                cond_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, latent_dim, 1);
-                if (!cond_t) { free(mu_data); free(prev_data); free(x_data); free(cond_vel); free(pos_vel); return VCPM_ERR_OOM; }
-                memcpy(cond_t->data, prev_data, (size_t)latent_dim * sizeof(float));
-                ggml_set_name(cond_t, "cfm_prev");
+                cond_t2 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, latent_dim, patch_size);
+                if (!cond_t2) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_OOM; }
+                memcpy(cond_t2->data, prev_data, (size_t)prev_dim * sizeof(float));
+                ggml_set_name(cond_t2, "cfm_cond2");
             }
 
-            /* timestep scalar */
-            struct ggml_tensor * t_tensor = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
-            if (t_tensor->data) ((float *)t_tensor->data)[0] = t;
+            struct ggml_tensor * t2 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+            if (t2->data) ((float *)t2->data)[0] = t;
 
-            /* mu conditioning (may be NULL for unconditional pass) */
-            struct ggml_tensor * mu_t = NULL;
-            if (mu_data) {
-                mu_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, mu_len, 1);
-                if (!mu_t) { free(mu_data); free(prev_data); free(x_data); free(cond_vel); free(pos_vel); return VCPM_ERR_OOM; }
-                memcpy(mu_t->data, mu_data, (size_t)mu_len * sizeof(float));
-                ggml_set_name(mu_t, "cfm_mu");
+            struct ggml_tensor * dt2 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+            if (dt2->data) ((float *)dt2->data)[0] = step_size;
+
+            struct ggml_tensor * v_uncond = vcpm_locdit_forward(ctx, graph,
+                                                                  x_t2, cond_t2,
+                                                                  t2, dt2, NULL,
+                                                                  &dit_cfg, &dit_w);
+            if (!v_uncond) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_BACKEND; }
+            ggml_set_name(v_uncond, "cfm_v_uncond");
+            vcpm_debug_tensor_shape("step.v_uncond", v_uncond);
+
+            ggml_build_forward_expand(graph, v_uncond);
+            ggml_graph_compute_with_ctx(ctx, graph, 1);
+
+            /* CPU blend: v = v_uncond + cfg * (v_cond - v_uncond) */
+            float * cond_data = (float *)(v_cond->data ? v_cond->data : NULL);
+            float * uncond_data = (float *)(v_uncond->data ? v_uncond->data : NULL);
+            if (cond_data && uncond_data) {
+                for (int j = 0; j < total_patch_dim; j++) {
+                    uncond_data[j] = uncond_data[j] + cfg_value * (cond_data[j] - uncond_data[j]);
+                }
+                /* Euler step: x = x + dt * v */
+                float * vel = uncond_data;
+                for (int j = 0; j < total_patch_dim; j++) {
+                    x_data[j] = x_data[j] + step_size * vel[j];
+                }
             }
+        } else {
+            /* Single conditioned forward (no CFG) */
+            struct ggml_tensor * velocity = vcpm_locdit_forward(ctx, graph,
+                                            x_t, cond_t,
+                                            t_tensor, dt_tensor, mu_t,
+                                            &dit_cfg, &dit_w);
+            if (!velocity) { free(mu_data); free(prev_data); free(x_data); return VCPM_ERR_BACKEND; }
+            vcpm_debug_tensor_shape("step.velocity", velocity);
 
-            /* ===== CFG: Two DiT forward passes ===== */
-            if (use_cfg) {
-                /* --- Pass 1: Conditioned (with mu) --- */
-                struct ggml_tensor * v_cond = vcpm_locdit_forward(ctx, graph,
-                                                                   x_t, cond_t, t_tensor, mu_t,
-                                                                   &dit_cfg, &dit_w);
-                if (!v_cond) { free(mu_data); free(prev_data); free(x_data); free(cond_vel); free(pos_vel); return VCPM_ERR_BACKEND; }
-                ggml_set_name(v_cond, "cfm_v_cond");
-                vcpm_debug_tensor_shape("step.v_cond", v_cond);
+            /* Euler step: compute x = x + dt * velocity on CPU */
+            ggml_build_forward_expand(graph, velocity);
+            ggml_graph_compute_with_ctx(ctx, graph, 1);
 
-                ggml_build_forward_expand(graph, v_cond);
-                ggml_graph_compute_with_ctx(ctx, graph, 1);
-                if (pos_vel && v_cond->data)
-                    memcpy(pos_vel, v_cond->data, (size_t)latent_dim * sizeof(float));
-
-                /* --- Pass 2: Unconditioned (mu_t = NULL) --- */
-                ggml_graph_clear(graph);
-
-                struct ggml_tensor * x_t2 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
-                                                                latent_dim, 1);
-                if (!x_t2) { free(mu_data); free(prev_data); free(x_data); free(cond_vel); free(pos_vel); return VCPM_ERR_OOM; }
-                memcpy(x_t2->data, &x_data[p * latent_dim], (size_t)latent_dim * sizeof(float));
-                ggml_set_name(x_t2, "cfm_x_t2");
-
-                struct ggml_tensor * cond_t2 = NULL;
-                if (prev_data) {
-                    cond_t2 = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, latent_dim, 1);
-                    if (!cond_t2) { free(mu_data); free(prev_data); free(x_data); free(cond_vel); free(pos_vel); return VCPM_ERR_OOM; }
-                    memcpy(cond_t2->data, prev_data, (size_t)latent_dim * sizeof(float));
-                    ggml_set_name(cond_t2, "cfm_prev2");
+            if (velocity->data) {
+                float * vel = (float *)velocity->data;
+                for (int j = 0; j < total_patch_dim; j++) {
+                    x_data[j] = x_data[j] + step_size * vel[j];
                 }
-
-                struct ggml_tensor * t2 = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
-                if (t2->data) ((float *)t2->data)[0] = t;
-
-                struct ggml_tensor * v_uncond = vcpm_locdit_forward(ctx, graph,
-                                                                      x_t2, cond_t2, t2, NULL,
-                                                                      &dit_cfg, &dit_w);
-                if (!v_uncond) { free(mu_data); free(prev_data); free(x_data); free(cond_vel); free(pos_vel); return VCPM_ERR_BACKEND; }
-                ggml_set_name(v_uncond, "cfm_v_uncond");
-                vcpm_debug_tensor_shape("step.v_uncond", v_uncond);
-
-                ggml_build_forward_expand(graph, v_uncond);
-                ggml_graph_compute_with_ctx(ctx, graph, 1);
-
-                /* CPU blend: velocity = uncond + cfg * (cond - uncond) */
-                float * vel_data = (float *)(v_uncond->data ? v_uncond->data : NULL);
-                if (pos_vel && vel_data) {
-                    for (int i = 0; i < latent_dim; i++) {
-                        vel_data[i] = vel_data[i] + cfg_value * (pos_vel[i] - vel_data[i]);
-                    }
-                }
-                /* Store blended velocity for this position */
-                if (vel_data) {
-                    memcpy(&cond_vel[p * latent_dim], vel_data, (size_t)latent_dim * sizeof(float));
-                }
-            } else {
-                /* Single conditioned forward (no CFG) */
-                struct ggml_tensor * velocity = vcpm_locdit_forward(ctx, graph,
-                                                x_t, cond_t, t_tensor, mu_t,
-                                                &dit_cfg, &dit_w);
-                if (!velocity) { free(mu_data); free(prev_data); free(x_data); free(cond_vel); free(pos_vel); return VCPM_ERR_BACKEND; }
-                vcpm_debug_tensor_shape("step.velocity", velocity);
-
-                struct ggml_tensor * dt_t = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
-                if (dt_t->data) ((float *)dt_t->data)[0] = dt;
-
-                struct ggml_tensor * step_v = ggml_mul(ctx, velocity, dt_t);
-                struct ggml_tensor * x_next = ggml_add(ctx, x_t, step_v);
-                ggml_set_name(x_next, "cfm_x_next");
-
-                ggml_build_forward_expand(graph, x_next);
-                ggml_graph_compute_with_ctx(ctx, graph, 1);
-                memcpy(&x_data[p * latent_dim], x_next->data, (size_t)latent_dim * sizeof(float));
-            }
-        } /* end for p (patch_size positions) */
-
-        /* For CFG path, do Euler step for all positions */
-        if (use_cfg) {
-            for (int j = 0; j < total_patch_dim; j++) {
-                x_data[j] = x_data[j] + dt * cond_vel[j];
             }
         }
-        t += dt;
-    }
 
-    free(cond_vel);
-    free(pos_vel);
+        t += step_size;
+    }
 
     free(mu_data);
     free(prev_data);
 
     /* ========== Step 8: FSQ quantize on final denoised latent ========== */
-    /* Apply FSQ per-position if scalars exist, or just pass through */
     struct ggml_tensor * denoised = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
                                                          latent_dim, patch_size);
     if (denoised && denoised->data) {
@@ -915,20 +930,15 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         ggml_graph_compute_with_ctx(ctx, graph, 1);
     }
 
-    /* Copy output (patch_size * latent_dim values) and update prev_latent
-     * prev_latent stores the LAST latent vector of the produced patch for
-     * use as cond in the next gen_step. */
+    /* Copy output (patch_size * latent_dim values) and update prev_patch
+     * prev_patch stores ALL patch_size latent vectors for the next gen_step. */
     if (quantized && quantized->data) {
         memcpy(output_patch, quantized->data, (size_t)total_patch_dim * sizeof(float));
-        /* Update prev_latent with last position's output */
-        memcpy(state->prev_latent,
-               (const float *)quantized->data + (patch_size - 1) * latent_dim,
-               (size_t)latent_dim * sizeof(float));
+        /* Update prev_patch with the entire new patch */
+        memcpy(state->prev_patch, quantized->data, (size_t)total_patch_dim * sizeof(float));
     } else {
         memcpy(output_patch, x_data, (size_t)total_patch_dim * sizeof(float));
-        memcpy(state->prev_latent,
-               x_data + (patch_size - 1) * latent_dim,
-               (size_t)latent_dim * sizeof(float));
+        memcpy(state->prev_patch, x_data, (size_t)total_patch_dim * sizeof(float));
     }
 
     free(x_data);
@@ -1052,13 +1062,15 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
         return VCPM_OK;
     }
 
-    /* Reset KV caches and prev_latent */
+    /* Reset KV caches and prev_patch */
     for (int i = 0; i < state->n_base_layers; i++)
         state->base_kv_cache[i].n_used = 0;
     for (int i = 0; i < state->res_n_layers; i++)
         state->ralm_kv_cache[i].n_used = 0;
-    if (state->prev_latent)
-        memset(state->prev_latent, 0, (size_t)state->enc_feat_dim * sizeof(float));
+    if (state->prev_patch) {
+        int prev_patch_dim = state->enc_feat_dim * patch_size;
+        memset(state->prev_patch, 0, (size_t)prev_patch_dim * sizeof(float));
+    }
     if (state->last_lm_hidden)
         memset(state->last_lm_hidden, 0, (size_t)state->hidden_size * sizeof(float));
 
@@ -1351,7 +1363,7 @@ void vcpm_gen_free(vcpm_generate_state * state) {
     if (state->step_ctx) ggml_free(state->step_ctx);
     free(state->base_kv_cache);
     free(state->ralm_kv_cache);
-    free(state->prev_latent);
+    free(state->prev_patch);
     free(state->last_lm_hidden);
     free(state);
 }

@@ -111,9 +111,12 @@ typedef struct vcpm_generate_state {
 
     /* LocDiT weights */
     struct ggml_tensor * dit_input_proj;
+    struct ggml_tensor * dit_input_proj_bias;
     struct ggml_tensor * dit_output_proj;
+    struct ggml_tensor * dit_output_proj_bias;
     struct ggml_tensor * dit_norm;
     struct ggml_tensor * dit_cond_proj;
+    struct ggml_tensor * dit_cond_proj_bias;
     /* Time MLP for DiT timestep embedding */
     struct ggml_tensor * dit_time_mlp_w1;        /* [1024, 1024] */
     struct ggml_tensor * dit_time_mlp_b1;        /* [1024] */
@@ -130,10 +133,12 @@ typedef struct vcpm_generate_state {
     vcpm_gen_cache_unit * ralm_kv_cache;  /* [res_n_layers] */
     int seq_len;                          /* current populated sequence length */
 
-    /* Previous latent patch for autoregressive feat_encoder conditioning.
+    /* Previous latent patch for autoregressive conditioning.
+     * Stores ALL patch_size latent vectors from the last generated patch.
+     * Used as cond input to LocDiT and feat_encoder in the next step.
      * Initialized to zeros for first audio position.
      * Updated after each gen_step call. */
-    float * prev_latent;                  /* [feat_dim] allocated in gen_init */
+    float * prev_patch;                   /* [feat_dim * patch_size] allocated in gen_init */
 
     /* Last base_lm hidden state (after FSQ) for stop predictor.
      * Updated after each gen_step with fsq_out data. */

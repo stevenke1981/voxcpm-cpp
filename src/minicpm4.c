@@ -173,7 +173,8 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
                                     int32_t * n_cache_used,
                                     int32_t n_heads, int32_t n_kv_heads,
                                     int32_t head_dim, int32_t pos,
-                                    int32_t rope_theta, int no_rope) {
+                                    int32_t rope_theta, int no_rope,
+                                    int no_causal) {
     GGML_UNUSED(n_heads);
     GGML_UNUSED(n_kv_heads);
 
@@ -300,14 +301,14 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
      *        = [n_kv_heads * n_used, n_heads]
      */
 
-    /* For n_tokens>1 (prompt eval), process one token at a time by calling
-     * ourselves recursively. This avoids complex 3D batched attention. */
+    /* For n_tokens>1, process one token at a time using a loop.
+     * For causal: each token attends to tokens 0..ti (causal masking via KV view).
+     * For non-causal (no_causal=1): each token attends to ALL n_tokens tokens
+     * (bidirectional attention). */
     if (n_tokens > 1) {
         struct ggml_tensor * out_tokens = NULL;
         for (int64_t ti = 0; ti < n_tokens; ti++) {
-            /* Slice one token from Q: [head_dim, n_heads, 1].
-             * Use nb[2] stride (3rd dimension) for the offset since
-             * q_reshaped layout is [head_dim, n_heads, n_tokens]. */
+            /* Slice one token from Q: [head_dim, n_heads, 1] */
             struct ggml_tensor * q_t = ggml_view_3d(ctx, q_reshaped,
                                                        head_dim, n_heads, 1,
                                                        q_reshaped->nb[1],
@@ -315,28 +316,39 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
                                                        ti * q_reshaped->nb[2]);
             ggml_set_name(q_t, "q_t");
 
-            /* View only the first ti+1 tokens from KV cache for causal masking.
-             * Cache is written at positions 0..n_tokens-1, so viewing the first
-             * ti+1 entries naturally enforces causality without needing diag_mask_inf
-             * (which was broken on the flattened [n_kv_heads*n_tokens, n_heads] layout). */
-            struct ggml_tensor * k_full_t = ggml_view_3d(ctx, k_cache,
-                                                           head_dim, n_kv_heads, ti + 1,
-                                                           k_cache->nb[1], k_cache->nb[2], 0);
-            struct ggml_tensor * v_full_t = ggml_view_3d(ctx, v_cache,
-                                                           head_dim, n_kv_heads, ti + 1,
-                                                           v_cache->nb[1], v_cache->nb[2], 0);
+            int64_t kv_len;
+            struct ggml_tensor * k_sel, * v_sel;
+            if (no_causal) {
+                /* Non-causal: use full K, V from reshaped tensors (not cache)
+                 * so each token attends to ALL n_tokens positions. */
+                k_sel = ggml_view_3d(ctx, k_reshaped,
+                                      head_dim, n_kv_heads, n_tokens,
+                                      k_reshaped->nb[1], k_reshaped->nb[2], 0);
+                v_sel = ggml_view_3d(ctx, v_reshaped,
+                                      head_dim, n_kv_heads, n_tokens,
+                                      v_reshaped->nb[1], v_reshaped->nb[2], 0);
+                kv_len = n_tokens;
+            } else {
+                /* Causal: use cache up to current position ti+1.
+                 * This naturally enforces causality without diag_mask_inf. */
+                k_sel = ggml_view_3d(ctx, k_cache,
+                                      head_dim, n_kv_heads, ti + 1,
+                                      k_cache->nb[1], k_cache->nb[2], 0);
+                v_sel = ggml_view_3d(ctx, v_cache,
+                                      head_dim, n_kv_heads, ti + 1,
+                                      v_cache->nb[1], v_cache->nb[2], 0);
+                kv_len = ti + 1;
+            }
 
-            /* Flatten KV heads and token dimension for matmul.
-             * k2: [head_dim, n_kv_heads * (ti+1)]  →  scores: [n_kv_heads * (ti+1), n_heads]
-             * No causal mask needed: K,V only contain tokens 0..ti which are all valid. */
-            int64_t kv_ne[2] = { head_dim, n_kv_heads * (ti + 1) };
-            struct ggml_tensor * k2 = ggml_reshape_2d(ctx, k_full_t, kv_ne[0], kv_ne[1]);
-            struct ggml_tensor * v2 = ggml_reshape_2d(ctx, v_full_t, kv_ne[0], kv_ne[1]);
+            /* Flatten KV heads and token dimension for matmul */
+            int64_t kv_ne[2] = { head_dim, n_kv_heads * kv_len };
+            struct ggml_tensor * k2 = ggml_reshape_2d(ctx, k_sel, kv_ne[0], kv_ne[1]);
+            struct ggml_tensor * v2 = ggml_reshape_2d(ctx, v_sel, kv_ne[0], kv_ne[1]);
 
             int64_t q_ne[2] = { head_dim, n_heads };
             struct ggml_tensor * q2 = ggml_reshape_2d(ctx, q_t, q_ne[0], q_ne[1]);
 
-            /* scores: [n_kv_heads * (ti+1), n_heads] */
+            /* scores: [n_kv_heads * kv_len, n_heads] */
             struct ggml_tensor * s = ggml_mul_mat(ctx, k2, q2);
             float scale = 1.0f / sqrtf((float)head_dim);
             s = ggml_scale(ctx, s, scale);
@@ -347,9 +359,6 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
             struct ggml_tensor * o_t = ggml_cont(ctx, ggml_mul_mat(ctx, vt, s));
 
             /* Reshape and output project */
-            /* attn_out dims: [head_dim, n_heads] -> reshape to [n_heads*head_dim, 1]
-             * THEN project via o_w from n_heads*head_dim -> hidden_size.
-             * hidden_size != n_heads*head_dim for DiT (which expands in Q). */
             struct ggml_tensor * o2 = ggml_reshape_2d(ctx, o_t, n_heads * head_dim, 1);
             ggml_set_name(o2, "out_t");
             o2 = ggml_mul_mat(ctx, o_w, o2);
@@ -435,22 +444,24 @@ struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
                                           vcpm_kv_cache_unit * cache,
                                           int32_t n_heads, int32_t n_kv_heads,
                                           int32_t head_dim, int32_t pos,
-                                          int32_t rope_theta, int no_rope) {
+                                          int32_t rope_theta, int no_rope,
+                                          int no_causal) {
     /* Pre-attention RMSNorm */
     struct ggml_tensor * x_norm = vcpm_rms_norm(ctx, x, w->input_layernorm_weight, 1e-6f);
     ggml_set_name(x_norm, "block_input_norm");
 
     /* Self-attention */
     struct ggml_tensor * attn_out = vcpm_attention(ctx, graph, x_norm,
-                                                    w->q_proj_weight,
-                                                    w->k_proj_weight,
-                                                    w->v_proj_weight,
-                                                    w->o_proj_weight,
-                                                    cache->k, cache->v,
-                                                    &cache->n_used,
-                                                    n_heads, n_kv_heads,
-                                                    head_dim, pos,
-                                                    rope_theta, no_rope);
+                                                     w->q_proj_weight,
+                                                     w->k_proj_weight,
+                                                     w->v_proj_weight,
+                                                     w->o_proj_weight,
+                                                     cache->k, cache->v,
+                                                     &cache->n_used,
+                                                     n_heads, n_kv_heads,
+                                                     head_dim, pos,
+                                                     rope_theta, no_rope,
+                                                     no_causal);
     ggml_set_name(attn_out, "block_attn_out");
 
     /* Residual connection */
@@ -497,7 +508,8 @@ struct ggml_tensor * vcpm_minicpm4_forward(struct ggml_context * ctx,
                                  &cache->layers[i],
                                  cfg->n_heads, cfg->n_kv_heads,
                                  cfg->head_dim, pos,
-                                 cfg->rope_theta, cfg->no_rope);
+                                 cfg->rope_theta, cfg->no_rope,
+                                 0);  /* no_causal=0 for causal LM */
     }
 
     /* Final RMSNorm */

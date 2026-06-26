@@ -109,7 +109,8 @@ void vcpm_rope(struct ggml_context * ctx, struct ggml_cgraph * graph,
  * x: input hidden state [n_tokens, hidden_size]
  * q/k/v/o: weight tensors
  * k_cache, v_cache: KV cache for this layer
- * pos: current position (for RoPE and cache update) */
+ * pos: current position (for RoPE and cache update)
+ * no_causal: 1 for bidirectional (non-causal) attention; 0 for causal */
 struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
                                     struct ggml_cgraph * graph,
                                     struct ggml_tensor * x,
@@ -122,7 +123,8 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
                                     int32_t * n_cache_used,
                                     int32_t n_heads, int32_t n_kv_heads,
                                     int32_t head_dim, int32_t pos,
-                                    int32_t rope_theta, int no_rope);
+                                    int32_t rope_theta, int no_rope,
+                                    int no_causal);
 
 /* Build SwiGLU MLP graph.
  * Returns the MLP output tensor. */
@@ -134,6 +136,8 @@ struct ggml_tensor * vcpm_mlp(struct ggml_context * ctx,
                               struct ggml_tensor * down_w);
 
 /* Build one transformer block.
+ * no_rope: 1 to skip RoPE (for residual LM, feat_encoder, DiT)
+ * no_causal: 1 for bidirectional (non-causal) attention (for DiT blocks)
  * Returns the block output tensor. */
 struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
                                           struct ggml_cgraph * graph,
@@ -142,7 +146,8 @@ struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
                                           vcpm_kv_cache_unit * cache,
                                           int32_t n_heads, int32_t n_kv_heads,
                                           int32_t head_dim, int32_t pos,
-                                          int32_t rope_theta, int no_rope);
+                                          int32_t rope_theta, int no_rope,
+                                          int no_causal);
 
 /* Build full MiniCPM4 forward pass graph.
  * x: input embeddings [n_tokens, hidden_size]

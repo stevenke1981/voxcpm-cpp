@@ -76,14 +76,15 @@ struct ggml_tensor * vcpm_locenc_forward(struct ggml_context * ctx,
         cache_unit.v = v_cache;
         cache_unit.n_used = 0;
 
-        /* Use minicpm4_block — identical GQA+SwiGLU structure, no_rope=1 */
+        /* Use minicpm4_block — identical GQA+SwiGLU structure, no_rope=1, causal=0 */
         h = vcpm_minicpm4_block(ctx, graph, h,
                                  &w->layer_weights[i], &cache_unit,
                                  cfg->n_heads, cfg->n_kv_heads,
                                  cfg->head_dim,
                                  0,        /* pos = 0 (unused with no_rope=1) */
                                  0,        /* rope_theta = 0 (unused) */
-                                 1);       /* no_rope = 1 — no positional encoding */
+                                 1,        /* no_rope = 1 — no positional encoding */
+                                 0);       /* no_causal = 0 — causal attention */
     }
 
     /* ---- Step 4: Final RMSNorm ---- */
