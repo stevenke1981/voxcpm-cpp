@@ -199,6 +199,7 @@ int main(int argc, char ** argv) {
 
     /* --- im2col --- */
     struct ggml_tensor * im2col = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, K * C, OL);
+    ggml_set_input(im2col);
     {
         float * id = (float *)im2col->data;
         for (int ol = 0; ol < OL; ol++) {
@@ -217,6 +218,7 @@ int main(int argc, char ** argv) {
 
     /* --- w_dense --- */
     struct ggml_tensor * w_dense = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, K * C, C);
+    ggml_set_input(w_dense);
     {
         float * wd = (float *)w_dense->data;
         memset(wd, 0, (size_t)K * C * C * sizeof(float));
@@ -241,38 +243,147 @@ int main(int argc, char ** argv) {
         out = ggml_add(ctx, rs, b2);
     }
 
+    /* Compute expected mul_mat result directly (no ggml).
+     * Use id = im2col->data and wd = w_dense->data which are non-function tensors. */
+    float * id = (float *)im2col->data;
+    float * wd = (float *)w_dense->data;
+    float * expected_mm = (float *)malloc(OL * C * sizeof(float));
+    for (int ol = 0; ol < OL; ol++) {
+        for (int c = 0; c < C; c++) {
+            float sum = 0;
+            for (int i = 0; i < K * C; i++) {
+                sum += id[ol * (K * C) + i] * wd[c * (K * C) + i];
+            }
+            expected_mm[ol * C + c] = sum;
+        }
+    }
+    /* Print expected mm row0 and row1 */
+    printf("\n=== Expected mul_mat result (manual dot product) ===\n");
+    printf("  expected row0 ch0..ch7:\n  ");
+    for (int i = 0; i < 8; i++) printf("%.6f ", expected_mm[0 * C + i]);
+    printf("\n  expected row1 ch0..ch7:\n  ");
+    for (int i = 0; i < 8; i++) printf("%.6f ", expected_mm[1 * C + i]);
+    printf("\n");
+
+    /* Verify data pointers before compute */
+    printf("\n  BEFORE compute: im2col=%p w_dense=%p\n", (void*)im2col->data, (void*)w_dense->data);
+    printf("  BEFORE compute: im2col[0]=%.6f w_dense[0]=%.6f\n",
+           ((float*)im2col->data)[0], ((float*)w_dense->data)[0]);
+
     ggml_build_forward_expand(graph, out);
     ggml_graph_compute_with_ctx(ctx, graph, 1);
 
-    /* Print ggml result */
-    printf("\n=== ggml graph result ===\n");
+    /* Verify data pointers after compute */
+    printf("  AFTER  compute: im2col=%p w_dense=%p mm=%p rs=%p out=%p\n",
+           (void*)im2col->data, (void*)w_dense->data,
+           (void*)mm->data, (void*)rs->data, (void*)out->data);
+    printf("  AFTER  compute: im2col[0]=%.6f w_dense[0]=%.6f\n",
+           ((float*)im2col->data)[0], ((float*)w_dense->data)[0]);
+    /* Check if data pointers match between views */
+    printf("  rs==mm? %d rs->data==mm->data? %d\n", rs == mm, rs->data == mm->data);
+    printf("  mm ne=[%lld,%lld] mm type=%d\n",
+           (long long)mm->ne[0], (long long)mm->ne[1], mm->type);
+    printf("  out->ne[0]=%lld out->ne[1]=%lld out->type=%d\n",
+           (long long)out->ne[0], (long long)out->ne[1], out->type);
+
+    /* Print full mm data — CORRECT indexing: ne=[OL=8, C=64] so dim0=ol varies fastest.
+     * Element (ol, ch) at float offset = ol + ch * ne0 = ol + ch * 8. */
+    float * md = (float *)mm->data;
+    printf("\n  ggml mm data (correct indexing: out[ol + ch*OL]):\n");
+    for (int ch = 0; ch < 4; ch++) {
+        printf("  ch%d: ", ch);
+        for (int ol = 0; ol < OL; ol++) printf("%.6f ", md[ol + ch * 8]);
+        printf("\n");
+    }
+    printf("\n");
+    /* Also dump im2col for verification */
+    {
+        float * id = (float *)im2col->data;
+        printf("  im2col row0 first 14 (ch0:k0..k6, ch1:k0..k6):\n  ");
+        for (int i = 0; i < 14; i++) printf("%.6f ", id[i]);
+        printf("\n");
+        printf("  im2col row1 first 14:\n  ");
+        for (int i = 448; i < 462; i++) printf("%.6f ", id[i]);
+        printf("\n");
+    }
+
+    /* Compare ggml mm vs expected — CORRECT indexing
+     * ggml stores: md[ol + ch * ne0] = md[ol + ch * 8].
+     * expected stores: expected_mm[ol * C + ch] (row-major, C-style). */
+    printf("\n=== Comparison: ggml_mul_mat vs expected ===\n");
+    double max_err_val = 0, sum_err = 0;
+    for (int ch = 0; ch < C; ch++) {
+        for (int ol = 0; ol < OL; ol++) {
+            float gv = md[ol + ch * 8];
+            float ev = expected_mm[ol * C + ch];
+            float err = fabsf(gv - ev);
+            if (err > max_err_val) max_err_val = err;
+            sum_err += err;
+            if (err > 1e-5f) {
+                printf("  [ol=%d,ch=%d]: ggml=%.8f expected=%.8f err=%.2e ***\n",
+                       ol, ch, gv, ev, err);
+            }
+        }
+    }
+    printf("  max_err=%.2e avg_err=%.2e (across %d elements)\n",
+           max_err_val, sum_err / (OL * C), OL * C);
+
+    /* Print ggml result — CORRECT indexing: d[ol + ch * ne0] = d[ol + ch * 8] */
+    printf("\n=== ggml graph result (correct indexing) ===\n");
     if (out->data) {
         float * d = (float *)out->data;
+        int ne0_ggml = (int)out->ne[0];
         double sum = 0, sumsq = 0;
         float minv = d[0], maxv = d[0];
-        for (int i = 0; i < OL * C; i++) {
-            sum += d[i]; sumsq += (double)d[i] * d[i];
-            if (d[i] < minv) minv = d[i];
-            if (d[i] > maxv) maxv = d[i];
+        for (int ch = 0; ch < C; ch++) {
+            for (int ol = 0; ol < OL; ol++) {
+                float val = d[ol + ch * ne0_ggml];
+                sum += val; sumsq += (double)val * val;
+                if (val < minv) minv = val;
+                if (val > maxv) maxv = val;
+            }
         }
         printf("  ggml output [%lld, %lld]: min=%.6f max=%.6f mean=%.6f rms=%.6f\n",
                (long long)out->ne[0], (long long)out->ne[1],
                minv, maxv, sum / (OL * C), sqrt(sumsq / (OL * C)));
-        printf("  First 8 ch0: ");
-        for (int ol = 0; ol < 8; ol++) printf("%.6f ", d[ol * C + 0]);
+        printf("  ch0[ol=0..7]: ");
+        for (int ol = 0; ol < 8; ol++) printf("%.6f ", d[ol + 0 * ne0_ggml]);
         printf("\n");
-        printf("  First 8 ch1: ");
-        for (int ol = 0; ol < 8; ol++) printf("%.6f ", d[ol * C + 1]);
+        printf("  ch1[ol=0..7]: ");
+        for (int ol = 0; ol < 8; ol++) printf("%.6f ", d[ol + 1 * ne0_ggml]);
         printf("\n");
 
-        /* Compare with reference */
+        /* Compare with reference (ref_output is row-major: ref[ol * C + ch]).
+         * ggml stores: d[ol + ch * ne0]. */
         double max_err = 0, sum_err = 0;
-        for (int i = 0; i < OL * C; i++) {
-            double err = fabs((double)d[i] - ref_output[i]);
-            if (err > max_err) max_err = err;
-            sum_err += err;
+        for (int ch = 0; ch < C; ch++) {
+            for (int ol = 0; ol < OL; ol++) {
+                double err = fabs((double)d[ol + ch * ne0_ggml] - ref_output[ol * C + ch]);
+                if (err > max_err) max_err = err;
+                sum_err += err;
+            }
         }
-        printf("\n  max_err=%.9f avg_err=%.9f\n", max_err, sum_err / (OL * C));
+        printf("\n  max_err=%.9f avg_err=%.9f (vs ref, which includes bias)\n", max_err, sum_err / (OL * C));
+
+        /* Verify im2col data was NOT overwritten by allocator */
+        {
+            float * id_check = (float *)im2col->data;
+            /* Check first element: should be input[0+3-0][0] = input[3][0] = 0.5 */
+            printf("  im2col[0][0] = %.6f (expect 0.500000)\n", id_check[0]);
+            /* Check last element of first row: kernel[6] for ol=0, c=0 → idx=-3 → pad=0 */
+            printf("  im2col[0][6] = %.6f (expect 0.000000)\n", id_check[6]);
+            /* Check for correct layout: channel c=0, ol=0 */
+            printf("  im2col[0][0*7+0] = %.6f = input[0+3-0][0]\n", id_check[0]);
+            printf("  im2col[0][0*7+1] = %.6f = input[0+3-1][0] = input[2][0]=0.5\n", id_check[1]);
+            printf("  im2col[0][0*7+2] = %.6f = input[0+3-2][0] = input[1][0]=0.5\n", id_check[2]);
+            /* Check w_dense diagonal */
+            float * wd_check = (float *)w_dense->data;
+            float w0_last = f32_w[0 * 7 + 6];
+            printf("  w_dense[0][0*7+6] = %.6f (expect weight[0*7+6]=%.6f)\n",
+                   wd_check[0 * 448 + 0 * 7 + 6], w0_last);
+            printf("  w_dense[0][1*7+0] = %.6f (expect 0.000000, off-diagonal)\n",
+                   wd_check[0 * 448 + 1 * 7 + 0]);
+        }
 
         /* Print raw im2col stats */
         {

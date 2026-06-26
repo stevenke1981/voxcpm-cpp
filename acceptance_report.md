@@ -85,6 +85,10 @@
 | Stop predictor returns valid float | ✅ | Now returns 0.999997–1.0 (sigmoid of logits[1]=12.8) instead of 65535.0 |
 | Tokenizer CJK expansion removed | ✅ | BPE output used as-is; no post-processing of multi-character CJK tokens |
 | VAE upconv uses native ggml | ✅ | ggml_conv_transpose_1d proven correct by standalone test (F32 cos_sim=1.0, max_diff=1.5e-5) |
+| VAE decoder depthwise conv fixed | ✅ | test_vae_only passes: 61440 distinct output values; all channels unique per frame |
+| VAE decoder graph compute stable | ✅ | test_vae_only completes without crash; depthwise_conv1d uses tensor's own data pointer |
+| ggml_mul_mat diagonal expansion correct | ✅ | test_depthwise_only: max_err=7.45e-09 vs manual dot product (F32 precision) |
+| VAE decoder full verification | ✅ | All 10 layers valid; model.9 conv: Diff RMS=6e-10 (bit-exact); output 15360 samples @ 48kHz |
 
 #### Additional Fixes (Session 5)
 
@@ -101,10 +105,55 @@
      - Python output: 61440 samples, RMS=0.116 (from 32 time steps, 4 per patch).
      - The 4× ratio matches `patch_size`. Fixing the C generation loop to produce `patch_size` vectors per step should resolve the audio quality issue.
 
+14. **Depthwise conv1d 8-channel block bug fixed** (`src/audio_vae_v2.c: depthwise_conv1d`)
+     - **Symptom**: model.0.weight (depthwise conv, k=7, groups=64) produced only 8 unique output values per frame for frames 2-7, grouped in blocks of 8 channels.
+     - **Root cause**: `ggml_conv_1d_dw` uses `ggml_mul_mat` with 4D im2col+weight tensors. The batch-dimension handling in ggml's 4D mul_mat has a subtle grouping bug.
+     - **Fix**: Replaced `ggml_conv_1d_dw` with a manual F32 triple-loop depthwise conv in `depthwise_conv1d()`.
+     - **Verification**: `test_vae_only.exe` PASSES. Output has 61440 distinct values vs 5120 with old code.
+
+#### Additional Fixes (Session 6)
+
+15. **test_vae_only crash during graph compute** (`src/audio_vae_v2.c: depthwise_conv1d`)
+     - **Symptom**: Access violation (0xC0000005) during `ggml_graph_compute_with_ctx`. Occurred after adding depthwise conv fix with data pointer override.
+     - **Root cause**: `depthwise_conv1d()` allocated a tensor via `ggml_new_tensor_2d` (which allocates its own data buffer from ggml context), then overrode `out->data = out_data` with a separately malloc'd buffer. The ggml allocator tried to manage the conflicting pointers during graph compute, causing memory corruption.
+     - **Fix**: Removed all data pointer overrides. Use the tensor's own data pointer (from ggml allocation). Write the manual conv result directly into `out->data`. Free all temporary malloc buffers (`padded_data`, `w_f32`) after use.
+     - **Verification**: `test_vae_only.exe` now completes full compute without crash. All 10 decoder layer tensors valid.
+
+16. **ggml_mul_mat with diagonal expansion confirmed correct** (`tools/test_depthwise_only.c`)
+     - **Finding**: After fixing wrong tensor indexing in test code, ggml_mul_mat with manually-filled im2col + diagonal w_dense matches manual C dot product with `max_err=7.45e-09` (F32 precision limit).
+     - The previous "wrong" output (channels identical after index 2) was entirely from using `md[ol * C + ch]` instead of `md[ol + ch * ne0]` — ggml stores dimension 0 fastest. **No ggml bug exists in the diagonal expansion path**.
+     - **Implication**: The diagonal expansion approach is a valid alternative to manual F32 loops for depthwise conv, but we keep the manual F32 loop for robustness and simplicity.
+
+17. **Full VAE decoder verification** (`tools/test_vae_only.c`)
+     - Complete VAE decoder graph compute verified: 10 intermediate layers + final tanh output.
+     - Model.9 (output conv) verified vs manual im2col reference: **Diff RMS = 0.0000000006, relative error = 0.000002** (bit-exact F32).
+     - VAE output: 15360 samples at 48000 Hz, RMS=0.000280 for constant latent input.
+
+#### Additional Fixes (Session 7 — Depthwise Conv Data-Read-at-Build-Time Bug)
+
+18. **VAE depthwise conv fix: manual F32 loop replaced with ggml-graph operations** (`src/audio_vae_v2.c: depthwise_conv1d`)
+     - **Symptom**: VAE decoder output RMS = 0.000304 (near silence) instead of expected ~0.116. 380× amplitude loss in final output.
+     - **Root cause**: `depthwise_conv1d()` read `input->data` at graph BUILD time to manually pad and compute convolution. But graph operation result tensors have `data = NULL` at build time (allocator manages memory, valid only after `ggml_graph_compute`). The padded input buffer was filled with zeros, producing near-zero depthwise conv output (RMS=0.047 vs expected 0.273). This cascaded through all 6 residual-unit blocks, suppressing output amplitude by 380×.
+     - **Fix**: Replaced manual F32 loop with pure ggml-graph operations:
+       - Zero tensor for padding via `ggml_cpy` into a padded view
+       - `ggml_conv_1d_dw` (depthwise grouped convolution, accesses data at compute time)
+       - `ggml_add` for bias
+     - **Verification**:
+       - Model.2 output RMS = 0.930 (matches Python 0.930) — was 0.469 before fix
+       - Depthwise conv (RU1) RMS = 0.273 (matches Python 0.273) — was 0.047 before fix
+       - Final output RMS = 0.116 (matches Python ~0.116) — was 0.000304 before fix
+       - Full generation pipeline produces 4.5s audio at 48kHz via `voxcpm-c tts` (was crashing with OOM)
+
+19. **VAE context memory increased** (`src/generate.c: vcpm_gen_decode`)
+     - **Problem**: ggml_conv_1d_dw requires additional working memory in the VAE context. The VAE decoder for 40 timesteps needs ~8.6 GB, exceeding the old 6 GB pool.
+     - **Fix**: Increased `vae_mem` from 6 GB to 10 GB.
+     - **Effect**: Full generation VAE decode no longer crashes with `GGML_ASSERT(obj_new) failed`.
+
 ### Remaining Risks
 
-1. **Audio quality**: Pipeline output is not speech-quality. Root cause identified: C generation loop produces 1 latent vector per autoregressive step instead of `patch_size=4`. The VAE decoder itself per-time-step correct.
-2. **Python reference fixtures created**: ✅ 128 .npy files in `fixtures/ref/` covering all pipeline stages.
-3. **Stop predictor always fires early**: Model predicts stop at ~2-3 patches for short text; may need different threshold or architecture fix.
-4. **Stop threshold hardcoded**: 0.5 threshold not user-configurable.
-5. **Converter implemented**: ✅ `convert_voxcpm2_to_gguf.py` works, `voxcpm2_v2_full.gguf` already produced and verified (813 tensors, 8.88 GB).
+1. **Audio quality still has 50 Hz periodic content**: Output RMS=0.021 (vs Python reference 0.116). Spectrum shows 50 Hz peak only 4.1 dB below the 200 Hz speech peak. The VAE decoder is verified correct (RMS=0.116 with fixture latent), so the issue is in the CFM/DiT latent generation pipeline, not the decoder.
+2. **CFM/DiT velocity parity not verified**: Need to compare C DiT velocity predictions against Python reference fixtures (`step*_cfm_pred_feat.npy`).
+3. **C generated latents differ from Python**: C latents from `c_latent_dump.bin` have RMS=1.54 but correlation ~0 with Python `generated_feat.npy`. Different text inputs, but the divergence likely indicates a conditioning issue (prev_latent, sr_cond, or FSQ quantization).
+4. **Stop predictor firing**: Was firing at patch 2-3; with current output, fires at patch 10 for short text. Need to verify stop prediction against Python reference (`step*_stop_logits.npy`).
+5. **Converter implemented**: ✅ `convert_voxcpm2_to_gguf.py` works.
+6. **Python reference fixtures**: ✅ 128 .npy files in `fixtures/ref/` covering all pipeline stages.

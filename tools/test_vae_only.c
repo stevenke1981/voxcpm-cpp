@@ -138,8 +138,17 @@ int main(int argc, char ** argv) {
     }
 
     /* Compute */
+    printf("\n=== Calling ggml_build_forward_expand (final) ===\n");
     ggml_build_forward_expand(graph, audio);
-    ggml_graph_compute_with_ctx(ctx, graph, 1);
+    printf("=== Calling ggml_graph_compute_with_ctx ===\n");
+    fflush(stderr);
+    fflush(stdout);
+    enum ggml_status status = ggml_graph_compute_with_ctx(ctx, graph, 1);
+    if (status != GGML_STATUS_SUCCESS) {
+        fprintf(stderr, "ggml_graph_compute failed: %d\n", (int)status);
+    }
+    printf("=== ggml_graph_compute_with_ctx returned ===\n");
+    fflush(stdout);
 
     /* Print post-compute intermediate tensor stats */
     printf("\n=== Post-compute intermediate tensor stats ===\n");

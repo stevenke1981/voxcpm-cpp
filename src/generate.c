@@ -1146,7 +1146,7 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
     /* Create a temporary ggml context for VAE decode only.
      * This isolates the large VAE tensors (diagonal weight expansions, padded
      * inputs) from the main step_ctx which holds accumulated inference tensors. */
-    size_t vae_mem = 6LL * 1024 * 1024 * 1024;  /* 6 GB for VAE tensors + graph (work buffer external) */
+    size_t vae_mem = 10LL * 1024 * 1024 * 1024;  /* 10 GB for VAE tensors + graph (work buffer external) */
     struct ggml_init_params vae_params = {
         .mem_size   = vae_mem,
         .mem_buffer = NULL,

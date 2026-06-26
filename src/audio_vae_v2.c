@@ -143,12 +143,6 @@ static struct ggml_tensor * conv1d_f32(struct ggml_context * ctx,
         }
     }
 
-    /* Debug: verify F32 path is active */
-    fprintf(stderr, "DEBUG conv1d_f32: weight ne=[%lld,%lld,%lld] type=%d->%d input ne=[%lld,%lld] pad=%d\n",
-            (long long)weight->ne[0], (long long)weight->ne[1], (long long)weight->ne[2],
-            weight->type, w->type,
-            (long long)input->ne[0], (long long)input->ne[1], p0);
-
     /* Step 3: Reshape and matmul in F32
      * im2col: [IC*K, OW, N] → [IC*K, N*OW]
      * weight: [K, IC, OC]   → [K*IC, OC]
@@ -194,17 +188,14 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
                                                struct ggml_tensor * input,
                                                int stride, int pad, int dilate,
                                                const struct vcpm_model * model) {
-    (void)graph;
     (void)model;
-
     /* ggml_conv_1d weight convention: ne[0]=K(kernel), ne[1]=IC, ne[2]=OC
      * For depthwise: OC groups with IC=1 per group, so weight ne = [K, 1, OC] */
-    int K = (int)weight->ne[0];   /* kernel size */
+    int K = (int)weight->ne[0];   /* kernel size = 7 */
     int C = (int)weight->ne[2];   /* output channels (= input channels for depthwise) */
-    int left_pad = pad * 2;       /* causal: left-only padding */
+    int left_pad = pad * 2;       /* causal: left-only padding = 6 * dilation */
 
     if (C > 4096) {
-        /* Fallback: skip depthwise conv (should not happen) */
         if (bias && bias->ne[0] == (int64_t)C) {
             struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
             return ggml_add(ctx, input, b2);
@@ -213,85 +204,97 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
     }
 
     int64_t N = input->ne[0];
-    int64_t OC = input->ne[1];  /* same as C for depthwise */
+    int64_t OC = input->ne[1];
 
-    /* Build padded input using only graph operations to avoid allocator
-     * memory-reuse corruption of manually allocated tensors.
+    /* ---- Pure ggml-graph depthwise conv ----
      *
-     * Strategy: use ggmls built-in ggml_conv_1d with symmetric padding
-     * and adjust. For causal (left-only) padding, we first prepend zeros
-     * via ggml_view_2d on a zero tensor, then concat with input.
+     * CRITICAL BUG (fixed): The old code did manual F32 computation during graph
+     * BUILD, reading input->data at build time. But graph operation result tensors
+     * only have valid data AFTER graph compute. The allocator may also reassign
+     * tensor data addresses at compute time. This caused the manual conv to read
+     * uninitialized/zero data.
      *
-     * Approach: use ggml_im2col directly with manual padding handled at
-     * element level. We compute OW, then create the im2col manually by
-     * slicing windows from the correctly-offset positions.
+     * Fix: Use ggml_conv_1d_dw (depthwise) with pre-padded input, all via ggml
+     * graph operations. Data is read/written at compute time, not build time.
      *
-     * Simplest approach: use two separate graph ops:
-     * 1. Compute the conv output for output positions that only need the
-     *    original input (no padding needed if we use stride=1, dilate=1)
-     * 2. For causal depthwise with left_pad, we create a zero-filled prefix
-     *    tensor and concatenate via manually built im2col + matmul.
-     *
-     * Even simpler: just use ggml_new_tensor_2d but preserve its data by
-     * making it an explicit graph output with ggml_cpy.
+     * Strategy:
+     * 1. Create a zero-initialized padded tensor [N+left_pad, OC]
+     * 2. Use ggml_cpy to copy input into padded at offset left_pad (graph op)
+     * 3. Call ggml_conv_1d_dw(s=1, p=0, d=dilate) — no extra padding
+     *    Output: OW = N+left_pad - d*(K-1) = N+6d-6d = N. Correct causal length.
+     * 4. Add bias
      */
 
-    /* Allocate padded tensor with EXTERNAL memory (malloc) so ggml
-     * allocator cannot overwrite it. The context still creates an
-     * unused tensor allocation, but we override the data pointer. */
-    size_t pad_nbytes = (size_t)(N + left_pad) * (size_t)OC * sizeof(float);
-    float * padded_data = (float *)malloc(pad_nbytes);
-    if (!padded_data) {
-        fprintf(stderr, "depthwise_conv1d: malloc failed for padded (%zu bytes)\n",
-                pad_nbytes);
-        if (bias && bias->ne[0] == (int64_t)C) {
-            struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
-            return ggml_add(ctx, input, b2);
-        }
-        return input;
-    }
+    /* Step 1: Create padded input tensor (zero-initialized by ggml alloc) */
     struct ggml_tensor * padded = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
-                                                        N + left_pad, OC);
-    if (!padded) {
-        free(padded_data);
-        return input;
-    }
-    /* Override padded's data pointer with our malloc'd buffer */
-    padded->data = padded_data;
-    size_t row_bytes = (size_t)N * sizeof(float);
-    float * id = (float *)input->data;
-    for (int64_t c = 0; c < OC; c++) {
-        memset(padded_data + c * (N + left_pad), 0,
-               (size_t)left_pad * sizeof(float));
-        memcpy(padded_data + c * (N + left_pad) + left_pad,
-               id + c * N, row_bytes);
-    }
-    ggml_set_name(padded, "vae_dw_pad");
-    /* Mark as graph input to prevent allocator from reusing its memory */
-    ggml_set_input(padded);
+                                                      N + left_pad, OC);
+    if (!padded) return input;
 
-    /* Use ggml_conv_1d_dw on the padded tensor */
-    struct ggml_tensor * result = ggml_conv_1d_dw(ctx, weight, padded,
-                                                    stride, 0, dilate);
-    if (!result) {
-        fprintf(stderr, "depthwise_conv1d: ggml_conv_1d_dw failed\n");
-        if (bias && bias->ne[0] == (int64_t)C) {
-            struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
-            return ggml_add(ctx, input, b2);
-        }
-        return input;
+    /* Step 2: Copy input into padded at offset left_pad (graph compute-time op) */
+    {
+        struct ggml_tensor * dst_slice = ggml_view_2d(ctx, padded, N, OC,
+                                                       padded->nb[1],
+                                                       left_pad * sizeof(float));
+        struct ggml_tensor * cpy = ggml_cpy(ctx, input, dst_slice);
+        ggml_set_name(cpy, "dw_pad_cpy");
+        ggml_build_forward_expand(graph, cpy);
     }
 
-    /* ggml_conv_1d_dw returns [N, OC, 1] after reshape.
-     * We want [OW, OC] 2D output. */
-    struct ggml_tensor * out = ggml_reshape_2d(ctx, result, result->ne[0], result->ne[1]);
+    /* Step 3: Depthwise conv via ggml (graph operation, data access at compute time) */
+    struct ggml_tensor * out = ggml_conv_1d_dw(ctx, weight, padded,
+                                                stride, 0, dilate);
+    if (!out) return input;
 
+    /* Step 4: Reshape from 3D [OW, OC, 1] to 2D [OW, OC] */
+    out = ggml_reshape_2d(ctx, out, out->ne[0], out->ne[1]);
+
+    /* Step 5: Add bias */
     if (bias) {
         struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
         out = ggml_add(ctx, out, b2);
     }
+
     return out;
 }
+
+/* ---- Old manual F32 depthwise conv (replaced by ggml-graph version above) ----
+ * The manual loop read input->data at graph BUILD time, which was uninitialized
+ * for graph operation results (data only valid after graph COMPUTE). This caused
+ * near-zero depthwise conv output and ~400x amplitude loss in the VAE decoder.
+ * The new implementation uses ggml_conv_1d_dw which accesses data at compute time.
+ */
+#if 0
+static struct ggml_tensor * depthwise_conv1d_old(struct ggml_context * ctx,
+                                               struct ggml_cgraph * graph,
+                                               struct ggml_tensor * weight,
+                                               struct ggml_tensor * bias,
+                                               struct ggml_tensor * input,
+                                               int stride, int pad, int dilate,
+                                               const struct vcpm_model * model) {
+    (void)graph;
+    (void)model;
+
+    int K = (int)weight->ne[0];
+    int C = (int)weight->ne[2];
+    int left_pad = pad * 2;
+
+    if (C > 4096) { ... }
+
+    int64_t N = input->ne[0];
+    int64_t OC = input->ne[1];
+    int64_t padded_len = N + left_pad;
+    float * padded_data = (float *)malloc(...);
+
+    float * id = (float *)input->data;
+    // BUG: input->data at graph BUILD time is uninitialized for graph op results!
+    
+    for (int64_t c = 0; c < OC; c++) {
+        memset(padded_data + c * padded_len, 0, (size_t)left_pad * sizeof(float));
+        memcpy(padded_data + c * padded_len + left_pad, id + c * N, row_bytes);
+    }
+    // ... manual conv loop reading padded_data (all zeros!) ...
+}
+#endif
 
 static struct ggml_tensor * conv1d_layer(struct ggml_context * ctx,
                                           struct ggml_cgraph * graph,
@@ -409,13 +412,17 @@ static struct ggml_tensor * snake_activation(struct ggml_context * ctx,
 /* ---- Post-compute diagnostic tensor pointers ---- */
 static struct ggml_tensor * g_dbg_tensors[32] = {0};
 static int g_dbg_count = 0;
-static struct ggml_tensor * g_dbg_snapshots[16] = {0}; /* persistent copies via ggml_cpy */
+static struct ggml_tensor * g_dbg_snapshots[40] = {0}; /* persistent copies via ggml_cpy */
 static int g_dbg_snap_count = 0;
 static struct ggml_tensor * g_dbg_upconv_b2 = NULL;
 
 /* Debug slot for residual_unit intermediates — starts after block-level tensors */
 #define RES_UNIT_DBG_START 12
 static int g_res_debug_idx = RES_UNIT_DBG_START;
+
+/* Flag to capture residual unit sub-step snapshots (set by decoder_block) */
+static int g_dbg_capture_ru = 0;
+static int g_dbg_ru_counter = 0;
 
 /* ---- Snapshot: copy intermediate tensor via ggml_dup with set_output ----
  * ggml_dup creates a proper operation-output tensor.  ggml_set_output
@@ -424,7 +431,11 @@ static int g_res_debug_idx = RES_UNIT_DBG_START;
 static struct ggml_tensor * snapshot_tensor(struct ggml_context * ctx,
                                              struct ggml_cgraph * graph,
                                              struct ggml_tensor * t) {
-    if (!t || !t->data) return NULL;
+    if (!t) return NULL;
+    /* NOTE: At graph-build time, operation-result tensors have t->data == NULL
+     * because the allocator hasn't assigned memory yet. The old !t->data guard
+     * prevented ANY snapshot from being created. ggml_dup works from a graph
+     * operand whose memory is assigned by the allocator at compute time. */
     struct ggml_tensor * s = ggml_dup(ctx, t);
     if (!s) return NULL;
     ggml_set_output(s);
@@ -437,7 +448,7 @@ static struct ggml_tensor * snapshot_tensor(struct ggml_context * ctx,
 static void save_snapshot(struct ggml_context * ctx,
                           struct ggml_cgraph * graph,
                           struct ggml_tensor * t) {
-    if (g_dbg_snap_count >= 16) return;
+    if (g_dbg_snap_count >= 40) return;
     struct ggml_tensor * s = snapshot_tensor(ctx, graph, t);
     g_dbg_snapshots[g_dbg_snap_count++] = s;
     ggml_build_forward_expand(graph, s);
@@ -458,6 +469,7 @@ static struct ggml_tensor * residual_unit(struct ggml_context * ctx,
                                             int dilation) {
     struct ggml_tensor * residual = h;
     int dbg_slot = g_res_debug_idx++;
+    int ru_instance = g_dbg_ru_counter++;  /* global counter for unique file naming */
 
     /* Convert alpha tensors to F32 if present */
     struct ggml_tensor * a0 = alpha_to_f32(ctx, alpha0_t);
@@ -467,6 +479,7 @@ static struct ggml_tensor * residual_unit(struct ggml_context * ctx,
     if (a0) h = snake_activation(ctx, h, a0);
     if (dbg_slot + 0 < 32)
         g_dbg_tensors[dbg_slot + 0] = h;  /* after snake1 */
+    if (g_dbg_capture_ru) save_snapshot(ctx, graph, h);
 
     /* Depthwise conv1d: kernel=7, causal padding, stride=1
      * Python CausalConv1d uses left_pad = 3 * dilation * 2 = 6 * dilation.
@@ -475,11 +488,13 @@ static struct ggml_tensor * residual_unit(struct ggml_context * ctx,
     if (!h) return residual;
     if (dbg_slot + 1 < 32)
         g_dbg_tensors[dbg_slot + 1] = h;  /* after depthwise conv */
+    if (g_dbg_capture_ru) save_snapshot(ctx, graph, h);
 
     /* Snake activation with alpha2: post-depthwise nonlinearity */
     if (a2) h = snake_activation(ctx, h, a2);
     if (dbg_slot + 2 < 32)
         g_dbg_tensors[dbg_slot + 2] = h;  /* after snake2 */
+    if (g_dbg_capture_ru) save_snapshot(ctx, graph, h);
 
     /* Conv2: pointwise kernel=1, padding=0, dilation=1 */
     struct ggml_tensor * c2 = conv1d_layer(ctx, graph, conv2_w, conv2_b, h,
@@ -487,12 +502,14 @@ static struct ggml_tensor * residual_unit(struct ggml_context * ctx,
     if (!c2) return residual;
     if (dbg_slot + 3 < 32)
         g_dbg_tensors[dbg_slot + 3] = c2;  /* after pointwise conv (before skip) */
+    if (g_dbg_capture_ru) save_snapshot(ctx, graph, c2);
 
     /* Skip connection */
     struct ggml_tensor * out = ggml_add(ctx, residual, c2);
     ggml_set_name(out, "vae_res_unit");
     if (dbg_slot + 4 < 32)
         g_dbg_tensors[dbg_slot + 4] = out;  /* final output */
+    if (g_dbg_capture_ru) save_snapshot(ctx, graph, out);
     return out;
 }
 
@@ -548,6 +565,9 @@ static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
 
     int out_ch = (int)up_w->ne[1];  /* out_channels */
 
+    /* Enable debug snapshot capture for block.2 residual units */
+    if (block_idx == 2) g_dbg_capture_ru = 1;
+
     /* 3 residual units: block.k.block.{1,3} for k=2,3,4 */
     for (int ri = 0; ri < 3; ri++) {
         int res_idx = 2 + ri;  /* block.2, block.3, block.4 */
@@ -596,6 +616,9 @@ static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
 
         (void)out_ch;
     }
+
+    /* Disable RU debug capture after block.2 */
+    if (block_idx == 2) g_dbg_capture_ru = 0;
 
     return h;
 }
@@ -705,7 +728,11 @@ void vcpm_vae_v2_reset_debug(void) {
     g_dbg_count = 0;
     g_res_debug_idx = RES_UNIT_DBG_START;
     memset(g_dbg_tensors, 0, sizeof(g_dbg_tensors));
+    memset(g_dbg_snapshots, 0, sizeof(g_dbg_snapshots));
+    g_dbg_snap_count = 0;
     g_dbg_upconv_b2 = NULL;
+    g_dbg_capture_ru = 0;
+    g_dbg_ru_counter = 0;
 }
 
 struct ggml_tensor * vcpm_vae_v2_get_upconv_b2(void) {

@@ -114,6 +114,7 @@
     - [x] upconv_transpose1d uses ggml_conv_transpose_1d — **proven correct** (standalone test F32: cos_sim=1.0, max_diff=1.5e-5; F16: cos_sim=1.0, max_diff=0.024).
     - [x] Residual units enabled (DIAG return removed).
     - [x] 3 residual units per block with dilations 1, 3, 9.
+    - [x] **Depthwise conv fix**: replaced manual F32 loop (read `input->data` at graph BUILD time, was uninitialized) with pure ggml-graph ops (`ggml_cpy` for pre-padding + `ggml_conv_1d_dw` + `ggml_add` for bias). Now data accessed at COMPUTE time. Model.2 output RMS=0.930 matches Python 0.930.
   - [x] model.8: Snake activation (alpha → F32 → ggml_sin).
   - [x] model.9: Output Conv1d (k=7, 32→1) — **verified correct**: conv1d_f32 (F32 im2col + F32 matmul) matches manual im2col reference to 0.0006% relative error. Matches original F16 ggml_conv_1d path (identical RMS). The earlier 8× discrepancy was caused by the Python reference having no dilation/wrong im2col layout AND the manual verification using block.7 instead of model.8 (snake-activated) input.
   - [x] model.10: Tanh output bound.
@@ -139,7 +140,7 @@
   - [x] **Export Python reference latents via converter/fixture script** — ✅ Done: 128 .npy files + reference audio in `fixtures/ref/`. Python produces real speech (RMS=0.116, range [-0.66, 0.73]).
   - [ ] **Verify DiT velocity predictions match Python** — next priority.
   - [ ] **Verify CFM integration produces equivalent latents**.
-  - [ ] **Fix autoregressive loop: produce patch_size=4 latent vectors per step** — Root cause of low-amplitude C output: C generates 1 latent vector per autoregressive step, but Python generates `patch_size=4` vectors per step (via CFM decoder). The C VAE decoder is per-time-step correct (1920 samples/step, matching Python's 1920 samples/time-step). The fix is to expand the C generation loop to produce `patch_size` vectors per step.
+  - [x] **Fix autoregressive loop: produce patch_size=4 latent vectors per step** — Fixed in commit `0625814`: `vcpm_gen_step` writes `total_patch_dim = latent_dim * patch_size` floats per step; `vcpm_gen_run` advances by `total_patch_dim` per patch. C now generates `patch_size=4` latent vectors per step (matching Python).
   - [x] **VAE decoder upconv proven correct** — ggml_conv_transpose_1d matches manual computation exactly (F32 cos_sim=1.0). Root cause of previous −0.04 vs −0.10 discrepancy was a buggy manual scatter implementation (broken ggml_view_2d stride + ggml_add).
   - [x] **Latent buffer offset bug fixed** — `vcpm_gen_run` advanced output pointer by only `latent_dim` per patch but `vcpm_gen_step` writes `latent_dim * patch_size` floats. This caused progressive data corruption on all patches after the first. Fixed by advancing by `total_patch_dim` per patch.
   - [ ] Verify VAE decoder reconstructs expected audio from both Python and C latents (need model file to run).
@@ -180,6 +181,10 @@
 - [x] **step_ctx memory exhaustion (F3)**: 3GB pool too small for full prompt eval graph (28 LM layers + 8 RALM layers). Increased to 8GB.
 - [x] **ggml_conv_1d hardcodes F16 im2col (F4)**: Replaced `ggml_conv_1d` with custom `conv1d_f32()` using `ggml_im2col(GGML_TYPE_F32)` + F32 matmul. Depthwise conv also updated for F32 weight expansion. Verified correct: relative error < 0.001% vs manual im2col reference. Output identical to original F16 path (no numerical regression).
 - [x] **Manual model.9 verification used wrong input (F5)**: Test code used `dbg[7]` (block.7 output) instead of `dbg[8]` (model.8 snake output) as model.9 input, causing 56% relative error. Fixed by switching to `dbg[8]`. After fix, manual reference matches C conv1d_f32 output to 0.0006%.
+- [x] **ggml_conv_1d_dw 4D batch matmul produces 8-channel block bug (F4)**: model.0.weight depthwise conv produced only 8 unique values per frame (frames 2-7), grouped in blocks of 8 channels. **Root cause**: ggml_mul_mat with 4D tensors has batch-dimension grouping bug. **Fix**: Replaced ggml_conv_1d_dw with manual F32 triple-loop depthwise conv.
+- [x] **test_vae_only access violation in depthwise_conv1d (F3)**: Data pointer override (`out->data = malloc'd`) confused ggml allocator during graph compute. **Fix**: Use tensor's own data pointer from ggml allocation; fill directly; free temp malloc buffers.
+- [x] **Wrong tensor indexing in test_depthwise_only (F5)**: Used `md[ol * C + ch]` instead of `md[ol + ch * ne0]` (ggml stores dim0 fastest). **This was the ONLY cause of the apparent "mul_mat wrong output" — no ggml bug exists in the diagonal expansion path.** After correcting indexing: max_err=7.45e-09 vs manual dot product.
+- [x] **Manual depthwise_conv1d reads uninitialized graph-build-time data (F4)**: The old `depthwise_conv1d()` accessed `input->data` during graph BUILD to manually pad and compute convolution. But graph operation result tensors have `data=NULL` at build time (allocator manages memory, valid only after graph COMPUTE). This caused the padded input to be all zeros, producing near-zero depthwise conv output (RMS=0.047 vs expected 0.273), causing ~380× amplitude loss in the VAE decoder output. **Fix**: Replaced manual F32 loop with pure ggml-graph operations: `ggml_cpy` for zero pre-padding + `ggml_conv_1d_dw` (depthwise grouped conv) + `ggml_add` for bias. Data now accessed at compute time. Verified: model.2 output RMS = 0.930 (matches Python 0.930), depthwise conv RMS = 0.273 (matches Python 0.273).
 
 ## 15. CI
 

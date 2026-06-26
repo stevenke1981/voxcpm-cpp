@@ -62,10 +62,10 @@
     "shape": [
       1,
       64,
-      28
+      32
     ],
     "dtype": "float32",
-    "size_bytes": 7168,
+    "size_bytes": 8192,
     "path": "ref\\feat_pred_latent.npy"
   },
   "fsq_out.npy": {
@@ -80,12 +80,12 @@
   },
   "generated_feat.npy": {
     "shape": [
-      7,
+      8,
       4,
       64
     ],
     "dtype": "float32",
-    "size_bytes": 7168,
+    "size_bytes": 8192,
     "path": "ref\\generated_feat.npy"
   },
   "input_feat.npy": {
@@ -138,12 +138,12 @@
   "pred_feat_seq_full.npy": {
     "shape": [
       1,
-      7,
+      8,
       4,
       64
     ],
     "dtype": "float32",
-    "size_bytes": 7168,
+    "size_bytes": 8192,
     "path": "ref\\pred_feat_seq_full.npy"
   },
   "residual_enc_inputs.npy": {
@@ -1001,6 +1001,15 @@
     "size_bytes": 4096,
     "path": "ref\\step0006_curr_embed_raw.npy"
   },
+  "step0006_curr_residual_input.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0006_curr_residual_input.npy"
+  },
   "step0006_dit_hidden.npy": {
     "shape": [
       1,
@@ -1009,6 +1018,24 @@
     "dtype": "float32",
     "size_bytes": 8192,
     "path": "ref\\step0006_dit_hidden.npy"
+  },
+  "step0006_lm_hidden_fsq.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0006_lm_hidden_fsq.npy"
+  },
+  "step0006_lm_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0006_lm_hidden_step.npy"
   },
   "step0006_lm_to_dit_proj_out.npy": {
     "shape": [
@@ -1038,6 +1065,15 @@
     "size_bytes": 4096,
     "path": "ref\\step0006_res_to_dit_proj_out.npy"
   },
+  "step0006_residual_hidden_step.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0006_residual_hidden_step.npy"
+  },
   "step0006_stop_hidden.npy": {
     "shape": [
       1,
@@ -1056,6 +1092,101 @@
     "size_bytes": 8,
     "path": "ref\\step0006_stop_logits.npy"
   },
+  "step0007_cfm_cond.npy": {
+    "shape": [
+      1,
+      64,
+      4
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0007_cfm_cond.npy"
+  },
+  "step0007_cfm_pred_feat.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0007_cfm_pred_feat.npy"
+  },
+  "step0007_curr_embed_proj.npy": {
+    "shape": [
+      1,
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0007_curr_embed_proj.npy"
+  },
+  "step0007_curr_embed_raw.npy": {
+    "shape": [
+      1,
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0007_curr_embed_raw.npy"
+  },
+  "step0007_dit_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0007_dit_hidden.npy"
+  },
+  "step0007_lm_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0007_lm_to_dit_proj_out.npy"
+  },
+  "step0007_prefix_feat_cond.npy": {
+    "shape": [
+      1,
+      4,
+      64
+    ],
+    "dtype": "float32",
+    "size_bytes": 1024,
+    "path": "ref\\step0007_prefix_feat_cond.npy"
+  },
+  "step0007_res_to_dit_proj_out.npy": {
+    "shape": [
+      1,
+      1024
+    ],
+    "dtype": "float32",
+    "size_bytes": 4096,
+    "path": "ref\\step0007_res_to_dit_proj_out.npy"
+  },
+  "step0007_stop_hidden.npy": {
+    "shape": [
+      1,
+      2048
+    ],
+    "dtype": "float32",
+    "size_bytes": 8192,
+    "path": "ref\\step0007_stop_hidden.npy"
+  },
+  "step0007_stop_logits.npy": {
+    "shape": [
+      1,
+      2
+    ],
+    "dtype": "float32",
+    "size_bytes": 8,
+    "path": "ref\\step0007_stop_logits.npy"
+  },
   "text_embed.npy": {
     "shape": [
       1,
@@ -1070,10 +1201,10 @@
     "shape": [
       1,
       1,
-      53760
+      61440
     ],
     "dtype": "float32",
-    "size_bytes": 215040,
+    "size_bytes": 245760,
     "path": "ref\\vae_decode_raw.npy"
   },
   "_config": {

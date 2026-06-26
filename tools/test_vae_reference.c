@@ -230,6 +230,104 @@ int main(int argc, char ** argv) {
         }
     }
 
+    /* Dump persistent snapshots (including RU sub-step snapshots) */
+    {
+        int snap_count = vcpm_vae_v2_get_snapshot_count();
+        printf("\n=== Persistent snapshots (ggml_dup copies, immune to buffer reuse) ===\n");
+        for (int i = 0; i < snap_count; i++) {
+            struct ggml_tensor * t = vcpm_vae_v2_get_snapshot(i);
+            if (!t || !t->data) continue;
+            int n = (int)ggml_nelements(t);
+            float * d = (float *)t->data;
+            double sumsq = 0;
+            float mn = d[0], mx = d[0];
+            for (int j = 0; j < n; j++) {
+                sumsq += (double)d[j] * d[j];
+                if (d[j] < mn) mn = d[j];
+                if (d[j] > mx) mx = d[j];
+            }
+            printf("  [snap %2d] ne=[%lld,%lld] n=%d min=%.6f max=%.6f rms=%.6f\n",
+                   i, (long long)t->ne[0], (long long)t->ne[1],
+                   n, mn, mx, sqrt(sumsq / n));
+        }
+        /* Dump all snapshots as .bin files */
+        for (int i = 0; i < snap_count; i++) {
+            struct ggml_tensor * t = vcpm_vae_v2_get_snapshot(i);
+            if (!t || !t->data) continue;
+            char fname[64];
+            snprintf(fname, sizeof(fname), "c_snap_%02d.bin", i);
+            FILE * fp = fopen(fname, "wb");
+            if (fp) {
+                int64_t N = t->ne[0], C = t->ne[1];
+                fwrite(&N, sizeof(N), 1, fp);
+                fwrite(&C, sizeof(C), 1, fp);
+                fwrite(t->data, (size_t)ggml_nbytes(t), 1, fp);
+                fclose(fp);
+                int nn = (int)ggml_nelements(t);
+                float * dd = (float *)t->data;
+                double sumsq = 0;
+                for (int j = 0; j < nn; j++) sumsq += (double)dd[j] * dd[j];
+                printf("  Dumped c_snap_%02d.bin: [%lld,%lld] rms=%.6f\n",
+                       i, (long long)N, (long long)C, sqrt(sumsq/nn));
+            }
+        }
+    }
+
+    /* Dump RU0 depthwise weight for comparison */
+    {
+        struct ggml_tensor * w_ru0dw = vcpm_model_get_tensor(model,
+            "audio_vae.decoder.model.2.block.2.block.1.weight.weight");
+        if (w_ru0dw && w_ru0dw->data) {
+            printf("\n=== RU0 Depthwise Weight ===\n");
+            printf("  ne=[%lld,%lld,%lld,%lld] type=%d nbytes=%zu\n",
+                   (long long)w_ru0dw->ne[0], (long long)w_ru0dw->ne[1],
+                   (long long)w_ru0dw->ne[2], (long long)w_ru0dw->ne[3],
+                   w_ru0dw->type, (size_t)ggml_nbytes(w_ru0dw));
+            size_t nw = (size_t)ggml_nelements(w_ru0dw);
+            float * w_f32 = (float *)malloc(nw * sizeof(float));
+            if (w_f32) {
+                if (w_ru0dw->type == GGML_TYPE_F16) {
+                    ggml_fp16_t * src = (ggml_fp16_t *)w_ru0dw->data;
+                    for (size_t i = 0; i < nw; i++)
+                        w_f32[i] = ggml_fp16_to_fp32(src[i]);
+                } else {
+                    memcpy(w_f32, w_ru0dw->data, nw * sizeof(float));
+                }
+                double sumsq = 0;
+                for (size_t i = 0; i < nw; i++) sumsq += (double)w_f32[i] * w_f32[i];
+                printf("  Weight RMS: %.8f\n", sqrt(sumsq / nw));
+                printf("  First 7 (ch0 kernel): ");
+                for (int i = 0; i < 7; i++) printf("%.8f ", w_f32[i]);
+                printf("\n");
+                printf("  Next 7 (ch1 kernel): ");
+                for (int i = 7; i < 14; i++) printf("%.8f ", w_f32[i]);
+                printf("\n");
+                /* Save weight as binary */
+                FILE * fw = fopen("c_ru0_dw_weight.f32", "wb");
+                if (fw) {
+                    fwrite(w_f32, sizeof(float), nw, fw);
+                    fclose(fw);
+                    printf("  Saved c_ru0_dw_weight.f32 (%zu floats)\n", nw);
+                }
+                free(w_f32);
+            }
+        }
+        /* Also dump bias for RU0 depthwise */
+        struct ggml_tensor * b_ru0dw = vcpm_model_get_tensor(model,
+            "audio_vae.decoder.model.2.block.2.block.1.bias");
+        if (b_ru0dw && b_ru0dw->data) {
+            size_t nb = (size_t)ggml_nelements(b_ru0dw);
+            float b_first = 0;
+            if (b_ru0dw->type == GGML_TYPE_F32) {
+                b_first = ((float *)b_ru0dw->data)[0];
+            } else if (b_ru0dw->type == GGML_TYPE_F16) {
+                b_first = ggml_fp16_to_fp32(((ggml_fp16_t *)b_ru0dw->data)[0]);
+            }
+            printf("  Bias[0] = %.8f (ne=[%lld] type=%d)\n", b_first,
+                   (long long)b_ru0dw->ne[0], b_ru0dw->type);
+        }
+    }
+
     ggml_free(ctx);
     vcpm_model_free(model);
     free(ref_latent);
