@@ -82,6 +82,8 @@ add_library(voxcpm STATIC
     src/cfm_solver.c
     src/audio_vae.c
     src/audio_vae_v2.c
+    src/audio_vae_v2_encoder.c
+    src/audio_vae_v2_decoder.c
     src/gen_init.c
     src/gen_prompt.c
     src/gen_step.c

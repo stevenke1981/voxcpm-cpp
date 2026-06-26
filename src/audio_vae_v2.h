@@ -139,4 +139,73 @@ struct ggml_tensor * vcpm_vae_v2_get_upconv_b2(void);
 int  vcpm_vae_v2_get_snapshot_count(void);
 struct ggml_tensor * vcpm_vae_v2_get_snapshot(int i);
 
+/* Debug global arrays (shared between audio_vae_v2.c, encoder, and decoder) */
+extern struct ggml_tensor * g_dbg_tensors[32];
+extern int g_dbg_count;
+extern struct ggml_tensor * g_dbg_upconv_b2;
+extern int g_dbg_capture_ru;
+extern int g_dbg_ru_counter;
+
+/* ================================================================
+ * Internal helpers (shared between encoder, decoder, and common code)
+ * ================================================================ */
+
+/* Weight resolution by canonical tensor name */
+struct ggml_tensor * vcpm_vae_tensor_by_name(struct ggml_context * ctx,
+                                              const struct vcpm_model * model,
+                                              const char * name);
+
+/* F32-precision conv1d layer with bias (auto depthwise vs regular) */
+struct ggml_tensor * vcpm_vae_conv1d_layer(struct ggml_context * ctx,
+                                            struct ggml_cgraph * graph,
+                                            struct ggml_tensor * weight,
+                                            struct ggml_tensor * bias,
+                                            struct ggml_tensor * input,
+                                            int stride, int pad, int dilate,
+                                            const struct vcpm_model * model);
+
+/* ConvTranspose1d upsampling with causal trim */
+struct ggml_tensor * vcpm_vae_upconv_transpose1d(struct ggml_context * ctx,
+                                                  struct ggml_cgraph * graph,
+                                                  struct ggml_tensor * weight,
+                                                  struct ggml_tensor * bias,
+                                                  struct ggml_tensor * input,
+                                                  int stride);
+
+/* Convert alpha tensor to F32 2D (broadcast-safe) */
+struct ggml_tensor * vcpm_vae_alpha_to_f32(struct ggml_context * ctx,
+                                            struct ggml_tensor * alpha);
+
+/* Snake activation: snake(x, a) = x + sin²(a*x) / a */
+struct ggml_tensor * vcpm_vae_snake_activation(struct ggml_context * ctx,
+                                                struct ggml_tensor * h,
+                                                struct ggml_tensor * alpha_f32);
+
+/* Residual unit: Snake → Depthwise Conv1d → Snake → Pointwise Conv1d + Skip */
+struct ggml_tensor * vcpm_vae_residual_unit(struct ggml_context * ctx,
+                                             struct ggml_cgraph * graph,
+                                             struct ggml_tensor * h,
+                                             struct ggml_tensor * conv1_w,
+                                             struct ggml_tensor * conv1_b,
+                                             struct ggml_tensor * alpha0_t,
+                                             struct ggml_tensor * conv2_w,
+                                             struct ggml_tensor * conv2_b,
+                                             struct ggml_tensor * alpha2_t,
+                                             const struct vcpm_model * model,
+                                             int dilation);
+
+/* Save a persistent debug snapshot (included in graph via ggml_build_forward_expand) */
+void vcpm_vae_save_snapshot(struct ggml_context * ctx,
+                             struct ggml_cgraph * graph,
+                             struct ggml_tensor * t);
+
+/* Extract sr_cond embedding vector from [num_buckets, input_dim] tensor */
+struct ggml_tensor * vcpm_vae_sr_cond_embedding_extract(struct ggml_context * ctx,
+                                                          struct ggml_tensor * embed_weight,
+                                                          int idx);
+
+/* Compute sr_cond_idx via bucketize(sample_rate, sr_bin_boundaries) */
+int vcpm_vae_compute_sr_cond_idx(struct ggml_tensor * sr_bin_boundaries,
+                                  int output_sample_rate);
+
 #endif /* VCPM_AUDIO_VAE_V2_H */
