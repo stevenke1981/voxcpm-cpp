@@ -501,101 +501,105 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     ggml_free(post_ctx);
     free(x_data);
 
-    /*
-     * ========== PHASE 4: LM update (encode output → LM → FSQ → RALM) ==========
-     *
-     * Python ordering (after CFM/stop):
-     *   curr_embed = enc_to_lm_proj(feat_encoder(pred_feat))
-     *   lm_hidden = base_lm.forward_step(curr_embed)
-     *   lm_hidden = FSQ(lm_hidden)
-     *   residual_hidden = residual_lm.forward_step(concat(lm_hidden, curr_embed))
-     */
+    /* Phase 4: LM update (shared with reference audio conditioning) */
     {
-        size_t update_mem = 3ULL * 1024 * 1024 * 1024;
-        struct ggml_init_params update_params = {
-            .mem_size   = update_mem,
-            .mem_buffer = NULL,
-            .no_alloc   = false,
-        };
-        struct ggml_context * update_ctx = ggml_init(update_params);
-        if (!update_ctx) return VCPM_ERR_OOM;
-
-        ggml_graph_clear(graph);
-
-        struct ggml_tensor * fe_out = NULL;
-        struct ggml_tensor * audio_embed = gen_build_audio_embed(state, update_ctx, graph, &fe_out);
-        if (!audio_embed) { ggml_free(update_ctx); return VCPM_ERR_BACKEND; }
-        ggml_set_name(audio_embed, "update_audio_embed");
-        VCPM_LOG_SHAPE("update.audio_embed", audio_embed);
-
-        vcpm_minicpm4_config base_cfg;
-        vcpm_minicpm4_config_from_model(&base_cfg,
-                                         hidden_size, state->n_base_layers,
-                                         state->n_base_heads, state->n_base_kv_heads,
-                                         state->intermediate_size, state->head_dim,
-                                         state->rms_norm_eps, state->rope_theta,
-                                         state->max_seq_len, state->vocab_size,
-                                         0,
-                                         state->scale_depth);
-
-        vcpm_minicpm4_weights base_w;
-        base_w.embed_tokens_weight = state->base_embed_tokens;
-        base_w.norm_weight         = state->base_norm;
-        base_w.lm_head_weight      = state->base_lm_head;
-        base_w.layer_weights       = state->base_layer_weights;
-
-        vcpm_kv_cache base_cache;
-        base_cache.layers     = (vcpm_kv_cache_unit *)state->base_kv_cache;
-        base_cache.n_layers   = state->n_base_layers;
-        base_cache.max_seq_len = state->max_seq_len;
-
-        struct ggml_tensor * base_hidden = vcpm_minicpm4_forward(update_ctx, graph,
-                                                                   audio_embed, &base_cfg,
-                                                                   &base_w, &base_cache,
-                                                                   fill_pos);
-        if (!base_hidden) { ggml_free(update_ctx); return VCPM_ERR_BACKEND; }
-        ggml_set_name(base_hidden, "update_base_hidden");
-        VCPM_LOG_SHAPE("update.base_hidden", base_hidden);
-
-        struct ggml_tensor * fsq_out = gen_fsq_hidden(state, update_ctx, graph, base_hidden);
-        ggml_set_name(fsq_out, "update_fsq_out");
-
-        if (fsq_out) ggml_build_forward_expand(graph, fsq_out);
-        ggml_graph_compute_with_ctx(update_ctx, graph, 1);
-
-        if (state->lm_hidden_state && fsq_out && fsq_out->data) {
-            memcpy(state->lm_hidden_state, fsq_out->data,
-                   (size_t)hidden_size * sizeof(float));
-        }
-
-        if (state->last_lm_hidden && fsq_out && fsq_out->data) {
-            memcpy(state->last_lm_hidden, fsq_out->data,
-                   (size_t)hidden_size * sizeof(float));
-        }
-
-        struct ggml_tensor * fusion_in = ggml_concat(update_ctx, fsq_out, audio_embed, 0);
-        ggml_set_name(fusion_in, "update_fusion_in");
-        struct ggml_tensor * ralm_in = vcpm_linear_proj(update_ctx, fusion_in,
-                                                          state->fusion_concat_proj);
-        ggml_set_name(ralm_in, "update_ralm_in");
-
-        struct ggml_tensor * ralm_hidden = gen_forward_ralm(state, update_ctx, graph,
-                                                              ralm_in, fill_pos);
-        if (ralm_hidden) {
-            ggml_set_name(ralm_hidden, "update_ralm_hidden");
-            ggml_build_forward_expand(graph, ralm_hidden);
-        }
-
-        ggml_graph_compute_with_ctx(update_ctx, graph, 1);
-
-        if (state->residual_hidden_state && ralm_hidden && ralm_hidden->data) {
-            memcpy(state->residual_hidden_state, ralm_hidden->data,
-                   (size_t)state->res_hidden_size * sizeof(float));
-        }
-
-        ggml_graph_clear(graph);
-        ggml_free(update_ctx);
+        vcpm_status st = gen_lm_update(state, fill_pos);
+        if (st != VCPM_OK) return st;
     }
 
+    return VCPM_OK;
+}
+
+/* ========== PHASE 4 extraction: LM update ========== */
+
+vcpm_status gen_lm_update(vcpm_generate_state * state,
+                           int fill_pos) {
+    if (!state) return VCPM_ERR_INVALID_ARG;
+
+    size_t update_mem = 3ULL * 1024 * 1024 * 1024;
+    struct ggml_init_params update_params = {
+        .mem_size   = update_mem,
+        .mem_buffer = NULL,
+        .no_alloc   = false,
+    };
+    struct ggml_context * update_ctx = ggml_init(update_params);
+    if (!update_ctx) return VCPM_ERR_OOM;
+
+    struct ggml_cgraph * graph = state->step_graph;
+    ggml_graph_clear(graph);
+
+    struct ggml_tensor * fe_out = NULL;
+    struct ggml_tensor * audio_embed = gen_build_audio_embed(state, update_ctx, graph, &fe_out);
+    if (!audio_embed) { ggml_free(update_ctx); return VCPM_ERR_BACKEND; }
+    ggml_set_name(audio_embed, "update_audio_embed");
+    VCPM_LOG_SHAPE("update.audio_embed", audio_embed);
+
+    vcpm_minicpm4_config base_cfg;
+    vcpm_minicpm4_config_from_model(&base_cfg,
+                                     state->hidden_size, state->n_base_layers,
+                                     state->n_base_heads, state->n_base_kv_heads,
+                                     state->intermediate_size, state->head_dim,
+                                     state->rms_norm_eps, state->rope_theta,
+                                     state->max_seq_len, state->vocab_size,
+                                     0,
+                                     state->scale_depth);
+
+    vcpm_minicpm4_weights base_w;
+    base_w.embed_tokens_weight = state->base_embed_tokens;
+    base_w.norm_weight         = state->base_norm;
+    base_w.lm_head_weight      = state->base_lm_head;
+    base_w.layer_weights       = state->base_layer_weights;
+
+    vcpm_kv_cache base_cache;
+    base_cache.layers     = (vcpm_kv_cache_unit *)state->base_kv_cache;
+    base_cache.n_layers   = state->n_base_layers;
+    base_cache.max_seq_len = state->max_seq_len;
+
+    struct ggml_tensor * base_hidden = vcpm_minicpm4_forward(update_ctx, graph,
+                                                               audio_embed, &base_cfg,
+                                                               &base_w, &base_cache,
+                                                               fill_pos);
+    if (!base_hidden) { ggml_free(update_ctx); return VCPM_ERR_BACKEND; }
+    ggml_set_name(base_hidden, "update_base_hidden");
+    VCPM_LOG_SHAPE("update.base_hidden", base_hidden);
+
+    struct ggml_tensor * fsq_out = gen_fsq_hidden(state, update_ctx, graph, base_hidden);
+    ggml_set_name(fsq_out, "update_fsq_out");
+
+    if (fsq_out) ggml_build_forward_expand(graph, fsq_out);
+    ggml_graph_compute_with_ctx(update_ctx, graph, 1);
+
+    if (state->lm_hidden_state && fsq_out && fsq_out->data) {
+        memcpy(state->lm_hidden_state, fsq_out->data,
+               (size_t)state->hidden_size * sizeof(float));
+    }
+
+    if (state->last_lm_hidden && fsq_out && fsq_out->data) {
+        memcpy(state->last_lm_hidden, fsq_out->data,
+               (size_t)state->hidden_size * sizeof(float));
+    }
+
+    struct ggml_tensor * fusion_in = ggml_concat(update_ctx, fsq_out, audio_embed, 0);
+    ggml_set_name(fusion_in, "update_fusion_in");
+    struct ggml_tensor * ralm_in = vcpm_linear_proj(update_ctx, fusion_in,
+                                                      state->fusion_concat_proj);
+    ggml_set_name(ralm_in, "update_ralm_in");
+
+    struct ggml_tensor * ralm_hidden = gen_forward_ralm(state, update_ctx, graph,
+                                                          ralm_in, fill_pos);
+    if (ralm_hidden) {
+        ggml_set_name(ralm_hidden, "update_ralm_hidden");
+        ggml_build_forward_expand(graph, ralm_hidden);
+    }
+
+    ggml_graph_compute_with_ctx(update_ctx, graph, 1);
+
+    if (state->residual_hidden_state && ralm_hidden && ralm_hidden->data) {
+        memcpy(state->residual_hidden_state, ralm_hidden->data,
+               (size_t)state->res_hidden_size * sizeof(float));
+    }
+
+    ggml_graph_clear(graph);
+    ggml_free(update_ctx);
     return VCPM_OK;
 }

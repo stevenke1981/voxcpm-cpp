@@ -107,8 +107,8 @@ int main(void) {
     fclose(ref);
     gp.reference_audio_path = "test_reference.wav";
     st = vcpm_generate(ctx, &gp, &audio);
-    assert(st == VCPM_ERR_NOT_IMPLEMENTED && "existing reference audio should not fall back to zero-shot");
-    assert(strstr(vcpm_last_error(ctx), "not implemented") != NULL && "error should mention not implemented");
+    assert(st == VCPM_ERR_IO && "malformed reference WAV should return IO error");
+    assert(strstr(vcpm_last_error(ctx), "reference audio") != NULL && "error should mention reference audio");
     remove("test_reference.wav");
     vcpm_free(ctx);
 

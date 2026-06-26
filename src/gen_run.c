@@ -91,11 +91,54 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
         if (st != VCPM_OK) return st;
     }
 
-    /* Step 2: Generate audio patches one at a time */
+    /* Step 2: Audio patches — first reference features (if any), then generation */
     int total_patch_dim = latent_dim * patch_size;
     int first_gen_pos = first_audio_pos;
+    /* Reference latent processing: group patch_size latents per reference patch */
+    int n_ref_patches = (state->ref_latent_data && state->n_ref_latents > 0)
+                        ? state->n_ref_latents / patch_size : 0;
+    /* Also track remaining latents that don't fill a full patch */
+    int ref_remainder = (state->ref_latent_data && state->n_ref_latents > 0)
+                        ? state->n_ref_latents % patch_size : 0;
+    int ref_consumed_latents = 0;
+
     for (int pos = first_gen_pos; pos < seq_len && n_patches < effective_max; pos++) {
         if (audio_mask[pos] != 1) continue;
+
+        /* Check if this is a reference feature position (token_id == 0 with audio_mask=1)
+         * Process all reference latents (full patches + remainder) before generation */
+        int is_ref_pos = (token_ids[pos] == 0 && state->ref_latent_data &&
+                          ref_consumed_latents < state->n_ref_latents);
+        if (is_ref_pos) {
+            /* Fill prev_patch with patch_size reference latents */
+            int patch_size_fe = state->model ? state->model->config.patch_size : 1;
+            if (patch_size_fe < 1) patch_size_fe = 1;
+            int prev_dim = state->enc_feat_dim * patch_size_fe;
+            int src_dim = state->ref_feat_dim;
+            int n_to_copy = patch_size_fe;  /* copy patch_size latents per position */
+
+            /* Don't copy more than remaining */
+            int remaining = state->n_ref_latents - ref_consumed_latents;
+            if (n_to_copy > remaining) n_to_copy = remaining;
+
+            memset(state->prev_patch, 0, (size_t)prev_dim * sizeof(float));
+            for (int k = 0; k < n_to_copy; k++) {
+                float * src = (float *)state->ref_latent_data +
+                              (size_t)(ref_consumed_latents + k) * src_dim;
+                float * dst = state->prev_patch + (size_t)k * src_dim;
+                memcpy(dst, src, (size_t)src_dim * sizeof(float));
+            }
+            ref_consumed_latents += n_to_copy;
+
+            /* Run LM update to condition on this reference feature patch */
+            if (n_to_copy > 0) {
+                vcpm_status st = gen_lm_update(state, pos);
+                if (st != VCPM_OK) return st;
+            }
+            continue;
+        }
+
+        /* Normal generation position */
         float * patch = latent_out + (size_t)n_patches * (size_t)total_patch_dim;
         vcpm_status st = vcpm_gen_step(state, token_ids, pos, gen_params, patch);
         if (st != VCPM_OK) return st;

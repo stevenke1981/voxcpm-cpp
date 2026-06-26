@@ -176,6 +176,16 @@ typedef struct vcpm_generate_state {
     vcpm_audio_vae_config vae_cfg;
     vcpm_audio_vae_v2_config vae_v2_cfg;  /* V2 decoder config */
 
+    /* Reference audio latents (VAE-encoded, for voice cloning).
+     * Set before calling gen_run / gen_prompt_eval for reference sequences.
+     * Each latent vector has ref_feat_dim floats.
+     * ref_latent_data is external (not owned by state). */
+    const float * ref_latent_data;   /* [n_ref_latents * ref_feat_dim] VAE-encoded reference latents */
+    int n_ref_latents;               /* number of reference latent vectors */
+    int ref_feat_dim;                /* dimension of each reference latent (typically latent_dim) */
+    int ref_first_pos;               /* sequence position where reference features start */
+    int ref_n_seq_positions;         /* number of sequence positions for reference features */
+
     /* Opaque model pointer for weight loading */
     const struct vcpm_model * model;
 } vcpm_generate_state;
@@ -309,6 +319,24 @@ int gen_prompt_eval(vcpm_generate_state * state,
                      struct ggml_cgraph * graph,
                      const int32_t * token_ids,
                      int n_text_tokens);
+
+/* LM update: encode prev_patch, run base_lm forward_step, FSQ, RALM forward_step.
+ *
+ * Phases 3-4 of gen_step: given state->prev_patch containing the current
+ * audio latent, runs feat_encoder → enc_to_lm_proj → base_lm → FSQ →
+ * fusion → RALM. Updates lm_hidden_state, residual_hidden_state,
+ * last_lm_hidden, and populates KV caches at fill_pos.
+ *
+ * This is the common "consume one audio token" function used by both
+ * zero-shot generation (called from gen_step after CFM) and reference
+ * audio conditioning (called from gen_run with pre-computed latents).
+ *
+ * Defined in gen_step.c, called by gen_run.c and gen_step.c.
+ */
+vcpm_status gen_lm_update(vcpm_generate_state * state,
+                           int fill_pos);
+
+
 
 /* Stop predictor: compute stop probability from last_lm_hidden.
  * Returns [0,1] or -1 on error.

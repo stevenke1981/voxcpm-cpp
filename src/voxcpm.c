@@ -3,6 +3,10 @@
 #include "tokenizer.h"
 #include "sequence.h"
 #include "generate.h"
+#include "audio_vae_v2.h"
+
+#include "ggml.h"
+#include "ggml-cpu.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -184,7 +188,12 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
     }
     memset(out_audio, 0, sizeof(*out_audio));
 
-    if (params->reference_audio_path && params->reference_audio_path[0]) {
+    int is_reference = (params->reference_audio_path && params->reference_audio_path[0]);
+    float * ref_latents = NULL;
+    int n_ref_latents = 0;
+    int ref_latent_dim = 0;
+
+    if (is_reference) {
         if (!params->consent_confirmed) {
             vcpm_set_error(ctx, "reference audio generation requires consent confirmation");
             return VCPM_ERR_INVALID_ARG;
@@ -193,8 +202,160 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
             vcpm_set_error(ctx, "reference audio file not found");
             return VCPM_ERR_INVALID_ARG;
         }
-        vcpm_set_error(ctx, "reference voice cloning is not implemented in this build");
-        return VCPM_ERR_NOT_IMPLEMENTED;
+
+        /* ---- Read reference WAV ---- */
+        float * ref_wav = NULL;
+        int ref_sr = 0, ref_ch = 0;
+        int64_t ref_n = vcpm_read_wav_f32(params->reference_audio_path,
+                                            &ref_wav, &ref_sr, &ref_ch);
+        if (ref_n <= 0 || !ref_wav) {
+            vcpm_set_error(ctx, "failed to read reference audio WAV");
+            return VCPM_ERR_IO;
+        }
+
+        /* ---- Convert to mono ---- */
+        float * ref_mono = ref_wav;
+        int64_t ref_mono_n = ref_n;
+        if (ref_ch > 1) {
+            /* Simple channel average */
+            ref_mono = (float *)malloc((size_t)ref_n * sizeof(float));
+            if (!ref_mono) { free(ref_wav); return VCPM_ERR_OOM; }
+            int64_t per_ch = ref_n / ref_ch;
+            for (int64_t i = 0; i < per_ch; i++) {
+                double sum = 0.0;
+                for (int c = 0; c < ref_ch; c++) {
+                    sum += ref_wav[(size_t)i * ref_ch + c];
+                }
+                ref_mono[i] = (float)(sum / ref_ch);
+            }
+            ref_mono_n = per_ch;
+            free(ref_wav);
+        }
+
+        /* ---- Resample to VAE sample rate (16kHz) ---- */
+        float * ref_16k = ref_mono;
+        int64_t ref_16k_n = ref_mono_n;
+        int vae_sr = ctx->model->config.vae_sample_rate;
+        if (vae_sr <= 0) vae_sr = 16000;
+        if (ref_sr != vae_sr) {
+            ref_16k_n = vcpm_resample_f32(ref_mono, ref_mono_n, ref_sr, vae_sr, &ref_16k);
+            if (ref_mono != ref_wav) free(ref_mono); /* only if we allocated mono buffer */
+        }
+        if (ref_16k_n <= 0 || !ref_16k) {
+            if (ref_16k && ref_16k != ref_wav) free(ref_16k);
+            vcpm_set_error(ctx, "reference audio resampling failed");
+            return VCPM_ERR_IO;
+        }
+
+        /* ---- VAE-encode reference audio ---- */
+        int latent_dim = ctx->model->config.vae_latent_dim > 0
+                        ? ctx->model->config.vae_latent_dim : 64;
+
+        /* Allocate VAE encoder context */
+        size_t vae_enc_mem = 0x200000000ULL; /* 8 GB */
+        struct ggml_init_params vae_enc_params = {
+            .mem_size   = vae_enc_mem,
+            .mem_buffer = NULL,
+            .no_alloc   = false,
+        };
+        struct ggml_context * vae_enc_ctx = ggml_init(vae_enc_params);
+        if (!vae_enc_ctx) {
+            if (ref_16k != ref_wav) free(ref_16k);
+            vcpm_set_error(ctx, "out of memory for VAE encoder");
+            return VCPM_ERR_OOM;
+        }
+        struct ggml_cgraph * vae_enc_graph = ggml_new_graph_custom(vae_enc_ctx, 65536, false);
+        if (!vae_enc_graph) {
+            ggml_free(vae_enc_ctx);
+            if (ref_16k != ref_wav) free(ref_16k);
+            vcpm_set_error(ctx, "out of memory for VAE encoder graph");
+            return VCPM_ERR_OOM;
+        }
+
+        /* Create audio tensor [1, N_samples] */
+        struct ggml_tensor * audio_t = ggml_new_tensor_2d(vae_enc_ctx, GGML_TYPE_F32,
+                                                            1, (int)ref_16k_n);
+        if (!audio_t || !audio_t->data) {
+            ggml_free(vae_enc_ctx);
+            if (ref_16k != ref_wav) free(ref_16k);
+            vcpm_set_error(ctx, "out of memory for VAE encoder input");
+            return VCPM_ERR_OOM;
+        }
+        memcpy(audio_t->data, ref_16k, (size_t)ref_16k_n * sizeof(float));
+        ggml_set_name(audio_t, "ref_audio_input");
+
+        /* Get VAE V2 config from default + model overrides */
+        vcpm_audio_vae_v2_config vae_enc_cfg;
+        {
+            int default_enc_rates[4] = {2, 5, 8, 8};
+            vcpm_audio_vae_v2_config_fill(&vae_enc_cfg,
+                                           ctx->model->config.vae_latent_dim,
+                                           128, 2048,
+                                           ctx->model->config.vae_decoder_rates,
+                                           default_enc_rates,
+                                           ctx->model->config.vae_sample_rate,
+                                           ctx->model->config.vae_out_sample_rate);
+        }
+
+        struct ggml_tensor * logvar = NULL;
+        struct ggml_tensor * mean = vcpm_vae_v2_encode(vae_enc_ctx, vae_enc_graph,
+                                                         audio_t, ctx->model,
+                                                         &vae_enc_cfg, &logvar);
+
+        if (!mean) {
+            ggml_free(vae_enc_ctx);
+            if (ref_16k != ref_wav) free(ref_16k);
+            vcpm_set_error(ctx, "VAE encoder failed");
+            return VCPM_ERR_BACKEND;
+        }
+
+        ggml_build_forward_expand(vae_enc_graph, mean);
+        if (logvar) ggml_build_forward_expand(vae_enc_graph, logvar);
+
+        struct ggml_cplan vae_enc_plan = ggml_graph_plan(vae_enc_graph, 1, NULL);
+        void * vae_enc_work = malloc(vae_enc_plan.work_size);
+        if (!vae_enc_work) {
+            ggml_free(vae_enc_ctx);
+            if (ref_16k != ref_wav) free(ref_16k);
+            vcpm_set_error(ctx, "out of memory for VAE encoder work buffer");
+            return VCPM_ERR_OOM;
+        }
+        vae_enc_plan.work_data = (uint8_t *)vae_enc_work;
+        ggml_graph_compute(vae_enc_graph, &vae_enc_plan);
+        free(vae_enc_work);
+
+        /* Extract reference latents from mean tensor */
+        if (!mean->data) {
+            ggml_free(vae_enc_ctx);
+            if (ref_16k != ref_wav) free(ref_16k);
+            vcpm_set_error(ctx, "VAE encoder produced empty output");
+            return VCPM_ERR_BACKEND;
+        }
+
+        n_ref_latents = (int)mean->ne[1];  /* number of latent time steps */
+        ref_latent_dim = (int)mean->ne[0]; /* latent dimension */
+        if (n_ref_latents <= 0 || ref_latent_dim <= 0) {
+            ggml_free(vae_enc_ctx);
+            if (ref_16k != ref_wav) free(ref_16k);
+            vcpm_set_error(ctx, "VAE encoder produced invalid shape");
+            return VCPM_ERR_BACKEND;
+        }
+
+        ref_latents = (float *)malloc((size_t)n_ref_latents * (size_t)ref_latent_dim * sizeof(float));
+        if (!ref_latents) {
+            ggml_free(vae_enc_ctx);
+            if (ref_16k != ref_wav) free(ref_16k);
+            vcpm_set_error(ctx, "out of memory for reference latents");
+            return VCPM_ERR_OOM;
+        }
+        memcpy(ref_latents, mean->data,
+               (size_t)n_ref_latents * (size_t)ref_latent_dim * sizeof(float));
+
+        ggml_free(vae_enc_ctx);
+        if (ref_16k != ref_wav) free(ref_16k);
+
+        fprintf(stderr, "VCPM_DEBUG reference audio: %d latents, dim=%d, audio_len=%lld\n",
+                n_ref_latents, ref_latent_dim, (long long)ref_16k_n);
     }
 
     if (!ctx->model_loaded) {
@@ -216,7 +377,7 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         return VCPM_ERR_INVALID_ARG;
     }
 
-    /* Build sequence (zero-shot for now) */
+    /* Build sequence (zero-shot or reference) */
     vcpm_seq_builder builder;
     vcpm_seq_builder_init(&builder,
                           ctx->model->config.audio_start_token,
@@ -228,7 +389,14 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
                           ctx->model->config.max_seq_len);
 
     vcpm_sequence seq;
-    int ret = vcpm_seq_build_zero_shot(&builder, token_ids, n_tokens, &seq);
+    int ret;
+    if (is_reference) {
+        ret = vcpm_seq_build_reference(&builder, token_ids, n_tokens, &seq);
+        fprintf(stderr, "VCPM_DEBUG reference sequence: len=%d audio_start=%d n_ref_pos=%d\n",
+                seq.length, seq.audio_start_pos, builder.patch_size * 2);
+    } else {
+        ret = vcpm_seq_build_zero_shot(&builder, token_ids, n_tokens, &seq);
+    }
     if (ret != 0) {
         vcpm_set_error(ctx, "sequence building failed");
         return VCPM_ERR_INVALID_ARG;
@@ -252,6 +420,13 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
     if (!gen_state) {
         vcpm_set_error(ctx, "failed to initialize generation state");
         return VCPM_ERR_BACKEND;
+    }
+
+    /* Set reference audio latents if cloning */
+    if (is_reference && ref_latents && n_ref_latents > 0) {
+        gen_state->ref_latent_data = ref_latents;
+        gen_state->n_ref_latents   = n_ref_latents;
+        gen_state->ref_feat_dim    = ref_latent_dim;
     }
 
     int max_patches = params->max_len > 0 ? params->max_len : 4096;

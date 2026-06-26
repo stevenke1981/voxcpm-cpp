@@ -476,19 +476,57 @@ static int cmd_clone(int argc, char ** argv) {
     }
     fclose(f);
 
-    /* Not implemented yet */
-    (void)model_path;
-    (void)text;
-    (void)ref_audio;
-    (void)out_path;
-    (void)cfg;
-    (void)steps;
-    (void)max_len;
-    (void)backend_str;
-    (void)threads;
-    (void)use_pcm16;
-    fprintf(stderr, "error: reference voice cloning is not implemented in this build\n");
-    return 4;
+    /* ---- Load model ---- */
+    vcpm_model_params mparams = vcpm_default_model_params();
+    apply_model_params(&mparams, backend_str, threads);
+
+    vcpm_context * ctx = vcpm_load_model(model_path, &mparams);
+    if (!ctx || !vcpm_model_is_loaded(ctx)) {
+        fprintf(stderr, "error: %s\n", ctx ? vcpm_last_error(ctx) : "failed to load model");
+        if (ctx) vcpm_free(ctx);
+        return 3;
+    }
+
+    /* ---- Generate with reference audio ---- */
+    vcpm_generation_params gparams = vcpm_default_generation_params();
+    gparams.text                 = text;
+    gparams.reference_audio_path = ref_audio;
+    gparams.consent_confirmed    = consent;
+    gparams.cfg_value            = cfg;
+    gparams.inference_steps      = steps;
+    gparams.max_len              = max_len;
+
+    struct vcpm_audio audio;
+    vcpm_status st = vcpm_generate(ctx, &gparams, &audio);
+    if (st != VCPM_OK) {
+        fprintf(stderr, "error: generation failed: %s\n", vcpm_last_error(ctx));
+        vcpm_free(ctx);
+        return 4;
+    }
+    vcpm_free(ctx);
+
+    /* ---- Write WAV ---- */
+    int write_ok;
+    if (use_pcm16) {
+        write_ok = vcpm_write_wav_pcm16(out_path, audio.samples,
+                                         audio.sample_rate,
+                                         audio.n_channels,
+                                         audio.n_samples);
+    } else {
+        write_ok = vcpm_write_wav_f32(out_path, audio.samples,
+                                       audio.sample_rate,
+                                       audio.n_channels,
+                                       audio.n_samples);
+    }
+    vcpm_audio_free(&audio);
+
+    if (write_ok != 0) {
+        fprintf(stderr, "error: failed to write WAV: %s\n", out_path);
+        return 5;
+    }
+    fprintf(stderr, "Wrote %s (%zu samples, %d Hz)\n",
+            out_path, audio.n_samples, audio.sample_rate);
+    return 0;
 }
 
 /* ================================================================
