@@ -101,24 +101,38 @@ int main(int argc, char ** argv) {
     {
         FILE * f = fopen("fixtures/ref/generated_feat.npy", "rb");
         if (f) {
-            /* Skip .npy header (128 bytes typical) */
-            unsigned char hdr[256];
-            size_t hdr_len = 0;
-            while (hdr_len < sizeof(hdr)) {
-                int c = fgetc(f);
-                if (c == EOF) break;
-                hdr[hdr_len++] = (unsigned char)c;
-                if (hdr_len >= 3 && hdr[hdr_len-3] == '\n' && hdr[hdr_len-2] == '\r' && hdr[hdr_len-1] == '\n')
-                    break; /* header end */
-                if (hdr_len >= 2 && hdr[hdr_len-2] == '\n' && hdr[hdr_len-1] == '\n')
-                    break; /* header end (unix) */
+            /* Parse .npy binary header (v1.0 format only) */
+            unsigned char magic[6];
+            size_t hdr_data_offset = 0;
+            if (fread(magic, 1, 6, f) == 6 &&
+                magic[0] == 0x93 && memcmp(magic+1, "NUMPY", 5) == 0) {
+                int ver_major = fgetc(f);
+                int ver_minor = fgetc(f);
+                if (ver_major == 1) {
+                    unsigned char len_buf[2];
+                    if (fread(len_buf, 1, 2, f) == 2) {
+                        uint32_t hdr_len = (uint32_t)len_buf[0] | ((uint32_t)len_buf[1] << 8);
+                        hdr_data_offset = 6 + 1 + 1 + 2 + hdr_len; /* magic + ver_major + ver_minor + len_field + hdr_text */
+                    }
+                } else {
+                    unsigned char len_buf[4];
+                    if (fread(len_buf, 1, 4, f) == 4) {
+                        uint32_t hdr_len = (uint32_t)len_buf[0] | ((uint32_t)len_buf[1] << 8)
+                                         | ((uint32_t)len_buf[2] << 16) | ((uint32_t)len_buf[3] << 24);
+                        hdr_data_offset = 6 + 1 + 1 + 4 + hdr_len;
+                    }
+                }
+            }
+            if (hdr_data_offset == 0) {
+                printf("ERROR: failed to parse .npy header\n");
+                fclose(f);
+                goto after_npy_check;
             }
             /* Read float data after header */
-            long file_size;
             fseek(f, 0, SEEK_END);
-            file_size = ftell(f);
-            long data_bytes = file_size - (long)hdr_len;
-            fseek(f, (long)hdr_len, SEEK_SET);
+            long file_size = ftell(f);
+            long data_bytes = file_size - (long)hdr_data_offset;
+            fseek(f, (long)hdr_data_offset, SEEK_SET);
             size_t n_py_floats = (size_t)data_bytes / sizeof(float);
 
             float * py_feat = (float *)malloc(n_py_floats * sizeof(float));
@@ -127,18 +141,28 @@ int main(int argc, char ** argv) {
                 if (n_read == n_py_floats) {
                     printf("\n=== Latent Comparison vs Python fixture ===\n");
                     printf("Python generated_feat: %zu floats\n", n_py_floats);
-                    /* Try to load C latent dump */
+                    /* Try to load C latent dump (3 × int32 header then float data) */
                     FILE * cf = fopen("c_latent_dump.bin", "rb");
                     if (cf) {
+                        /* Skip 3 × int32 header (patch_idx, patch_size, latent_dim) */
+                        unsigned char c_hdr[12];
+                        size_t c_hdr_read = fread(c_hdr, 1, 12, cf);
                         fseek(cf, 0, SEEK_END);
                         long c_file_size = ftell(cf);
-                        fseek(cf, 0, SEEK_SET);
-                        size_t n_c_floats = (size_t)c_file_size / sizeof(float);
+                        fseek(cf, 12, SEEK_SET); /* skip header */
+                        size_t n_c_floats = ((size_t)c_file_size - 12) / sizeof(float);
+                        if (c_hdr_read == 12) {
+                            int c_patch_idx = (int)c_hdr[0] | ((int)c_hdr[1]<<8) | ((int)c_hdr[2]<<16) | ((int)c_hdr[3]<<24);
+                            int c_patch_sz = (int)c_hdr[4] | ((int)c_hdr[5]<<8) | ((int)c_hdr[6]<<16) | ((int)c_hdr[7]<<24);
+                            int c_lat_dim  = (int)c_hdr[8] | ((int)c_hdr[9]<<8) | ((int)c_hdr[10]<<16) | ((int)c_hdr[11]<<24);
+                            printf("C latent dump header: patch_idx=%d patch_size=%d latent_dim=%d\n",
+                                   c_patch_idx, c_patch_sz, c_lat_dim);
+                        }
+                        printf("C latent dump: %zu floats (after header)\n", n_c_floats);
                         float * c_feat = (float *)malloc(n_c_floats * sizeof(float));
                         if (c_feat) {
                             size_t n_c_read = fread(c_feat, sizeof(float), n_c_floats, cf);
                             if (n_c_read == n_c_floats) {
-                                printf("C latent dump: %zu floats\n", n_c_floats);
                                 size_t n_compare = (n_py_floats < n_c_floats) ? n_py_floats : n_c_floats;
                                 double sum_sq_diff = 0.0, sum_py_sq = 0.0, sum_c_sq = 0.0;
                                 double dot = 0.0;
@@ -180,6 +204,8 @@ int main(int argc, char ** argv) {
             printf("\n(no fixtures/ref/generated_feat.npy found)\n");
         }
     }
+
+after_npy_check: (void)0;
 
     vcpm_audio_free(&audio);
     vcpm_free(ctx);
