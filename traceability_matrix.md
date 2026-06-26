@@ -39,6 +39,14 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 
 | Date | Change | AC/Gate | Evidence |
 |------|--------|---------|----------|
+| 2026-06-26 | **R7: Shared transformer layer struct** | todos.md, R7 | Created `src/transformer.h` with `vcpm_layer_weights` shared type; aliased in `minicpm4.h`, `locdit.h` |
+| 2026-06-26 | **R8: Unified debug/log infrastructure** | R8 | Created `src/log.h` + `src/log.c` with leveled logging, compile-time filtering, VCPM_LOG_LEVEL env var |
+| 2026-06-26 | **R4: Table-driven CLI argument parser** | R4 | Replaced ad-hoc `arg_value`/`arg_flag` functions with `vcpm_arg_def` table-driven parser; supports `--key=value` syntax |
+| 2026-06-26 | **R5: VAE decoder data-driven** | R5 | Added `vcpm_vae_decoder_block_config[]` table documenting all 6 upconv blocks (in/out channels, kernel, stride) |
+| 2026-06-26 | **R6: GitHub Actions CI pipeline** | R6 | Added `.github/workflows/ci.yml` with matrix build (ubuntu/windows/macos) + lint + optional integration test |
+| 2026-06-26 | **R10: bench command** | R10, spec.md §7 | Added `voxcpm-c bench` with wall clock, CPU time, RTF measurement, CSV output |
+| 2026-06-26 | **R16: CMakePresets.json** | R16 | Added `CMakePresets.json` with default/release/ci/msvc-debug/msvc-release presets |
+| 2026-06-26 | **R15: Error handling macros** | R15 | Added `src/error.h` with `VCPM_ERR`, `VCPM_RETURN_STATUS`, `VCPM_RETURN_NULL` macros |
 | 2026-06-26 | **Memory exhaustion root cause fixed: ggml linear allocator accumulation across steps/CFM** | F3, todos.md §12 | **Root cause**: Single `step_ctx` (linear ggml allocator) accumulated ALL tensor data — KV cache (~2.8 GB) + pre-CFM (~1 GB/step) + CFM DiT forwards (~2 GB each × 10 steps = ~20 GB). Exhausted within 2-3 gen_step calls. **Fix**: KV cache moved to dedicated `kv_ctx` (long-lived). Pre-CFM uses `scratch_ctx` (freed each gen_step). CFM loop uses per-substep contexts (freed each Euler iteration). Step_ctx reduced from 14 GB to 256 MB. Verified: smoke test with max_len=64, steps=5 runs without OOM. |
 | 2026-06-25 | Bug fix: RALM KV cache not populated during prompt eval | F3, G4 | Added ggml_build_forward_expand(graph, ralm_hidden) in gen_prompt_eval |
 | 2026-06-25 | Bug fix: audio placeholder count too small (4→~80) | F4, T7 | Updated sequence.c zero-shot builder to max(patch_size*16, n_text*8) |

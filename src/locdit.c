@@ -263,7 +263,8 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
                                  0,        /* pos = 0 (unused with no_rope=1) */
                                  0,        /* rope_theta = 0 (unused) */
                                  1,        /* no_rope = 1 */
-                                 1);       /* no_causal = 1 — bidirectional */
+                                 1,        /* no_causal = 1 — bidirectional */
+                                 1.0f);    /* scale = 1.0 (no DeepNorm for DiT) */
         if (locdit_debug_shapes()) {
             char label[64];
             snprintf(label, sizeof(label), "locdit.block.%d.h", i);

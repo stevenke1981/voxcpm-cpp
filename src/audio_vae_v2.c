@@ -31,6 +31,17 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* ---- Decoder block config table ---- */
+
+const vcpm_vae_decoder_block_config vcpm_vae_v2_decoder_blocks[VCPM_VAE_V2_N_DECODER_BLOCKS] = {
+    {2,  2048, 1024, 16, 8, 3},
+    {3,  1024, 512,  12, 6, 3},
+    {4,  512,  256,  10, 5, 3},
+    {5,  256,  128,  4,  2, 3},
+    {6,  128,  64,   4,  2, 3},
+    {7,  64,   32,   4,  2, 3},
+};
+
 /* ---- Config ---- */
 
 void vcpm_audio_vae_v2_config_fill(vcpm_audio_vae_v2_config * cfg,
@@ -841,7 +852,18 @@ struct ggml_tensor * vcpm_vae_v2_decode(
             sr_cond_idx = -1;
         }
     }
-    /* ---- model.2 through model.7: CausalDecoderBlocks ---- */
+    /* ---- model.2 through model.7: CausalDecoderBlocks ----
+     *
+     * Architecture from vcpm_vae_v2_decoder_blocks[]:
+     *   model.2: upconv(k=16,s=8, 2048→1024) + 3×ResUnit
+     *   model.3: upconv(k=12,s=6, 1024→512)  + 3×ResUnit
+     *   model.4: upconv(k=10,s=5, 512→256)   + 3×ResUnit
+     *   model.5: upconv(k=4,s=2, 256→128)    + 3×ResUnit
+     *   model.6: upconv(k=4,s=2, 128→64)     + 3×ResUnit
+     *   model.7: upconv(k=4,s=2, 64→32)      + 3×ResUnit
+     * Total upsample: 8*6*5*2*2*2 = 1920.
+     * Input: latent at 25 Hz → output: 48000 Hz.
+     */
     int strides[6];
     for (int i = 0; i < 6; i++) strides[i] = cfg->decoder_rates[i];
 

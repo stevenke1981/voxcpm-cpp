@@ -1,0 +1,102 @@
+{
+    "version": 6,
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Default (Debug, CPU)",
+            "description": "Default debug build with CPU backend",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_STANDARD": "11",
+                "VCPM_BUILD_TESTS": "ON",
+                "VCPM_GGML_FETCH": "ON"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Release (CPU)",
+            "description": "Optimized release build with CPU backend",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_STANDARD": "11",
+                "VCPM_BUILD_TESTS": "ON",
+                "VCPM_GGML_FETCH": "ON",
+                "CMAKE_C_FLAGS": "-O3 -march=native -flto"
+            }
+        },
+        {
+            "name": "ci",
+            "displayName": "CI Build",
+            "description": "Standard CI configuration",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-ci",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_STANDARD": "11",
+                "VCPM_BUILD_TESTS": "ON",
+                "VCPM_GGML_FETCH": "ON"
+            }
+        },
+        {
+            "name": "msvc-debug",
+            "displayName": "MSVC Debug",
+            "description": "Visual Studio 2022 Debug (Windows)",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build",
+            "architecture": "x64",
+            "cacheVariables": {
+                "CMAKE_C_STANDARD": "11",
+                "VCPM_BUILD_TESTS": "ON",
+                "VCPM_GGML_FETCH": "ON"
+            }
+        },
+        {
+            "name": "msvc-release",
+            "displayName": "MSVC Release",
+            "description": "Visual Studio 2022 Release (Windows)",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build-release",
+            "architecture": "x64",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_STANDARD": "11",
+                "VCPM_BUILD_TESTS": "ON",
+                "VCPM_GGML_FETCH": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "default",
+            "displayName": "Build (Debug)",
+            "configurePreset": "default"
+        },
+        {
+            "name": "release",
+            "displayName": "Build (Release)",
+            "configurePreset": "release"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "default",
+            "displayName": "Test (Debug)",
+            "configurePreset": "default",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Test (Release)",
+            "configurePreset": "release",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
+    ]
+}

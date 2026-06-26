@@ -22,7 +22,8 @@ void vcpm_ralm_config_fill(vcpm_minicpm4_config * cfg,
                             int hidden_size, int n_layers,
                             int n_heads, int n_kv_heads,
                             int intermediate_size, int head_dim,
-                            float rms_norm_eps, int max_seq_len);
+                            float rms_norm_eps, int max_seq_len,
+                            float scale_depth);
 
 /* Fill a minicpm4_weights struct from RALM weight pointers.
  * layer_weights must be pre-allocated with n_layers entries.

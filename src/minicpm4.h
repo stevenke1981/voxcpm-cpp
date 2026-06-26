@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "transformer.h"  /* shared vcpm_layer_weights type */
+
 /* Forward declarations */
 struct ggml_context;
 struct ggml_cgraph;
@@ -21,6 +23,7 @@ typedef struct vcpm_minicpm4_config {
     int32_t max_seq_len;
     int32_t vocab_size;
     int32_t no_rope;           /* 1 for residual LM which doesn't use RoPE */
+    float   scale_depth;       /* DeepNorm scale for residual connections (default 1.0 = no scaling) */
 } vcpm_minicpm4_config;
 
 /* KV cache for one layer */
@@ -37,25 +40,8 @@ typedef struct vcpm_kv_cache {
     int32_t max_seq_len;
 } vcpm_kv_cache;
 
-/* Weight pointers for one transformer layer.
- * Note: ggml API uses non-const tensor pointers throughout, so we omit const here. */
-typedef struct vcpm_minicpm4_layer_weights {
-    struct ggml_tensor * q_proj_weight;
-    struct ggml_tensor * k_proj_weight;
-    struct ggml_tensor * v_proj_weight;
-    struct ggml_tensor * o_proj_weight;
-    struct ggml_tensor * gate_proj_weight;
-    struct ggml_tensor * up_proj_weight;
-    struct ggml_tensor * down_proj_weight;
-    struct ggml_tensor * input_layernorm_weight;
-    struct ggml_tensor * post_attention_layernorm_weight;
-
-    /* Optional bias tensors (may be NULL) */
-    struct ggml_tensor * q_proj_bias;
-    struct ggml_tensor * k_proj_bias;
-    struct ggml_tensor * v_proj_bias;
-    struct ggml_tensor * o_proj_bias;
-} vcpm_minicpm4_layer_weights;
+/* Alias: MiniCPM4 layer weights = shared vcpm_layer_weights */
+typedef vcpm_layer_weights vcpm_minicpm4_layer_weights;
 
 /* All weights for the full MiniCPM4 model */
 typedef struct vcpm_minicpm4_weights {
@@ -74,7 +60,7 @@ void vcpm_minicpm4_config_from_model(vcpm_minicpm4_config * cfg,
                                      int intermediate_size, int head_dim,
                                      float rms_norm_eps, int rope_theta,
                                      int max_seq_len, int vocab_size,
-                                     int no_rope);
+                                     int no_rope, float scale_depth);
 
 /* Allocate KV cache for given config */
 int  vcpm_kv_cache_init(struct ggml_context * ctx, vcpm_kv_cache * cache,
@@ -138,6 +124,8 @@ struct ggml_tensor * vcpm_mlp(struct ggml_context * ctx,
 /* Build one transformer block.
  * no_rope: 1 to skip RoPE (for residual LM, feat_encoder, DiT)
  * no_causal: 1 for bidirectional (non-causal) attention (for DiT blocks)
+ * scale: DeepNorm factor applied to sublayer outputs (scale_depth / sqrt(n_layers)),
+ *        or 1.0 for no scaling.
  * Returns the block output tensor. */
 struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
                                           struct ggml_cgraph * graph,
@@ -147,7 +135,8 @@ struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
                                           int32_t n_heads, int32_t n_kv_heads,
                                           int32_t head_dim, int32_t pos,
                                           int32_t rope_theta, int no_rope,
-                                          int no_causal);
+                                          int no_causal,
+                                          float scale);
 
 /* Build full MiniCPM4 forward pass graph.
  * x: input embeddings [n_tokens, hidden_size]

@@ -37,7 +37,7 @@ static int n_fail = 0;
 
 static void test_ralm_config(void) {
     vcpm_minicpm4_config cfg;
-    vcpm_ralm_config_fill(&cfg, 2048, 8, 16, 4, 8192, 128, 1e-6f, 8192);
+    vcpm_ralm_config_fill(&cfg, 2048, 8, 16, 4, 8192, 128, 1e-6f, 8192, 0.0f);
 
     TEST_ASSERT(cfg.hidden_size == 2048,         "ralm config hidden_size");
     TEST_ASSERT(cfg.n_layers == 8,               "ralm config n_layers");

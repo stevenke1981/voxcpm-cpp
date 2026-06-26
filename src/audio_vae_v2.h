@@ -37,12 +37,34 @@ struct ggml_cgraph;
 struct ggml_tensor;
 struct vcpm_model;
 
+/*
+ * Decoder block configuration (data-driven).
+ * Model.2 through model.7 are CausalDecoderBlocks with:
+ *   upconv_transpose1d (kernel, stride) → 3 × ResidualUnit
+ */
+typedef struct vcpm_vae_decoder_block_config {
+    int   block_idx;       /* GGUF model index (2..7) */
+    int   in_channels;     /* input feature channels */
+    int   out_channels;    /* output feature channels */
+    int   kernel_size;     /* upconv kernel size */
+    int   stride;          /* upconv stride (upsample factor) */
+    int   n_res_units;     /* number of residual units (always 3) */
+} vcpm_vae_decoder_block_config;
+
+/* Canonical decoder block table (6 upconv blocks).
+ * Total upsample factor: 8*6*5*2*2*2 = 1920.
+ * Input latent rate: 16000/640 = 25 Hz → output: 48000 Hz (25 * 1920).
+ * Defined in audio_vae_v2.c.
+ */
+#define VCPM_VAE_V2_N_DECODER_BLOCKS 6
+extern const vcpm_vae_decoder_block_config vcpm_vae_v2_decoder_blocks[VCPM_VAE_V2_N_DECODER_BLOCKS];
+
 /* AudioVAE V2 configuration (matches config.json) */
 typedef struct vcpm_audio_vae_v2_config {
     int32_t latent_dim;             /* latent channels (64 for V2) */
     int32_t encoder_dim;            /* encoder initial dim (128 for V2) */
     int32_t decoder_dim;            /* decoder intermediate dim (2048 for V2) */
-    int32_t decoder_rates[6];       /* strides per decoder block */
+    int32_t decoder_rates[6];       /* strides per decoder block (from config) */
     int32_t encoder_rates[4];       /* strides per encoder block */
     int32_t sample_rate;            /* input sample rate (16000) */
     int32_t output_sample_rate;     /* output sample rate (48000) */

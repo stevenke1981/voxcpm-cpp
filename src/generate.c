@@ -195,6 +195,8 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     s->max_seq_len        = cfg->max_seq_len;
     s->vocab_size         = cfg->vocab_size;
     s->rope_theta         = cfg->rope_theta;
+    s->scale_depth        = cfg->scale_depth;
+    s->res_scale_depth    = cfg->res_scale_depth;
 
     s->res_hidden_size    = cfg->res_hidden_size;
     s->res_n_layers       = cfg->res_num_layers;
@@ -527,7 +529,8 @@ static vcpm_status gen_forward_text(vcpm_generate_state * state,
                                      state->rope_theta,
                                      state->max_seq_len,
                                      state->vocab_size,
-                                     0);  /* no_rope=0 */
+                                     0,                            /* no_rope=0 */
+                                     state->scale_depth);          /* scale_depth */
 
     vcpm_minicpm4_weights base_w;
     base_w.embed_tokens_weight = state->base_embed_tokens;
@@ -583,7 +586,8 @@ static struct ggml_tensor * gen_forward_ralm(vcpm_generate_state * state,
                                      state->intermediate_size,
                                      state->head_dim,
                                      state->rms_norm_eps,
-                                     0, 0, 0, 1);  /* no_rope=1 */
+                                     0, 0, 0, 1,                /* no_rope=1 */
+                                     state->res_scale_depth);    /* scale_depth */
 
     vcpm_minicpm4_weights ralm_w;
     memset(&ralm_w, 0, sizeof(ralm_w));
@@ -796,6 +800,11 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         mu_len = (int)(ggml_nbytes(mu) / sizeof(float));
         mu_data = (float *)malloc((size_t)mu_len * sizeof(float));
         if (mu_data) memcpy(mu_data, mu->data, (size_t)mu_len * sizeof(float));
+        if (vcpm_debug_shapes()) {
+            /* Dump mu (DiT conditioning) for comparison against fixtures/ref/dit_hidden_init.npy */
+            FILE * df = fopen("c_mu_init.bin", "wb");
+            if (df) { fwrite(mu_data, sizeof(float), (size_t)mu_len, df); fclose(df); }
+        }
     }
 
     /* Extract prev_patch for DiT cond_proj — copy all patch_size vectors */
@@ -1100,7 +1109,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                                          state->intermediate_size, state->head_dim,
                                          state->rms_norm_eps, state->rope_theta,
                                          state->max_seq_len, state->vocab_size,
-                                         0);
+                                         0,                          /* no_rope=0 */
+                                         state->scale_depth);        /* scale_depth */
 
         vcpm_minicpm4_weights base_w;
         base_w.embed_tokens_weight = state->base_embed_tokens;
@@ -1176,155 +1186,99 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
 }
 
 /* ---- Prompt eval: process text tokens to populate KV caches ---- */
-/* Runs both base_lm AND RALM on text token embeddings to fill both KV caches. */
+/* Processes text tokens (including audio_start) through base_lm and RALM.
+ * Python's prompt eval: text_mask=1, feat_mask=0 for all prompt positions,
+ * so combined_embed = text_embed for all positions (no feat_embed).
+ * lm_hidden = base_lm_out[:, -1, :] at the last text position (audio_start).
+ * RALM input: fusion_concat_proj(concat(base_lm_out, zeros)) since feat_mask=0. */
 
 static vcpm_status gen_prompt_eval(vcpm_generate_state * state,
-                                   struct ggml_context * ctx,
-                                   struct ggml_cgraph * graph,
-                                   const int32_t * token_ids,
-                                   int n_text_tokens) {
+                                    struct ggml_context * ctx,
+                                    struct ggml_cgraph * graph,
+                                    const int32_t * token_ids,
+                                    int n_text_tokens) {
     if (n_text_tokens <= 0) return VCPM_OK;
 
     int hidden_size = state->hidden_size;
-    int feat_dim = state->enc_feat_dim;
-    int patch_size = state->model ? state->model->config.patch_size : 1;
-    if (patch_size < 1) patch_size = 1;
 
-    /* Step 1: Forward text tokens through base_lm (positions 0 to n_text_tokens-1) */
+    /* Step 1: Forward text tokens through base_lm (positions 0 to n_text_tokens-1).
+     * token_ids[0..n_text_tokens-1] includes the audio_start token at the last
+     * position (e.g., [21045, 2809, 72, 101]). This matches Python's prompt eval
+     * where text_mask=1 and feat_mask=0 for all prompt positions. */
     struct ggml_tensor * base_hidden = NULL;
     vcpm_status st = gen_forward_text(state, ctx, graph, token_ids,
                                         n_text_tokens, 0, &base_hidden);
     if (st != VCPM_OK) return st;
     if (!base_hidden) return VCPM_ERR_BACKEND;
 
-    /* Step 2: Build feat_encoder embedding for the first audio position.
-     * Python processes feat_encoder(zeros) → enc_to_lm_proj and feeds it
-     * as the input embedding at position n_text_tokens (audio_start). */
-    struct ggml_tensor * fe_out = NULL;
-    struct ggml_tensor * audio_embed = gen_build_audio_embed(state, ctx, graph, &fe_out);
-    if (!audio_embed) return VCPM_ERR_BACKEND;
-    ggml_set_name(audio_embed, "prompt_audio_embed");
-
-    /* Step 3: Forward audio_embed through base_lm at position n_text_tokens,
-     * extending the KV cache. This matches Python's prompt eval which processes
-     * all T positions (text + feat) in one base_lm forward call. */
-    vcpm_minicpm4_config base_cfg;
-    vcpm_minicpm4_config_from_model(&base_cfg,
-                                     hidden_size,
-                                     state->n_base_layers,
-                                     state->n_base_heads,
-                                     state->n_base_kv_heads,
-                                     state->intermediate_size,
-                                     state->head_dim,
-                                     state->rms_norm_eps,
-                                     state->rope_theta,
-                                     state->max_seq_len,
-                                     state->vocab_size,
-                                     0);
-
-    vcpm_minicpm4_weights base_w;
-    base_w.embed_tokens_weight = state->base_embed_tokens;
-    base_w.norm_weight         = state->base_norm;
-    base_w.lm_head_weight      = state->base_lm_head;
-    base_w.layer_weights       = state->base_layer_weights;
-
-    vcpm_kv_cache base_cache;
-    base_cache.layers     = (vcpm_kv_cache_unit *)state->base_kv_cache;
-    base_cache.n_layers   = state->n_base_layers;
-    base_cache.max_seq_len = state->max_seq_len;
-
-    /* Forward audio_embed through base_lm at position n_text_tokens */
-    struct ggml_tensor * audio_hidden = vcpm_minicpm4_forward(ctx, graph,
-                                                                audio_embed, &base_cfg,
-                                                                &base_w, &base_cache,
-                                                                n_text_tokens);
-    if (!audio_hidden) return VCPM_ERR_BACKEND;
-    ggml_set_name(audio_hidden, "prompt_audio_hidden");
-
-    /* Step 4: FSQ on audio_hidden (feat positions get FSQ in Python,
-     * text positions don't). The audio_start position IS a feat position. */
-    struct ggml_tensor * fsq_out = gen_fsq_hidden(state, ctx, graph, audio_hidden);
-    ggml_set_name(fsq_out, "prompt_fsq_out");
-
-    /* Build graph for base_lm text + audio forward */
-    ggml_build_forward_expand(graph, base_hidden);
-    ggml_build_forward_expand(graph, audio_hidden);
-    if (fsq_out) ggml_build_forward_expand(graph, fsq_out);
-
-    /* Save FSQ'd audio_hidden as lm_hidden_state (Python: lm_hidden from position -1) */
-    struct ggml_tensor * lm_hidden_for_state = (fsq_out && fsq_out->data) ? fsq_out : audio_hidden;
-
-    /* Step 5: Forward through RALM with fusion concat of FSQ'd hidden + audio_embed.
-     * Python: residual_enc_inputs = fusion_concat_proj(concat(fsq_out, feat_embed)) */
+    /* Step 2: RALM input = fusion_concat_proj(concat(base_hidden, zeros)).
+     * Python: feat_mask=0 for text positions, so feat_embed is zeroed out.
+     * The RALM receives only base_lm output (enc_outputs) as input. */
     struct ggml_tensor * ralm_hidden = NULL;
     if (state->res_n_layers > 0 && state->ralm_layer_weights[0].q_proj_weight &&
         state->fusion_concat_proj) {
-        /* Also forward text through RALM first */
-        {
-            struct ggml_tensor * text_embed = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
-                                                                   hidden_size,
-                                                                   n_text_tokens);
-            if (text_embed && text_embed->data && state->base_embed_tokens &&
-                state->base_embed_tokens->data) {
-                const ggml_fp16_t * ed = (const ggml_fp16_t *)state->base_embed_tokens->data;
-                int64_t stride = state->base_embed_tokens->ne[0];
-                int64_t n_rows = state->base_embed_tokens->ne[1];
-                float * dst = (float *)text_embed->data;
-                for (int i = 0; i < n_text_tokens; i++) {
-                    int idx = token_ids[i];
-                    if (idx < 0 || idx >= n_rows) idx = 0;
-                    for (int j = 0; j < stride; j++) {
-                        dst[i * stride + j] = ggml_fp16_to_fp32(ed[idx * stride + j]);
-                    }
-                }
-            }
-            ggml_set_name(text_embed, "prompt_text_embed");
-            struct ggml_tensor * ralm_text = gen_forward_ralm(state, ctx, graph, text_embed, 0);
-            if (ralm_text) {
-                ggml_set_name(ralm_text, "prompt_ralm_text");
-                ggml_build_forward_expand(graph, ralm_text);
-            }
+        /* Create zeros tensor matching hidden_size for feat_embed (feat_mask=0) */
+        struct ggml_tensor * zeros_feat = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
+                                                               hidden_size, n_text_tokens);
+        if (zeros_feat && zeros_feat->data) {
+            memset(zeros_feat->data, 0, (size_t)hidden_size * n_text_tokens * sizeof(float));
         }
+        ggml_set_name(zeros_feat, "prompt_zeros_feat");
 
-        /* Fusion concat for audio position: fsq_out + audio_embed */
-        struct ggml_tensor * fusion_in = ggml_concat(ctx, fsq_out, audio_embed, 0);
+        /* Concat base_hidden + zeros along feature dim */
+        struct ggml_tensor * fusion_in = ggml_concat(ctx, base_hidden, zeros_feat, 0);
         ggml_set_name(fusion_in, "prompt_fusion_in");
+
+        /* Apply fusion_concat_proj */
         struct ggml_tensor * ralm_in = vcpm_linear_proj(ctx, fusion_in,
                                                           state->fusion_concat_proj);
         ggml_set_name(ralm_in, "prompt_ralm_in");
 
-        ralm_hidden = gen_forward_ralm(state, ctx, graph, ralm_in, n_text_tokens);
+        /* Forward through RALM (fills KV cache at positions 0..n_text_tokens-1) */
+        ralm_hidden = gen_forward_ralm(state, ctx, graph, ralm_in, 0);
         if (ralm_hidden) {
-            ggml_set_name(ralm_hidden, "prompt_ralm_audio");
-            ggml_build_forward_expand(graph, ralm_hidden);
+            ggml_set_name(ralm_hidden, "prompt_ralm_hidden");
         }
     }
 
-    /* CRITICAL: Compute graph to execute all KV cache writes */
+    /* Build graph */
+    ggml_build_forward_expand(graph, base_hidden);
+    if (ralm_hidden) ggml_build_forward_expand(graph, ralm_hidden);
+
+    /* Compute graph to execute all KV cache writes */
     ggml_graph_compute_with_ctx(ctx, graph, 1);
 
-    /* Save initial autoregressive hidden states from the AUDIO position
-     * (matching Python's lm_hidden = base_lm_out[:, -1, :] after FSQ). */
-    if (state->lm_hidden_state && lm_hidden_for_state && lm_hidden_for_state->data) {
-        const float * src = (const float *)lm_hidden_for_state->data;
-        memcpy(state->lm_hidden_state, src, (size_t)hidden_size * sizeof(float));
+    /* Save lm_hidden_state from LAST text position (n_text_tokens-1 = audio_start).
+     * Python: lm_hidden = enc_outputs[:, -1, :] (raw, no FSQ since text_mask=1). */
+    if (state->lm_hidden_state && base_hidden && base_hidden->data) {
+        const float * src = (const float *)base_hidden->data;
+        int last_pos = n_text_tokens - 1;
+        memcpy(state->lm_hidden_state, src + (size_t)last_pos * hidden_size,
+               (size_t)hidden_size * sizeof(float));
         if (vcpm_debug_shapes()) {
-            fprintf(stderr, "VCPM_DEBUG init lm_hidden_state[0]=%.6f [%d]=%.6f (from audio pos)\n",
+            fprintf(stderr, "VCPM_DEBUG init lm_hidden_state[0]=%.6f [%d]=%.6f (from text pos %d)\n",
                     state->lm_hidden_state[0], hidden_size-1,
-                    state->lm_hidden_state[hidden_size-1]);
+                    state->lm_hidden_state[hidden_size-1], last_pos);
+            /* Dump for comparison against fixtures/ref/lm_hidden_init.npy */
+            FILE * df = fopen("c_lm_hidden_init.bin", "wb");
+            if (df) { fwrite(state->lm_hidden_state, sizeof(float), (size_t)hidden_size, df); fclose(df); }
         }
     }
 
-    /* Save residual_hidden from audio position */
+    /* Save residual_hidden_state from last RALM position */
     if (state->residual_hidden_state && ralm_hidden && ralm_hidden->data) {
         const float * src = (const float *)ralm_hidden->data;
-        memcpy(state->residual_hidden_state, src,
+        int last_pos = n_text_tokens - 1;
+        memcpy(state->residual_hidden_state, src + (size_t)last_pos * state->res_hidden_size,
                (size_t)state->res_hidden_size * sizeof(float));
         if (vcpm_debug_shapes()) {
-            fprintf(stderr, "VCPM_DEBUG init residual_hidden_state[0]=%.6f [%d]=%.6f (from audio pos)\n",
+            fprintf(stderr, "VCPM_DEBUG init residual_hidden_state[0]=%.6f [%d]=%.6f (from text pos %d)\n",
                     state->residual_hidden_state[0],
                     state->res_hidden_size-1,
-                    state->residual_hidden_state[state->res_hidden_size-1]);
+                    state->residual_hidden_state[state->res_hidden_size-1], last_pos);
+            /* Dump for comparison against fixtures/ref/residual_hidden_init.npy */
+            FILE * df = fopen("c_residual_hidden_init.bin", "wb");
+            if (df) { fwrite(state->residual_hidden_state, sizeof(float), (size_t)state->res_hidden_size, df); fclose(df); }
         }
     }
 
@@ -1387,11 +1341,14 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
 
     struct ggml_cgraph * graph = state->step_graph;
 
-    /* Step 1: Prompt eval for text positions + first audio position.
-     * gen_prompt_eval now processes BOTH text tokens AND the first audio_start
-     * position (feat_encoder(zeros) → enc_to_lm_proj → base_lm → FSQ),
-     * matching Python's prompt eval which handles all T positions in one pass.
-     * The lm_hidden_state and residual_hidden_state are set from the audio position. */
+    /* Step 1: Prompt eval for text positions only.
+     * gen_prompt_eval processes text tokens (including audio_start) through
+     * base_lm and RALM, filling their KV caches at positions 0..first_audio_pos-1.
+     * Python's prompt eval: text_mask=1, feat_mask=0 for all prompt positions,
+     * so combined_embed = text_embed (no feat_encoder input in prompt).
+     * lm_hidden_state and residual_hidden_state are set from the last text position
+     * (audio_start), matching Python's enc_outputs[:, -1, :].
+     * The audi_encoder/feat positions start at first_audio_pos in autoregressive loop. */
     if (first_audio_pos > 0) {
         /* Need enough memory for text + audio position forward (base_lm + RALM + FSQ) */
         size_t prompt_mem = 4ULL * 1024 * 1024 * 1024;  /* 4 GB for prompt eval + audio pos */
@@ -1411,29 +1368,37 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
     }
 
     /* Step 2: Generate audio patches one at a time.
-     * gen_prompt_eval has already processed first_audio_pos (audio_start) with
-     * zero feat input, setting lm_hidden_state from that position.
-     * The autoregressive loop starts at first_audio_pos + 1 so that the LM
-     * forward_step APPENDS to the KV cache (matching Python's behavior).
+     * gen_prompt_eval has processed text positions 0..first_audio_pos-1 (text tokens
+     * including audio_start). lm_hidden_state is from output[first_audio_pos-1]
+     * (the audio_start position, matching Python's enc_outputs[:, -1, :]).
      *
-     * In Python:
-     *   Prompt eval: positions 0..T-1 (text + audio_start with zero feat)
-     *   lm_hidden = output[T-1] (audio_start position, FSQ'd)
-     *   Step 0: mu from lm_hidden → CFM → pred_feat[0]
-     *           → forward_step at position T → lm_hidden = output[T]
-     *   Step 1: mu from lm_hidden → CFM → pred_feat[1]
-     *           → forward_step at position T+1 → ...
+     * The autoregressive loop starts at first_audio_pos (first audio_mask=1 position).
+     * Each step encodes the CFM output → feat_encoder → enc_to_lm_proj → audio_embed,
+     * then forwards through base_lm → FSQ → fusion → RALM, filling KV at the current
+     * position and updating lm_hidden_state and residual_hidden_state.
+     *
+     * In Python (zero-shot):
+     *   Prompt eval: positions 0..T-1 (text, feat_mask=0)
+     *   lm_hidden = output[T-1] (audio_start position, no FSQ since text_mask=1)
+     *   Step 0 at position T: mu → CFM → pred_feat[0]
+     *           → encode(pred_feat[0]) → forward_step(T) → lm_hidden = output[T]
+     *   Step 1 at position T+1: mu → CFM → pred_feat[1]
+     *           → encode(pred_feat[1]) → forward_step(T+1) → ...
      *
      * In C (fixed):
-     *   gen_prompt_eval processes positions 0..first_audio_pos (incl. audio_start)
-     *   lm_hidden_state from first_audio_pos (FSQ'd)
-     *   Step 0 at first_audio_pos+1: mu from lm_hidden_state → CFM → pred_feat[0]
-     *           → LM update at first_audio_pos+1 (appends KV) → lm_hidden_state
-     *   Step 1 at first_audio_pos+2: ...
+     *   gen_prompt_eval: positions 0..first_audio_pos-1 (text, no feat_encoder)
+     *   lm_hidden_state from position first_audio_pos-1
+     *   Step 0 at first_audio_pos: mu → CFM → pred_feat[0]
+     *           → LM update at first_audio_pos (appends KV)
+     *   Step 1 at first_audio_pos+1: ...
      *
      * This matches Python's cache structure exactly. */
     int total_patch_dim = latent_dim * patch_size;
-    int first_gen_pos = first_audio_pos + 1;  /* audio_start already in prompt_eval */
+    /* First position to generate: first_audio_pos (audio_mask=1).
+     * gen_prompt_eval only processed text positions (0..first_audio_pos-1).
+     * The autoregressive loop starts at first_audio_pos, which is the first
+     * position requiring feat_encoder(prev_patch) → base_lm → FSQ → RALM. */
+    int first_gen_pos = first_audio_pos;
     for (int pos = first_gen_pos; pos < seq_len && n_patches < effective_max; pos++) {
         if (audio_mask[pos] != 1) continue;
         float * patch = latent_out + (size_t)n_patches * (size_t)total_patch_dim;

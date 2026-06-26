@@ -62,6 +62,7 @@ add_library(voxcpm STATIC
     src/audio_vae.c
     src/audio_vae_v2.c
     src/generate.c
+    src/log.c
 )
 
 target_include_directories(voxcpm
@@ -84,30 +85,30 @@ if(VCPM_BUILD_TESTS)
     # Helper: private includes for tests
     set(VCPM_TEST_PRIVATE_INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+    # ---- Unit tests (no model weights needed) ----
     add_executable(test_smoke tests/test_smoke.c)
     target_include_directories(test_smoke PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_smoke PRIVATE voxcpm)
     add_test(NAME smoke COMMAND test_smoke)
+    set_tests_properties(smoke PROPERTIES LABELS "unit")
 
     add_executable(test_wav tests/test_wav.c)
     target_include_directories(test_wav PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_wav PRIVATE voxcpm)
     add_test(NAME wav COMMAND test_wav)
+    set_tests_properties(wav PROPERTIES LABELS "unit")
 
     add_executable(test_wav_writer tests/audio/test_wav_writer.c)
     target_include_directories(test_wav_writer PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_wav_writer PRIVATE voxcpm)
     add_test(NAME wav_writer COMMAND test_wav_writer)
+    set_tests_properties(wav_writer PROPERTIES LABELS "unit")
 
     add_executable(test_sequence tests/test_sequence.c)
     target_include_directories(test_sequence PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_sequence PRIVATE voxcpm)
     add_test(NAME sequence COMMAND test_sequence)
-
-    add_executable(test_tokenizer_parity tests/test_tokenizer_parity.c)
-    target_include_directories(test_tokenizer_parity PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
-    target_link_libraries(test_tokenizer_parity PRIVATE voxcpm)
-    add_test(NAME tokenizer_parity COMMAND test_tokenizer_parity voxcpm2_v2_full.gguf)
+    set_tests_properties(sequence PROPERTIES LABELS "unit")
 
     add_executable(test_minicpm4 tests/test_minicpm4.c)
     target_include_directories(test_minicpm4 PRIVATE
@@ -115,6 +116,7 @@ if(VCPM_BUILD_TESTS)
         ${ggml_SOURCE_DIR}/include)
     target_link_libraries(test_minicpm4 PRIVATE voxcpm)
     add_test(NAME minicpm4 COMMAND test_minicpm4)
+    set_tests_properties(minicpm4 PROPERTIES LABELS "unit")
 
     add_executable(test_phase5 tests/test_phase5.c)
     target_include_directories(test_phase5 PRIVATE
@@ -122,6 +124,20 @@ if(VCPM_BUILD_TESTS)
         ${ggml_SOURCE_DIR}/include)
     target_link_libraries(test_phase5 PRIVATE voxcpm)
     add_test(NAME phase5 COMMAND test_phase5)
+    set_tests_properties(phase5 PROPERTIES LABELS "unit")
+
+    add_executable(test_model_loader_tensors tests/test_model_loader_tensors.c)
+    target_include_directories(test_model_loader_tensors PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_model_loader_tensors PRIVATE voxcpm)
+    add_test(NAME model_loader_tensors COMMAND test_model_loader_tensors)
+    set_tests_properties(model_loader_tensors PROPERTIES LABELS "unit")
+
+    # ---- Integration tests (require GGUF model file) ----
+    add_executable(test_tokenizer_parity tests/test_tokenizer_parity.c)
+    target_include_directories(test_tokenizer_parity PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_tokenizer_parity PRIVATE voxcpm)
+    add_test(NAME tokenizer_parity COMMAND test_tokenizer_parity voxcpm2_v2_full.gguf)
+    set_tests_properties(tokenizer_parity PROPERTIES LABELS "model")
 
     # CFM/DiT parity test (requires GGUF model + Python fixtures)
     add_executable(test_cfm_parity tests/test_cfm_parity.c)
@@ -130,11 +146,7 @@ if(VCPM_BUILD_TESTS)
         ${ggml_SOURCE_DIR}/include)
     target_link_libraries(test_cfm_parity PRIVATE voxcpm)
     add_test(NAME cfm_parity COMMAND test_cfm_parity voxcpm2_v2_full.gguf fixtures/ref)
-
-    add_executable(test_model_loader_tensors tests/test_model_loader_tensors.c)
-    target_include_directories(test_model_loader_tensors PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
-    target_link_libraries(test_model_loader_tensors PRIVATE voxcpm)
-    add_test(NAME model_loader_tensors COMMAND test_model_loader_tensors)
+    set_tests_properties(cfm_parity PROPERTIES LABELS "model")
 
     add_executable(test_vae_dump tools/test_vae_dump.c)
     target_include_directories(test_vae_dump PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES} ${ggml_SOURCE_DIR}/include)

@@ -240,12 +240,17 @@ def write_gguf_metadata(writer: gguf.GGUFWriter, cfg: dict):
     writer.add_int32("voxcpm.rope_theta", value_from_config(cfg, "lm_rope_theta"))
     writer.add_int32("voxcpm.max_seq_len", value_from_config(cfg,
                       "lm_max_position_embeddings", "max_length"))
+    writer.add_float32("voxcpm.scale_depth",
+                       float(cfg.get("lm_scale_depth", 0.0)))
 
     # Residual LM
     writer.add_int32("voxcpm.res_num_layers", value_from_config(cfg,
                       "residual_lm_num_layers"))
     writer.add_bool("voxcpm.res_no_rope",
                     bool(cfg.get("residual_lm_no_rope", False)))
+    # RALM copies lm_config (including scale_depth) from model setup
+    writer.add_float32("voxcpm.res_scale_depth",
+                       float(cfg.get("lm_scale_depth", 0.0)))
 
     # Feat encoder (from encoder_config)
     writer.add_int32("voxcpm.enc_hidden_size", value_from_config(cfg, "encoder_hidden_dim"))

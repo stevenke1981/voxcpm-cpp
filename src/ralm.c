@@ -16,14 +16,16 @@ void vcpm_ralm_config_fill(vcpm_minicpm4_config * cfg,
                             int hidden_size, int n_layers,
                             int n_heads, int n_kv_heads,
                             int intermediate_size, int head_dim,
-                            float rms_norm_eps, int max_seq_len) {
+                            float rms_norm_eps, int max_seq_len,
+                            float scale_depth) {
     vcpm_minicpm4_config_from_model(cfg,
                                      hidden_size, n_layers,
                                      n_heads, n_kv_heads,
                                      intermediate_size, head_dim,
                                      rms_norm_eps, 0,   /* rope_theta=0 (unused) */
                                      max_seq_len, 0,    /* vocab_size=0 (no embedding) */
-                                     1);                 /* no_rope=1 */
+                                     1,                  /* no_rope=1 */
+                                     scale_depth);
 }
 
 void vcpm_ralm_weights_fill(vcpm_minicpm4_weights * w,

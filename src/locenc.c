@@ -106,7 +106,8 @@ struct ggml_tensor * vcpm_locenc_forward(struct ggml_context * ctx,
                                  0,        /* pos = 0 (unused with no_rope=1) */
                                  0,        /* rope_theta = 0 (unused) */
                                  1,        /* no_rope = 1 — no positional encoding */
-                                 1);       /* no_causal = 1 — BIDIRECTIONAL attention */
+                                 1,        /* no_causal = 1 — BIDIRECTIONAL attention */
+                                 1.0f);    /* scale = 1.0 (no DeepNorm for feat_encoder) */
     }
 
     /* ---- Step 4: Final RMSNorm ---- */

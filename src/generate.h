@@ -51,6 +51,8 @@ typedef struct vcpm_generate_state {
     int max_seq_len;
     int vocab_size;
     int rope_theta;
+    float scale_depth;         /* DeepNorm scale for base LM (from GGUF) */
+    float res_scale_depth;     /* DeepNorm scale for RALM (from GGUF) */
 
     int res_hidden_size;
     int res_n_layers;

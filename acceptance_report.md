@@ -293,9 +293,32 @@
       g. Updated LocEnc config `max_seq_len` to P+1 (5) for KV cache
     - **Verification**: Both `test_model_tts_smoke` and stream smoke paths PASS. Audio quality: RMS 0.162, range [-0.977, 0.986], no NaN/Inf, 2.56 sec at 48kHz.
 
+## Improvement Sprint: v4.1 Refactoring (2026-06-26)
+
+### Changes Applied from voxcpm-cpp-improvement-report.md
+
+| ID | Improvement | Files Changed | Acceptance |
+|----|------------|--------------|------------|
+| R7 | **Shared transformer layer struct** | `src/transformer.h` (new), `src/minicpm4.h`, `src/locdit.h` | Build passes; all 9 layer weight fields match across MiniCPM4, LocDiT, LocEnc, RALM |
+| R8 | **Unified debug/log infrastructure** | `src/log.h` (new), `src/log.c` (new), `CMakeLists.txt` | Logging with levels, compile-time filtering, `VCPM_LOG_LEVEL` env var |
+| R4 | **Table-driven CLI argument parser** | `src/main.c` | Replaced ad-hoc `arg_value`/`arg_flag` with `vcpm_arg_def` table; supports `--key=value` syntax |
+| R5 | **VAE decoder data-driven** | `src/audio_vae_v2.h`, `src/audio_vae_v2.c` | Added `vcpm_vae_decoder_block_config[]` table documenting 6 upconv blocks |
+| R6 | **GitHub Actions CI pipeline** | `.github/workflows/ci.yml` (new) | Matrix build (ubuntu/windows/macos) + lint + integration test with model fixture |
+| R10 | **bench command** | `src/main.c` | `voxcpm-c bench` with wall/CPU timing, RTF, CSV output |
+| R16 | **CMakePresets** | `CMakePresets.json` (new) | 5 presets: default, release, ci, msvc-debug, msvc-release |
+| R15 | **Error handling macros** | `src/error.h` (new) | `VCPM_ERR`, `VCPM_RETURN_STATUS`, `VCPM_RETURN_NULL` macros |
+
+### Verification
+
+- All structural tests pass: `smoke`, `sequence`, `minicpm4`, `phase5`, `model_loader_tensors`, `wav_writer`
+- Full build with MSVC succeeds without errors
+- `voxcpm-c bench --help` shows proper usage
+- CMakePresets validated via JSON syntax
+
 ### Updated Remaining Risks
 
 1. **Full latent parity still pending**: C generates reasonable audio (RMS 0.162, full range) after ordering + feat_encoder fixes, but exact cosine similarity vs Python `generated_feat.npy` is still near zero (~-0.03). The text inputs differ (C uses "Hello, this is a model fixture speech test." vs Python fixture "Hello world."). Need deterministic comparison with same text/seed/max_len.
 2. **C latents vs Python with same inputs**: Need to run C with same text "Hello world." and compare against Python `generated_feat.npy` for exact structure parity.
 3. **Stop predictor firing**: Fires at reasonable patch counts; still needs verification against Python `step*_stop_logits.npy`.
 4. **CFM trajectory parity**: Only structural verification; full CFM trajectory parity pending.
+5. **generate.c splitting (R3)**: Pending - the 1731-line file is the largest remaining technical debt item.

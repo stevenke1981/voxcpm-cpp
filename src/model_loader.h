@@ -40,12 +40,14 @@ typedef struct vcpm_model_config {
     float rms_norm_eps;
     int rope_theta;
     int max_seq_len;
+    float scale_depth;       /* DeepNorm scale for base LM (e.g. 1.4), default 1.0 */
 
     /* Residual LM config */
     int res_hidden_size;
     int res_num_layers;
     int res_num_heads;
     int res_num_kv_heads;
+    float res_scale_depth;   /* DeepNorm scale for RALM, default 1.0 */
 
     /* AudioVAE config */
     int vae_latent_dim;

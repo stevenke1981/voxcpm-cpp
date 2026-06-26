@@ -71,10 +71,12 @@ vcpm_model_config vcpm_model_config_default(void) {
     c.rms_norm_eps          = 1.0e-6f;
     c.rope_theta            = 1000000;
     c.max_seq_len           = 8192;
+    c.scale_depth           = 0.0f;   /* 0 = no scaling (backward compat) */
     c.res_hidden_size       = 2048;
     c.res_num_layers        = 8;
     c.res_num_heads         = 16;
     c.res_num_kv_heads      = 4;
+    c.res_scale_depth       = 0.0f;   /* 0 = no scaling (backward compat) */
     c.vae_latent_dim        = 16;
     c.vae_sample_rate       = 16000;
     c.vae_out_sample_rate   = 48000;
@@ -163,12 +165,14 @@ vcpm_model * vcpm_model_load(const char * path, char * err_buf, size_t err_buf_s
     cfg.rms_norm_eps        = get_key_f32(gguf_ctx, "voxcpm.rms_norm_eps", cfg.rms_norm_eps);
     cfg.rope_theta          = get_key_i32(gguf_ctx, "voxcpm.rope_theta", cfg.rope_theta);
     cfg.max_seq_len         = get_key_i32(gguf_ctx, "voxcpm.max_seq_len", cfg.max_seq_len);
+    cfg.scale_depth         = get_key_f32(gguf_ctx, "voxcpm.scale_depth", cfg.scale_depth);
 
     /* Residual LM */
     cfg.res_hidden_size     = get_key_i32(gguf_ctx, "voxcpm.res_hidden_size", cfg.res_hidden_size);
     cfg.res_num_layers      = get_key_i32(gguf_ctx, "voxcpm.res_num_layers", cfg.res_num_layers);
     cfg.res_num_heads       = get_key_i32(gguf_ctx, "voxcpm.res_num_heads", cfg.res_num_heads);
     cfg.res_num_kv_heads    = get_key_i32(gguf_ctx, "voxcpm.res_num_kv_heads", cfg.res_num_kv_heads);
+    cfg.res_scale_depth     = get_key_f32(gguf_ctx, "voxcpm.res_scale_depth", cfg.res_scale_depth);
 
     /* AudioVAE */
     cfg.vae_latent_dim      = get_key_i32(gguf_ctx, "voxcpm.vae_latent_dim", cfg.vae_latent_dim);

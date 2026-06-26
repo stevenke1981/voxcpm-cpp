@@ -1,0 +1,117 @@
+# CI workflow for VoxCPM-C
+# Builds and tests on Ubuntu, Windows, and macOS.
+# Supports CPU backend only (CUDA/Metal/Vulkan require additional setup).
+name: CI
+
+on:
+  push:
+    branches: ["main", "master", "develop"]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.npy'
+      - 'fixtures/**'
+      - 'scripts/**'
+      - 'tools/**'
+  pull_request:
+    branches: ["main", "master"]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} (${{ matrix.backend }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022, macos-14]
+        backend: [cpu]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure CMake
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DVCPM_BUILD_TESTS=ON
+          -DVCPM_GGML_FETCH=ON
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j $(nproc 2>/dev/null || echo 4)
+
+      - name: Run unit tests
+        working-directory: build
+        run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure -L unit
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: voxcpm-c-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            build/bin/
+            build/*/voxcpm-c*
+            build/*/voxcpm.*
+          retention-days: 7
+
+  # Integration tests with model fixture (Ubuntu only, needs GGUF download)
+  integration-test:
+    name: Integration (ubuntu-22.04)
+    runs-on: ubuntu-22.04
+    needs: build-and-test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DVCPM_BUILD_TESTS=ON -DVCPM_GGML_FETCH=ON
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j $(nproc)
+
+      - name: Download model fixture
+        run: |
+          mkdir -p test-models
+          # Try to download a small GGUF for testing
+          pip install huggingface-hub 2>/dev/null || pip3 install huggingface-hub 2>/dev/null || true
+          huggingface-cli download bluryar/VoxCPM-GGUF \
+            --include "voxcpm0.5b-q8_0.gguf" \
+            --local-dir ./test-models 2>/dev/null || \
+          echo "warning: model download failed, skipping model tests"
+          if [ -f ./test-models/voxcpm0.5b-q8_0.gguf ]; then
+            echo "VCPM_MODEL=$PWD/test-models/voxcpm0.5b-q8_0.gguf" >> $GITHUB_ENV
+          fi
+
+      - name: Run integration tests
+        working-directory: build
+        run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure -L model
+        if: env.VCPM_MODEL != ''
+
+  lint:
+    name: Lint (clang-tidy)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy
+
+      - name: Configure CMake
+        run: |
+          cmake -B build-lint \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DVCPM_BUILD_TESTS=OFF \
+            -DVCPM_GGML_FETCH=ON \
+            -DCMAKE_C_COMPILER=clang
+
+      - name: Build with clang
+        run: cmake --build build-lint --config ${{ env.BUILD_TYPE }} -j $(nproc)

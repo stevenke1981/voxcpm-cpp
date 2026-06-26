@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "transformer.h"  /* shared vcpm_layer_weights type */
+
 /*
  * LocDiT — Local Diffusion Transformer backbone.
  *
@@ -32,18 +34,8 @@ typedef struct vcpm_locdit_config {
     int32_t max_seq_len;          /* maximum sequence length */
 } vcpm_locdit_config;
 
-/* Weight pointers for one DiT layer */
-typedef struct vcpm_locdit_layer_weights {
-    struct ggml_tensor * q_proj_weight;
-    struct ggml_tensor * k_proj_weight;
-    struct ggml_tensor * v_proj_weight;
-    struct ggml_tensor * o_proj_weight;
-    struct ggml_tensor * gate_proj_weight;
-    struct ggml_tensor * up_proj_weight;
-    struct ggml_tensor * down_proj_weight;
-    struct ggml_tensor * input_layernorm_weight;
-    struct ggml_tensor * post_attention_layernorm_weight;
-} vcpm_locdit_layer_weights;
+/* Alias: DiT layer weights = shared vcpm_layer_weights */
+typedef vcpm_layer_weights vcpm_locdit_layer_weights;
 
 /* All weights for full LocDiT */
 typedef struct vcpm_locdit_weights {

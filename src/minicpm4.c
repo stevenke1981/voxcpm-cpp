@@ -39,7 +39,7 @@ void vcpm_minicpm4_config_from_model(vcpm_minicpm4_config * cfg,
                                      int intermediate_size, int head_dim,
                                      float rms_norm_eps, int rope_theta,
                                      int max_seq_len, int vocab_size,
-                                     int no_rope) {
+                                     int no_rope, float scale_depth) {
     cfg->hidden_size      = hidden_size;
     cfg->n_layers         = n_layers;
     cfg->n_heads          = n_heads;
@@ -51,6 +51,7 @@ void vcpm_minicpm4_config_from_model(vcpm_minicpm4_config * cfg,
     cfg->max_seq_len      = max_seq_len;
     cfg->vocab_size       = vocab_size;
     cfg->no_rope          = no_rope;
+    cfg->scale_depth      = scale_depth;
 }
 
 /* ---- KV Cache ---- */
@@ -440,12 +441,13 @@ struct ggml_tensor * vcpm_mlp(struct ggml_context * ctx,
 struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
                                           struct ggml_cgraph * graph,
                                           struct ggml_tensor * x,
-                                          const vcpm_minicpm4_layer_weights * w,
-                                          vcpm_kv_cache_unit * cache,
-                                          int32_t n_heads, int32_t n_kv_heads,
-                                          int32_t head_dim, int32_t pos,
-                                          int32_t rope_theta, int no_rope,
-                                          int no_causal) {
+                                           const vcpm_minicpm4_layer_weights * w,
+                                           vcpm_kv_cache_unit * cache,
+                                           int32_t n_heads, int32_t n_kv_heads,
+                                           int32_t head_dim, int32_t pos,
+                                           int32_t rope_theta, int no_rope,
+                                           int no_causal,
+                                           float scale) {
     /* Pre-attention RMSNorm */
     struct ggml_tensor * x_norm = vcpm_rms_norm(ctx, x, w->input_layernorm_weight, 1e-6f);
     ggml_set_name(x_norm, "block_input_norm");
@@ -464,8 +466,15 @@ struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
                                                      no_causal);
     ggml_set_name(attn_out, "block_attn_out");
 
-    /* Residual connection */
-    struct ggml_tensor * x_after_attn = ggml_add(ctx, x, attn_out);
+    /* DeepNorm residual: x = x + scale * attn_out */
+    struct ggml_tensor * scaled_attn;
+    if (scale != 1.0f) {
+        scaled_attn = ggml_scale(ctx, attn_out, scale);
+        ggml_set_name(scaled_attn, "block_attn_scaled");
+    } else {
+        scaled_attn = attn_out;
+    }
+    struct ggml_tensor * x_after_attn = ggml_add(ctx, x, scaled_attn);
     ggml_set_name(x_after_attn, "block_after_attn");
 
     /* Post-attention RMSNorm */
@@ -479,8 +488,15 @@ struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
                                              w->down_proj_weight);
     ggml_set_name(mlp_out, "block_mlp_out");
 
-    /* Residual connection */
-    struct ggml_tensor * out = ggml_add(ctx, x_after_attn, mlp_out);
+    /* DeepNorm residual: out = x_after_attn + scale * mlp_out */
+    struct ggml_tensor * scaled_mlp;
+    if (scale != 1.0f) {
+        scaled_mlp = ggml_scale(ctx, mlp_out, scale);
+        ggml_set_name(scaled_mlp, "block_mlp_scaled");
+    } else {
+        scaled_mlp = mlp_out;
+    }
+    struct ggml_tensor * out = ggml_add(ctx, x_after_attn, scaled_mlp);
     ggml_set_name(out, "block_output");
 
     return out;
@@ -498,6 +514,12 @@ struct ggml_tensor * vcpm_minicpm4_forward(struct ggml_context * ctx,
     /* x: token embeddings [hidden_size, n_tokens] */
     struct ggml_tensor * h = x;
 
+    /* Compute DeepNorm scale: scale_depth / sqrt(n_layers) */
+    float scale = 1.0f;
+    if (cfg->scale_depth > 0.0f && cfg->n_layers > 0) {
+        scale = cfg->scale_depth / sqrtf((float)cfg->n_layers);
+    }
+
     /* Process each layer */
     for (int i = 0; i < cfg->n_layers; i++) {
         char name[64];
@@ -509,7 +531,8 @@ struct ggml_tensor * vcpm_minicpm4_forward(struct ggml_context * ctx,
                                  cfg->n_heads, cfg->n_kv_heads,
                                  cfg->head_dim, pos,
                                  cfg->rope_theta, cfg->no_rope,
-                                 0);  /* no_causal=0 for causal LM */
+                                 0,  /* no_causal=0 for causal LM */
+                                 scale);
     }
 
     /* Final RMSNorm */

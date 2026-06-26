@@ -29,7 +29,7 @@ static int approx(float a, float b, float eps) {
 static void test_config(void) {
     vcpm_minicpm4_config cfg;
     vcpm_minicpm4_config_from_model(&cfg, 1024, 12, 16, 4, 4096, 64,
-                                     1e-5f, 10000, 2048, 32000, 0);
+                                     1e-5f, 10000, 2048, 32000, 0, 1.0f);
     TEST_ASSERT(cfg.hidden_size == 1024, "config hidden_size");
     TEST_ASSERT(cfg.n_layers == 12,      "config n_layers");
     TEST_ASSERT(cfg.n_heads == 16,       "config n_heads");
@@ -44,7 +44,7 @@ static void test_config(void) {
 
     /* Test with no_rope */
     vcpm_minicpm4_config_from_model(&cfg, 512, 6, 8, 8, 2048, 64,
-                                     1e-6f, 0, 1024, 16000, 1);
+                                     1e-6f, 0, 1024, 16000, 1, 1.0f);
     TEST_ASSERT(cfg.no_rope == 1,  "config no_rope=1");
     TEST_ASSERT(cfg.n_layers == 6, "config no_rope layers");
 }
@@ -53,7 +53,7 @@ static void test_config(void) {
 static void test_kv_cache(void) {
     vcpm_minicpm4_config cfg;
     vcpm_minicpm4_config_from_model(&cfg, 256, 4, 8, 2, 1024, 32,
-                                     1e-5f, 10000, 512, 16000, 0);
+                                     1e-5f, 10000, 512, 16000, 0, 1.0f);
 
     /* Create ggml context for KV cache tensors */
     struct ggml_init_params params = {
@@ -310,7 +310,7 @@ static void test_attention_graph(void) {
     vcpm_minicpm4_config cfg;
     vcpm_minicpm4_config_from_model(&cfg, hidden, 1, n_heads, n_kv,
                                      hidden * 4, head_dim, 1e-5f,
-                                     10000, max_seq, 0, 0);
+                                     10000, max_seq, 0, 0, 1.0f);
     int ret = vcpm_kv_cache_init(ctx, &cache, &cfg);
     TEST_ASSERT(ret == 0, "attn kv_cache init");
 
@@ -365,7 +365,7 @@ static void test_forward_graph(void) {
     vcpm_minicpm4_config cfg;
     vcpm_minicpm4_config_from_model(&cfg, hidden, n_layers, n_heads, n_kv,
                                      hidden * 4, head_dim, 1e-5f,
-                                     10000, max_seq, 0, 0);
+                                     10000, max_seq, 0, 0, 1.0f);
 
     /* Setup weights */
     vcpm_minicpm4_weights w;
