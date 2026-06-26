@@ -266,4 +266,44 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
  */
 void vcpm_gen_free(vcpm_generate_state * state);
 
+/* ================================================================
+ * Internal helper declarations (shared across gen_*.c modules).
+ * Not part of the public voxcpm.h API — may change without notice.
+ * ================================================================ */
+
+/* Forward text tokens through base_lm (no feat_encoder override).
+ * Populates base_lm KV cache at pos_start..pos_start+n_tokens-1.
+ * Defined in gen_prompt.c, used by gen_step.c for LM update. */
+int gen_forward_text(vcpm_generate_state * state,
+                      struct ggml_context * ctx,
+                      struct ggml_cgraph * graph,
+                      const int32_t * token_ids,
+                      int n_tokens,
+                      int pos_start,
+                      struct ggml_tensor ** out_hidden);
+
+/* Forward one token through RALM with given hidden input.
+ * Uses no_rope=1 config. Populates RALM KV cache.
+ * Defined in gen_prompt.c, used by gen_step.c for RALM update. */
+struct ggml_tensor * gen_forward_ralm(vcpm_generate_state * state,
+                                       struct ggml_context * ctx,
+                                       struct ggml_cgraph * graph,
+                                       struct ggml_tensor * ralm_input,
+                                       int pos);
+
+/* Prompt evaluation: process text tokens to populate KV caches.
+ * Runs base_lm + RALM for text positions 0..n_text_tokens-1.
+ * Sets lm_hidden_state and residual_hidden_state from last position.
+ * Defined in gen_prompt.c, called by gen_run.c. */
+int gen_prompt_eval(vcpm_generate_state * state,
+                     struct ggml_context * ctx,
+                     struct ggml_cgraph * graph,
+                     const int32_t * token_ids,
+                     int n_text_tokens);
+
+/* Stop predictor: compute stop probability from last_lm_hidden.
+ * Returns [0,1] or -1 on error.
+ * Defined in gen_stop.c, called by gen_run.c. */
+float gen_predict_stop(vcpm_generate_state * state);
+
 #endif /* VCPM_GENERATE_H */

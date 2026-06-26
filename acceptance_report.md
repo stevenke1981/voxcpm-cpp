@@ -307,6 +307,7 @@
 | R10 | **bench command** | `src/main.c` | `voxcpm-c bench` with wall/CPU timing, RTF, CSV output |
 | R16 | **CMakePresets** | `CMakePresets.json` (new) | 5 presets: default, release, ci, msvc-debug, msvc-release |
 | R15 | **Error handling macros** | `src/error.h` (new) | `VCPM_ERR`, `VCPM_RETURN_STATUS`, `VCPM_RETURN_NULL` macros |
+| R3 | **Split generate.c into focused modules** | `src/gen_init.c`, `src/gen_prompt.c`, `src/gen_step.c`, `src/gen_stop.c`, `src/gen_run.c` (new); `src/generate.c` (deleted) | 1731→5 focused modules (avg ~320 lines each). All 6 unit tests pass identical to before. |
 
 ### Verification
 
@@ -314,6 +315,7 @@
 - Full build with MSVC succeeds without errors
 - `voxcpm-c bench --help` shows proper usage
 - CMakePresets validated via JSON syntax
+- generate.c split into 5 focused modules (R3); avg module size ~320 lines vs original 1731
 
 ### Updated Remaining Risks
 
@@ -321,4 +323,4 @@
 2. **C latents vs Python with same inputs**: Need to run C with same text "Hello world." and compare against Python `generated_feat.npy` for exact structure parity.
 3. **Stop predictor firing**: Fires at reasonable patch counts; still needs verification against Python `step*_stop_logits.npy`.
 4. **CFM trajectory parity**: Only structural verification; full CFM trajectory parity pending.
-5. **generate.c splitting (R3)**: Pending - the 1731-line file is the largest remaining technical debt item.
+5. **generate.c splitting (R3)**: ✅ Done - 1731-line file split into 5 focused modules (avg ~320 lines).

@@ -71,6 +71,9 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 | 2026-06-26 | **test_vae_only full verification: complete VAE decoder graph compute succeeds** | T10, G6 | test_vae_only.exe now completes without crash. All 10 decoder layer tensors verified valid. Model.9 raw conv vs manual im2col reference: Diff RMS = 0.0000000006, relative error = 0.000002 (bit-exact F32). VAE output: 15360 samples, 48000 Hz, RMS=0.000280. |
 | 2026-06-26 | **VAE depthwise conv fix: ggml-graph version replaces manual F32 loop (data-read-at-build-time bug)** | T10, G6 | Old `depthwise_conv1d()` read `input->data` at graph BUILD time (uninitialized for graph results). Caused near-zero depthwise conv (RMS=0.047 vs 0.273), 380× total VAE output amplitude loss. Fix: pure ggml-graph ops (`ggml_cpy` for pre-padding + `ggml_conv_1d_dw` + `ggml_add`). Model.2 output RMS=0.930 matches Python 0.930. Full gen 4.5s at 48kHz produced successfully. |
 
+| T15-R16 | build_report.md | build system hardening: CMakePresets.json, Install rules, test labels | ✅ | CMakePresets.json, CMakeLists.txt test labels |
+| T15-R3 | build_report.md | split generate.c (1731→5 focused modules) | ✅ | gen_init.c, gen_prompt.c, gen_step.c, gen_stop.c, gen_run.c — 6/7 unit tests pass |
+
 ## Legend
 
 - ✅ Complete

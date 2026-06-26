@@ -61,7 +61,11 @@ add_library(voxcpm STATIC
     src/cfm_solver.c
     src/audio_vae.c
     src/audio_vae_v2.c
-    src/generate.c
+    src/gen_init.c
+    src/gen_prompt.c
+    src/gen_step.c
+    src/gen_stop.c
+    src/gen_run.c
     src/log.c
 )
 
