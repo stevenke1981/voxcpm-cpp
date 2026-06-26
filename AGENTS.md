@@ -37,6 +37,13 @@ plan → implement smallest slice → build → run targeted tests → inspect d
 
 No phase can be marked done unless its tests pass and documentation is updated.
 
+## Git Sync
+
+- Commit only verified, scoped changes.
+- When Master explicitly requests `git push`, `push github`, or equivalent, pushing the current branch to its configured upstream is allowed.
+- Before pushing, run `git status --short --branch` and verify the branch/upstream.
+- Do not push model weights or unrelated diagnostic artifacts.
+
 ## Coding Style
 
 - C11.
