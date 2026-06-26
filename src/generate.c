@@ -300,12 +300,17 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     s->vae_cfg.output_sample_rate = cfg->vae_out_sample_rate;
 
     /* V2 decoder config from model config */
-    vcpm_audio_vae_v2_config_fill(&s->vae_v2_cfg,
-                                   cfg->vae_latent_dim,    /* latent_dim = 64 */
-                                   2048,                    /* decoder_dim */
-                                   cfg->vae_decoder_rates, /* [8,6,5,2,2,2] */
-                                   cfg->vae_sample_rate,
-                                   cfg->vae_out_sample_rate);
+    {
+        int default_enc_rates[4] = {2, 5, 8, 8};
+        vcpm_audio_vae_v2_config_fill(&s->vae_v2_cfg,
+                                       cfg->vae_latent_dim,    /* latent_dim = 64 */
+                                       128,                     /* encoder_dim */
+                                       2048,                    /* decoder_dim */
+                                       cfg->vae_decoder_rates,  /* [8,6,5,2,2,2] */
+                                       default_enc_rates,       /* [2,5,8,8] */
+                                       cfg->vae_sample_rate,
+                                       cfg->vae_out_sample_rate);
+    }
 
     /* Per-step ggml context */
     if (step_mem == 0) step_mem = 6LL * 1024 * 1024 * 1024;  /* KV caches plus 10-step LocDiT compute arena */

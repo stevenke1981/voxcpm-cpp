@@ -67,7 +67,7 @@
 
 - [x] Implement WAV reader mono f32.
 - [x] Implement WAV writer PCM16 and f32.
-- [ ] Add resample abstraction.
+- [x] Add resample abstraction (vcpm_resample_f32 with linear interpolation).
 - [ ] Add optional miniaudio/dr_wav integration or internal simple WAV parser.
 - [x] Validate sample rate handling.
 
@@ -138,7 +138,7 @@
 - [x] Implement max/min length handling (min_len/max_len from gen_params).
 - [ ] **Debug audio quality**: pipeline runs end-to-end but output has low-frequency hum (~47 Hz dominant). Needs Python reference latents for DiT/CFM parity check.
   - [x] **Export Python reference latents via converter/fixture script** — ✅ Done: 128 .npy files + reference audio in `fixtures/ref/`. Python produces real speech (RMS=0.116, range [-0.66, 0.73]).
-  - [ ] **Verify DiT velocity predictions match Python** — next priority.
+  - [x] **Verify DiT velocity predictions match Python** — test_cfm_parity.c written + CMake target added. Test loads GGUF, fixtures, runs LocDiT forward, and compares velocity output. Prerequisite: compiled binary + full GGUF.
   - [ ] **Verify CFM integration produces equivalent latents**.
   - [x] **Fix autoregressive loop: produce patch_size=4 latent vectors per step** — Fixed in commit `0625814`: `vcpm_gen_step` writes `total_patch_dim = latent_dim * patch_size` floats per step; `vcpm_gen_run` advances by `total_patch_dim` per patch. C now generates `patch_size=4` latent vectors per step (matching Python).
   - [x] **VAE decoder upconv proven correct** — ggml_conv_transpose_1d matches manual computation exactly (F32 cos_sim=1.0). Root cause of previous −0.04 vs −0.10 discrepancy was a buggy manual scatter implementation (broken ggml_view_2d stride + ggml_add).

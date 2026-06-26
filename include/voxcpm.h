@@ -75,6 +75,15 @@ int     vcpm_write_wav_f32(const char * path, const float * samples, int sample_
 int     vcpm_write_wav_pcm16(const char * path, const float * samples, int sample_rate, int channels, uint64_t n_samples);
 int64_t vcpm_read_wav_f32(const char * path, float ** out_samples, int * out_sample_rate, int * out_channels);
 
+/* Audio resampler: linear interpolation between arbitrary sample rates.
+ * Input and output are mono interleaved float samples.
+ * Returns number of output samples, or -1 on error.
+ * *out_samples is allocated and must be freed with free().
+ */
+int64_t vcpm_resample_f32(const float * input, size_t n_input,
+                          int input_rate, int output_rate,
+                          float ** out_samples);
+
 /* Tokenize helper (debug / CLI) */
 int     vcpm_tokenize(vcpm_context * ctx, const char * text, int32_t * ids, int max_len);
 

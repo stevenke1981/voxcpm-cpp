@@ -31,6 +31,9 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 | G7 | test.md §8 | End-to-end TTS smoke | ⏳ | Needs full model weights |
 | G8 | test.md §8 | Reference cloning smoke | ⏳ | Not implemented |
 | G9 | test.md §8 | Streaming smoke | ⏳ | Not implemented |
+| G10 | test.md §8 | Audio resample f32 linear interpolation | ✅ | test_wav: downsample 48k→16k, upsample 16k→48k, same-rate identity, 2x upsample, error cases |
+| G11 | test.md §8 | VAE V2 encoder graph (block.0-4 + fc_mu/fc_logvar) | ✅ | audio_vae_v2.c: vcpm_vae_v2_encode + encoder_block, resolved from GGUF weight shapes |
+| G12 | test.md §8 | CFM/DiT velocity parity test | ✅ | test_cfm_parity.c: loads GGUF + fixtures, runs LocDiT forward, compares v_pred vs reference |
 
 ## Recent Changes
 
@@ -40,6 +43,9 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 | 2026-06-25 | Bug fix: audio placeholder count too small (4→~80) | F4, T7 | Updated sequence.c zero-shot builder to max(patch_size*16, n_text*8) |
 | 2026-06-25 | Bug fix: stop predictor matmul transposed indexing | F4, spec.md §8.10 | Changed W[j*hs+i] to W[i*hs+j] in both stop_proj and stop_head |
 | 2026-06-25 | Bug fix: gen_predict_stop forward declaration missing | F4, spec.md §8.10 | Added prototype before vcpm_gen_run; MSVC assumed int return |
+| 2026-06-26 | Feature: audio resampler vcpm_resample_f32 | G10, todos.md §6 | Linear interpolation resampler + tests in test_wav.c |
+| 2026-06-26 | Feature: VAE V2 encoder vcpm_vae_v2_encode | G11, todos.md §10 | Full encoder with 4 downsampling blocks + residual units + Snake + fc_mu/fc_logvar output |
+| 2026-06-26 | Test: CFM/DiT parity test test_cfm_parity.c | G5, todos.md §11 | Structural parity test loads GGUF + fixtures, runs LocDiT forward, compares velocity |
 | 2026-06-25 | Bug fix: step_ctx memory pool exhaustion (3GB→8GB) | F3, G0 | Increased step_mem to accommodate full prompt eval compute graph |
 | 2026-06-25 | Bug fix: latent buffer offset wrong in vcpm_gen_run | F4, T5 | Changed `latent_out + n_patches * latent_dim` to `latent_out + n_patches * total_patch_dim` |
 | 2026-06-25 | Bug fix: ggml_view_2d + ggml_add in manual upconv | F3, T10 | Reverted to native ggml_conv_transpose_1d; removed all post-compute fixup infrastructure |

@@ -147,12 +147,45 @@
 19. **VAE context memory increased** (`src/generate.c: vcpm_gen_decode`)
      - **Problem**: ggml_conv_1d_dw requires additional working memory in the VAE context. The VAE decoder for 40 timesteps needs ~8.6 GB, exceeding the old 6 GB pool.
      - **Fix**: Increased `vae_mem` from 6 GB to 10 GB.
-     - **Effect**: Full generation VAE decode no longer crashes with `GGML_ASSERT(obj_new) failed`.
+      - **Effect**: Full generation VAE decode no longer crashes with `GGML_ASSERT(obj_new) failed`.
+
+### New (Session 3: Gap Sprint — 2026-06-26)
+
+20. **Audio resampler implemented** (`src/wav.c: vcpm_resample_f32`)
+     - **What**: Linear interpolation resampler for mono float audio between arbitrary sample rates.
+     - **API**: `int64_t vcpm_resample_f32(const float * input, size_t n_input, int input_rate, int output_rate, float ** out_samples)`
+     - **Declared in**: `include/voxcpm.h`
+     - **Tests**: `test_wav.c` — downsample 48k→16k, upsample 16k→48k, same-rate identity (max_diff < 1e-6), 2x upsample of short buffer, error cases
+     - **Effect**: Prerequisite for reference/prompt audio processing at mismatched sample rates.
+
+21. **VAE V2 encoder implemented** (`src/audio_vae_v2.c: vcpm_vae_v2_encode + encoder_block`)
+     - **What**: Full V2 encoder graph with 5 main blocks:
+       - `block.0`: Conv1d(k=7, 1→128) initial projection
+       - `block.1-4`: Each with 3×ResidualUnit → Snake → Downconv (strides 2,5,8,8)
+       - `fc_mu` / `fc_logvar`: Conv1d(k=3, 2048→64) output mean/log variance
+     - **Architecture verified from actual GGUF weight shapes** using `python -c "import gguf; ..."`
+     - **Total downsample**: 2×5×8×8 = 640 → 16kHz input → 25 Hz latent rate
+     - **Uses same infrastructure**: `residual_unit`, `conv1d_layer`, `snake_activation`, `alpha_to_f32` from V2 decoder
+     - **Config updated**: `vcpm_audio_vae_v2_config` now includes `encoder_dim` and `encoder_rates[4]`
+     - **Wired**: `generate.c` V2 config_fill call updated with encoder defaults
+     - **Status**: Code complete. Requires compiled binary + GGUF to run.
+
+22. **CFM/DiT parity test written** (`tests/test_cfm_parity.c`)
+     - **What**: Standalone test that:
+       - Loads GGUF model via `vcpm_model_load()`
+       - Reads Python fixtures (`dit_hidden_init`, `step0000_cfm_cond`, `step0000_cfm_pred_feat`)
+       - Resolves all LocDiT weights (input_proj, output_proj, norm, cond_proj, time_mlp, delta_time_mlp, layer weights)
+       - Creates input tensors from fixture data with correct shapes
+       - Runs `vcpm_locdit_forward()` with timestep=1.0
+       - Computes velocity RMS, cosine similarity vs `cfm_pred_feat`, max error, RMS error
+       - Verifies structural sanity (finite values, non-zero velocity)
+     - **Added to CMakeLists.txt** as `test_cfm_parity` target
+     - **Status**: Test code complete. Requires compiled binary + full GGUF to execute.
 
 ### Remaining Risks
 
 1. **Audio quality still has 50 Hz periodic content**: Output RMS=0.021 (vs Python reference 0.116). Spectrum shows 50 Hz peak only 4.1 dB below the 200 Hz speech peak. The VAE decoder is verified correct (RMS=0.116 with fixture latent), so the issue is in the CFM/DiT latent generation pipeline, not the decoder.
-2. **CFM/DiT velocity parity not verified**: Need to compare C DiT velocity predictions against Python reference fixtures (`step*_cfm_pred_feat.npy`).
+2. **CFM/DiT velocity parity test written but not executed**: `test_cfm_parity.c` is complete but requires compiled binary + full GGUF to run. Ready for next full-build cycle.
 3. **C generated latents differ from Python**: C latents from `c_latent_dump.bin` have RMS=1.54 but correlation ~0 with Python `generated_feat.npy`. Different text inputs, but the divergence likely indicates a conditioning issue (prev_latent, sr_cond, or FSQ quantization).
 4. **Stop predictor firing**: Was firing at patch 2-3; with current output, fires at patch 10 for short text. Need to verify stop prediction against Python reference (`step*_stop_logits.npy`).
 5. **Converter implemented**: ✅ `convert_voxcpm2_to_gguf.py` works.

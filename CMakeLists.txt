@@ -113,6 +113,14 @@ if(VCPM_BUILD_TESTS)
     target_link_libraries(test_phase5 PRIVATE voxcpm)
     add_test(NAME phase5 COMMAND test_phase5)
 
+    # CFM/DiT parity test (requires GGUF model + Python fixtures)
+    add_executable(test_cfm_parity tests/test_cfm_parity.c)
+    target_include_directories(test_cfm_parity PRIVATE
+        ${VCPM_TEST_PRIVATE_INCLUDES}
+        ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(test_cfm_parity PRIVATE voxcpm)
+    add_test(NAME cfm_parity COMMAND test_cfm_parity voxcpm2_v2_full.gguf fixtures/ref)
+
     add_executable(test_model_loader_tensors tests/test_model_loader_tensors.c)
     target_include_directories(test_model_loader_tensors PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_model_loader_tensors PRIVATE voxcpm)

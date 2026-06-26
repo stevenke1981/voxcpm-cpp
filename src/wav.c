@@ -268,3 +268,46 @@ int64_t vcpm_read_wav_f32(const char * path, float ** out_samples,
     fclose(f);
     return (int64_t)n_frames;
 }
+
+/* ---- Audio resampler (linear interpolation) ---- */
+
+int64_t vcpm_resample_f32(const float * input, size_t n_input,
+                          int input_rate, int output_rate,
+                          float ** out_samples) {
+    if (!input || !out_samples || input_rate <= 0 || output_rate <= 0 || n_input == 0) {
+        return -1;
+    }
+
+    *out_samples = NULL;
+
+    /* Compute output length: ceil(n_input * output_rate / input_rate) */
+    /* Use 64-bit to avoid overflow */
+    uint64_t n_output = ((uint64_t)n_input * (uint64_t)output_rate + (uint64_t)input_rate - 1)
+                        / (uint64_t)input_rate;
+
+    float * out = (float *)calloc((size_t)n_output, sizeof(float));
+    if (!out) return -1;
+
+    double ratio = (double)input_rate / (double)output_rate;
+
+    for (uint64_t i = 0; i < n_output; i++) {
+        /* Source position in input samples (continuous) */
+        double src_pos = (double)i * ratio;
+
+        /* Integer and fractional parts */
+        uint64_t idx = (uint64_t)src_pos;
+        double frac = src_pos - (double)idx;
+
+        /* Clamp to valid range */
+        if (idx >= n_input - 1) {
+            out[i] = input[n_input - 1];
+        } else {
+            float s0 = input[idx];
+            float s1 = input[idx + 1];
+            out[i] = (float)(s0 + frac * (s1 - s0));
+        }
+    }
+
+    *out_samples = out;
+    return (int64_t)n_output;
+}

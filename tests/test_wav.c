@@ -144,8 +144,72 @@ int main(void) {
         free(roundtrip);
         remove("test_u8.wav");
     }
-
     free(original);
+
+    /* ---- Audio resampler tests ---- */
+    {
+        /* Downsample: 48 kHz -> 16 kHz */
+        float * r = NULL;
+        int64_t n_r = vcpm_resample_f32(original, n, 48000, 16000, &r);
+        assert(n_r > 0 && "resample should produce output");
+        assert(r != NULL && "resample should allocate output");
+        /* Expected: ~1 sec @ 16 kHz = 16000 samples */
+        assert(n_r >= 16000 && n_r <= 16001 && "downsample length should be ~16000");
+        printf("PASS: downsample 48k->16k produced %lld samples\n", (long long)n_r);
+
+        /* Read back: reconstruct and compare approximate values */
+        float * up = NULL;
+        int64_t n_up = vcpm_resample_f32(r, (size_t)n_r, 16000, 48000, &up);
+        assert(n_up > 0 && "upsample should produce output");
+        /* Should be close to original length */
+        printf("PASS: upsample 16k->48k produced %lld samples (original %d)\n",
+               (long long)n_up, n);
+        /* Verify rough amplitude: peak should still be ~0.5 */
+        float peak = 0.0f;
+        for (int64_t i = 0; i < n_up; i++) {
+            float a = fabsf(up[i]);
+            if (a > peak) peak = a;
+        }
+        assert(peak > 0.25f && peak < 0.75f && "amplitude should be preserved after resample roundtrip");
+        printf("PASS: resample roundtrip peak=%.4f (expected ~0.5)\n", peak);
+
+        /* No-op: same rate should be near-identical */
+        float * same = NULL;
+        int64_t n_same = vcpm_resample_f32(original, n, 48000, 48000, &same);
+        assert(n_same == n && "same-rate resample should preserve length");
+        float max_diff = 0.0f;
+        for (int i = 0; i < n; i++) {
+            float d = fabsf(original[i] - same[i]);
+            if (d > max_diff) max_diff = d;
+        }
+        /* Linear interpolation with integer ratio should be exact for same rate */
+        assert(max_diff < 1e-6f && "same-rate resample should be nearly identical");
+        printf("PASS: same-rate resample max_diff=%.2e\n", max_diff);
+
+        /* Upsample short buffer */
+        float short_in[] = {0.0f, 0.5f, 1.0f, 0.5f, 0.0f};
+        float * short_out = NULL;
+        int64_t n_short = vcpm_resample_f32(short_in, 5, 100, 200, &short_out);
+        assert(n_short == 10 && "2x upsampling of 5 samples should produce 10");
+        /* First sample should match */
+        assert(short_out[0] == 0.0f && "first sample should match");
+        printf("PASS: simple 2x upsample (5->10 samples)\n");
+
+        /* Error cases */
+        int64_t bad = vcpm_resample_f32(NULL, 100, 48000, 16000, &r);
+        assert(bad < 0 && "resample with NULL input should fail");
+        bad = vcpm_resample_f32(original, 0, 48000, 16000, &r);
+        assert(bad < 0 && "resample with zero input should fail");
+        bad = vcpm_resample_f32(original, 100, 0, 16000, &r);
+        assert(bad < 0 && "resample with zero input_rate should fail");
+        printf("PASS: error cases handled correctly\n");
+
+        free(r);
+        free(up);
+        free(same);
+        free(short_out);
+    }
+
     printf("\nAll WAV tests passed!\n");
     return 0;
 }
