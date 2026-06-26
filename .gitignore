@@ -54,6 +54,7 @@ build_msvc/
 
 # Debug dumps
 *.raw
+dump_*.bin
 snap_*.bin
 *_dump.bin
 

@@ -40,6 +40,7 @@ int main(int argc, char ** argv) {
     char path_buf[256];
 
     vcpm_model_params mp = vcpm_default_model_params();
+    mp.backend = VCPM_BACKEND_CPU;
     vcpm_context * ctx = vcpm_load_model(model_path, &mp);
     assert(ctx != NULL);
     assert(vcpm_model_is_loaded(ctx));

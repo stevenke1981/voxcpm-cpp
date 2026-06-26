@@ -86,6 +86,7 @@ typedef struct vcpm_generate_state {
 
     /* Projection weights */
     struct ggml_tensor * enc_to_lm_proj;
+    struct ggml_tensor * enc_to_lm_bias;
     struct ggml_tensor * lm_to_dit_proj;
     struct ggml_tensor * res_to_dit_proj;
 

@@ -228,6 +228,7 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     s->fsq_out_proj_bias   = resolve_weight(model, "fsq.out_proj.bias");
 
     s->enc_to_lm_proj  = resolve_weight(model, "enc_to_lm_proj.weight");
+    s->enc_to_lm_bias  = resolve_weight(model, "enc_to_lm_proj.bias");
     s->lm_to_dit_proj  = resolve_weight(model, "lm_to_dit_proj.weight");
     s->res_to_dit_proj = resolve_weight(model, "res_to_dit_proj.weight");
 

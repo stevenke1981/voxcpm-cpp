@@ -283,14 +283,20 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
                                   v_reshaped->nb[1], v_reshaped->nb[2], 0);
             kv_len = n_tokens;
         } else {
-            /* Causal: use KV cache up to ti+1 */
+            /* Causal: use KV cache up to write_pos + ti + 1
+             * write_pos = number of already-cached tokens before this batch.
+             * For prompt eval (write_pos=0): kv_len = ti + 1 (correct for empty cache).
+             * For single-token generation after prompt eval (write_pos>0):
+             *   kv_len must include ALL cached tokens + current batch up to ti.
+             *   Without write_pos, the new token would only attend to cache entry 0. */
+            int32_t kv_cache_len = write_pos + ti + 1;
             k_sel = ggml_view_3d(ctx, k_cache,
-                                  head_dim, n_kv_heads, ti + 1,
+                                  head_dim, n_kv_heads, kv_cache_len,
                                   k_cache->nb[1], k_cache->nb[2], 0);
             v_sel = ggml_view_3d(ctx, v_cache,
-                                  head_dim, n_kv_heads, ti + 1,
+                                  head_dim, n_kv_heads, kv_cache_len,
                                   v_cache->nb[1], v_cache->nb[2], 0);
-            kv_len = ti + 1;
+            kv_len = kv_cache_len;
         }
 
         /* Per-group GQA attention */

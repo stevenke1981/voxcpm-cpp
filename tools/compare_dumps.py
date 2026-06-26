@@ -223,15 +223,21 @@ def main():
         ("dump_base_lm_out.bin",  "base_lm_out.npy"),
     ]
 
-    # Step-specific dump mappings: (dump_prefix, step_suffixes_for_dump, fixture_suffix_list)
-    # e.g. dump_step_cond_0000.bin matches step0000_prefix_feat_cond.npy
+    # Step-specific dump mappings: (dump_prefix, step_suffixes_for_dump, fixture_suffix_list, step_offset)
+    # step_offset: number of steps to add to the C dump step number to get the correct Python fixture step.
+    # C's ar_step_counter starts at 0 for the first generation step.
+    # For CFM/FE outputs, step_counter=0 maps to Python step0000.
+    # For LM/RESIDUAL hidden states, step_counter=N maps to Python step(N+1) because
+    #   the hidden state is dumped AFTER the LM update, which produces the state for
+    #   the NEXT step. Step0000 = initial state (pre-audio), step0001 = after first audio.
+    # e.g. dump_lm_hidden_ar_0000.bin matches step0001_lm_hidden_step.npy
     step_pairs = [
-        ("dump_step_cond_",       ["prefix_feat_cond"]),
-        ("dump_step_noise_",      None),  # no Python fixture for noise
-        ("dump_step_pred_feat_",  ["cfm_pred_feat"]),
-        ("dump_mu_init_",         ["dit_hidden"]),
-        ("dump_lm_hidden_ar_",    ["lm_hidden_step"]),
-        ("dump_residual_hidden_ar_", ["residual_hidden_step"]),
+        ("dump_step_cond_",       ["prefix_feat_cond"],       0),
+        ("dump_step_noise_",      None,                       0),  # no Python fixture for noise
+        ("dump_step_pred_feat_",  ["cfm_pred_feat"],          0),
+        ("dump_mu_init_",         ["dit_hidden"],             0),
+        ("dump_lm_hidden_ar_",    ["lm_hidden_step"],         1),
+        ("dump_residual_hidden_ar_", ["residual_hidden_step"], 1),
     ]
 
     results = []
@@ -284,18 +290,18 @@ def main():
         for base_name, dump_path in sorted(step_dumps.items()):
             # Find matching suffix in step_pairs
             matched_pair = None
-            for prefix, suffix_list in step_pairs:
+            for prefix, suffix_list, step_offset in step_pairs:
                 # prefix e.g. "step_cond_" (without "dump_")
                 p = prefix.replace("dump_", "")
                 if base_name == p.rstrip("_"):
-                    matched_pair = (prefix, suffix_list)
+                    matched_pair = (prefix, suffix_list, step_offset)
                     break
 
             if matched_pair is None:
                 print(f"\n--- {base_name}_{step_num:04d}.bin: No matching pair defined ---")
                 continue
 
-            prefix, suffix_list = matched_pair
+            prefix, suffix_list, step_offset = matched_pair
 
             try:
                 c_data, c_shape = load_bin(dump_path)
@@ -311,11 +317,17 @@ def main():
                 print(f"  Range: [{c_data.min():.6f}, {c_data.max():.6f}]")
                 continue
 
-            # Find matching step fixture
-            fixture_path = find_fixture_for_step(args.fixtures_dir, step_num, suffix_list)
+            # Find matching step fixture (apply step_offset for post-update states)
+            fixture_step = step_num + step_offset
+            fixture_path = find_fixture_for_step(args.fixtures_dir, fixture_step, suffix_list)
             if fixture_path is None:
-                print(f"\n--- {os.path.basename(dump_path)}: No matching fixture for step {step_num} ---")
-                continue
+                print(f"\n--- {os.path.basename(dump_path)}: No matching fixture for step {fixture_step} (C step {step_num} + offset {step_offset}) ---")
+                # Try without offset as fallback
+                fixture_path = find_fixture_for_step(args.fixtures_dir, step_num, suffix_list)
+                if fixture_path:
+                    print(f"    (found step{step_num:04d} instead — may be off-by-one mismatch)")
+                else:
+                    continue
 
             py_data = load_npy(fixture_path)
             dump_name = os.path.basename(dump_path)

@@ -105,8 +105,19 @@ static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
                                                          state->enc_feat_dim,
                                                          patch_size_for_fe);
     if (latent_t && latent_t->data && state->prev_patch) {
-        memcpy(latent_t->data, state->prev_patch,
-               (size_t)total_fe_dim * sizeof(float));
+        /* prev_patch is stored as [feat_dim][patch] = [64][4] layout:
+         *   indices 0..3: dim0_p0, dim0_p1, dim0_p2, dim0_p3
+         *   indices 4..7: dim1_p0, dim1_p1, dim1_p2, dim1_p3
+         * FeatEncoder input tensor is [feat_dim, patch_size] in ggml column-major:
+         *   column 0 (patch 0): dim0_p0, dim1_p0, ..., dim63_p0
+         *   column 1 (patch 1): dim0_p1, dim1_p1, ..., dim63_p1
+         * So we must transpose from prev_patch's dim-major to column-major patch layout. */
+        float * dst = (float *)latent_t->data;
+        for (int p = 0; p < patch_size_for_fe; p++) {
+            for (int d = 0; d < state->enc_feat_dim; d++) {
+                dst[p * state->enc_feat_dim + d] = state->prev_patch[d * patch_size_for_fe + p];
+            }
+        }
     }
     ggml_set_name(latent_t, "fe_input_all_patches");
 
@@ -118,6 +129,12 @@ static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
 
     struct ggml_tensor * audio_embed = vcpm_linear_proj(ctx, fe_output,
                                                            state->enc_to_lm_proj);
+    if (state->enc_to_lm_bias) {
+        audio_embed = ggml_add(ctx, audio_embed,
+                                ggml_cast(ctx, state->enc_to_lm_bias, GGML_TYPE_F32));
+    }
+
+
     ggml_set_name(audio_embed, "audio_embed");
     return audio_embed;
 }
@@ -503,6 +520,11 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     }
 
     const float * output_src = (quantized && quantized->data) ? (const float *)quantized->data : x_data;
+    if (vcpm_debug_shapes_env()) {
+        char qlabel[64];
+        snprintf(qlabel, sizeof(qlabel), "quant_out_%04d", ar_step_counter);
+        vcpm_dump_tensor(qlabel, output_src, latent_dim, patch_size, 0);
+    }
     memcpy(output_patch, output_src, (size_t)total_patch_dim * sizeof(float));
     memcpy(state->prev_patch, output_src, (size_t)total_patch_dim * sizeof(float));
 
@@ -553,6 +575,7 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
     ggml_set_name(audio_embed, "update_audio_embed");
     VCPM_LOG_SHAPE("update.audio_embed", audio_embed);
 
+
     vcpm_minicpm4_config base_cfg;
     vcpm_minicpm4_config_from_model(&base_cfg,
                                      state->hidden_size, state->n_base_layers,
@@ -587,6 +610,21 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
 
     if (fsq_out) ggml_build_forward_expand(graph, fsq_out);
     ggml_graph_compute_with_ctx(update_ctx, graph, 1);
+
+    if (vcpm_debug_shapes_env() && base_hidden && base_hidden->data) {
+        char label[64];
+        snprintf(label, sizeof(label), "base_hidden_update_%04d", fill_pos);
+        vcpm_dump_tensor(label, (const float *)base_hidden->data,
+                          base_hidden->ne[0], base_hidden->ne[1], 0);
+        snprintf(label, sizeof(label), "audio_embed_update_%04d", fill_pos);
+        vcpm_dump_tensor(label, (const float *)audio_embed->data,
+                          audio_embed->ne[0], audio_embed->ne[1], 0);
+        if (fe_out && fe_out->data) {
+            snprintf(label, sizeof(label), "fe_output_update_%04d", fill_pos);
+            vcpm_dump_tensor(label, (const float *)fe_out->data,
+                              fe_out->ne[0], fe_out->ne[1], 0);
+        }
+    }
 
     if (state->lm_hidden_state && fsq_out && fsq_out->data) {
         memcpy(state->lm_hidden_state, fsq_out->data,
