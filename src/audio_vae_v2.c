@@ -79,7 +79,7 @@ static struct ggml_tensor * tensor_by_name(struct ggml_context * ctx,
  *
  * Auto-detects depthwise vs regular conv from weight shape:
  *   weight ne[1] == 1 → depthwise (uses diagonal weight expansion)
- *   weight ne[1] > 1  → regular (conv1d_f32)
+ *   weight ne[1] > 1  → regular conv1d_f32 (vcpm_conv1d_f32)
  *
  * For depthwise: weight [K, 1, C], input [N, C], output [OW, C]
  * For regular:   weight [K, IC, OC], input [N, IC], output [OW, OC]
@@ -124,7 +124,7 @@ static float * ensure_f32_weights(struct ggml_tensor * weight,
  * input:  [N, IC] (F32)
  * output: [OW, OC] after reshape
  */
-static struct ggml_tensor * conv1d_f32(struct ggml_context * ctx,
+struct ggml_tensor * vcpm_conv1d_f32(struct ggml_context * ctx,
                                         struct ggml_tensor * weight,
                                         struct ggml_tensor * input,
                                         int s0, int p0, int d0) {
@@ -339,9 +339,9 @@ static struct ggml_tensor * conv1d_layer(struct ggml_context * ctx,
         struct ggml_tensor * cpy = ggml_cpy(ctx, input, dst_slice);
         ggml_set_name(cpy, "causal_pad");
         ggml_build_forward_expand(graph, cpy);
-        out = conv1d_f32(ctx, weight, padded, stride, 0, dilate);
+        out = vcpm_conv1d_f32(ctx, weight, padded, stride, 0, dilate);
     } else {
-        out = conv1d_f32(ctx, weight, input, stride, pad, dilate);
+        out = vcpm_conv1d_f32(ctx, weight, input, stride, pad, dilate);
     }
     if (!out) return NULL;
     out = ggml_reshape_2d(ctx, out, out->ne[0], out->ne[1]);

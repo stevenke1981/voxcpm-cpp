@@ -48,9 +48,9 @@ int main(int argc, char ** argv) {
         for (int c = 0; c < IC; c++)
             id[t + c * N] = (float)(t * IC + c);  /* Known values */
 
-    /* Run conv1d_f32 (our F32 implementation) */
-    struct ggml_tensor * out = conv1d_f32(ctx, w9, input, 1, 3, 1);
-    if (!out) { fprintf(stderr, "conv1d_f32 failed\n"); return 1; }
+    /* Run vcpm_conv1d_f32 (our F32 implementation) */
+    struct ggml_tensor * out = vcpm_conv1d_f32(ctx, w9, input, 1, 3, 1);
+    if (!out) { fprintf(stderr, "vcpm_conv1d_f32 failed\n"); return 1; }
 
     out = ggml_reshape_2d(ctx, out, out->ne[0], out->ne[1]);
     if (b9) {

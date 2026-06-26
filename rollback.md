@@ -18,6 +18,8 @@ Tracks code changes that could be rolled back if needed.
 | RP-010 | 2026-06-25 | VAE upconv reverted to simple ggml_conv_transpose_1d | `src/audio_vae_v2.c` | `git checkout HEAD -- src/audio_vae_v2.c` | Low — native ggml_conv_transpose_1d is proven correct |
 | RP-011 | 2026-06-25 | Post-compute fixup infrastructure removed | `src/audio_vae_v2.c`, `include/voxcpm.h` | `git checkout HEAD -- src/audio_vae_v2.c include/voxcpm.h` | Low — fixups were never used correctly; ggml native upconv is the correct approach |
 | RP-012 | 2026-06-26 | F32 conv1d fix (conv1d_f32 replacing ggml_conv_1d for F16→F32 precision) | `src/audio_vae_v2.c`, `tools/test_vae_only.c` | `git checkout HEAD -- src/audio_vae_v2.c tools/test_vae_only.c` | Low — F32 path produces identical output to F16 path, but is safer for deep layers |
+| RP-013 | 2026-06-26 | Autoregressive loop ordering fix (mu from lm_hidden, CFM→LM→FSQ→RALM) | `src/generate.c`, `src/generate.h` | `git checkout HEAD -- src/generate.c src/generate.h` | High — reverts to inverted ordering (LM→CFM) with wrong mu, causing low-amplitude output |
+| RP-014 | 2026-06-26 | feat_encoder (locenc.c) rewrite: all-P parallel, CLS prepend, bidirectional | `src/locenc.c`, `src/generate.c` | `git checkout HEAD -- src/locenc.c src/generate.c` | High — reverts to old single-position, causal-add-fe architecture that doesn't match Python |
 
 ## Rollback Procedure
 

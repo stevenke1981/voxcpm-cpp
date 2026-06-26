@@ -353,6 +353,36 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
                                        cfg->vae_out_sample_rate);
     }
 
+    /* DEBUG: tensor shapes after all weight resolution */
+    if (vcpm_debug_shapes()) {
+        if (s->fe_in_proj_weight)
+            fprintf(stderr, "VCPM_DEBUG fe_in_proj_weight: [%" PRId64 ", %" PRId64 "] type=%d\n",
+                    s->fe_in_proj_weight->ne[0], s->fe_in_proj_weight->ne[1],
+                    s->fe_in_proj_weight->type);
+        if (s->fe_norm)
+            fprintf(stderr, "VCPM_DEBUG fe_norm: [%" PRId64 ", %" PRId64 "]\n",
+                    s->fe_norm->ne[0], s->fe_norm->ne[1]);
+        if (s->fe_special_token)
+            fprintf(stderr, "VCPM_DEBUG fe_special_token: [%" PRId64 ", %" PRId64 ", %" PRId64 ", %" PRId64 "]\n",
+                    s->fe_special_token->ne[0], s->fe_special_token->ne[1],
+                    s->fe_special_token->ne[2], s->fe_special_token->ne[3]);
+        if (s->enc_to_lm_proj)
+            fprintf(stderr, "VCPM_DEBUG enc_to_lm_proj: [%" PRId64 ", %" PRId64 "]\n",
+                    s->enc_to_lm_proj->ne[0], s->enc_to_lm_proj->ne[1]);
+        if (s->fsq_in_proj_weight)
+            fprintf(stderr, "VCPM_DEBUG fsq_in_proj: [%" PRId64 ", %" PRId64 "]\n",
+                    s->fsq_in_proj_weight->ne[0], s->fsq_in_proj_weight->ne[1]);
+        if (s->lm_to_dit_proj)
+            fprintf(stderr, "VCPM_DEBUG lm_to_dit_proj: [%" PRId64 ", %" PRId64 "]\n",
+                    s->lm_to_dit_proj->ne[0], s->lm_to_dit_proj->ne[1]);
+        if (s->res_to_dit_proj)
+            fprintf(stderr, "VCPM_DEBUG res_to_dit_proj: [%" PRId64 ", %" PRId64 "]\n",
+                    s->res_to_dit_proj->ne[0], s->res_to_dit_proj->ne[1]);
+        if (s->fusion_concat_proj)
+            fprintf(stderr, "VCPM_DEBUG fusion_concat_proj: [%" PRId64 ", %" PRId64 "]\n",
+                    s->fusion_concat_proj->ne[0], s->fusion_concat_proj->ne[1]);
+    }
+
     /* Create kv_ctx for long-lived KV cache tensors.
      * Calculate: (base_layers + ralm_layers) * 2 * head_dim * n_kv_heads * max_seq_len * sizeof(float)
      * Base LM: 28 * 2 * 128 * 2 * 32768 * 4 = 1,879,048,192 bytes ≈ 1.79 GiB
@@ -439,9 +469,29 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
         return NULL;
     }
 
+    /* Allocate autoregressive state buffers for mu computation.
+     * Following Python ordering: lm_hidden_state is FSQ'd base_lm hidden,
+     * residual_hidden_state is residual_lm hidden.
+     * Initialized from prompt eval, updated each step after CFM+LM. */
+    s->lm_hidden_state = (float *)calloc((size_t)s->hidden_size, sizeof(float));
+    s->residual_hidden_state = (float *)calloc((size_t)s->res_hidden_size, sizeof(float));
+    if (!s->lm_hidden_state || !s->residual_hidden_state) {
+        free(s->lm_hidden_state);
+        free(s->residual_hidden_state);
+        free(s->prev_patch);
+        free(s->base_kv_cache);
+        free(s->ralm_kv_cache);
+        ggml_free(s->step_ctx);
+        ggml_free(s->kv_ctx);
+        free(s);
+        return NULL;
+    }
+
     /* Allocate last_lm_hidden buffer for stop predictor (base_lm after FSQ) */
     s->last_lm_hidden = (float *)calloc((size_t)s->hidden_size, sizeof(float));
     if (!s->last_lm_hidden) {
+        free(s->lm_hidden_state);
+        free(s->residual_hidden_state);
         free(s->prev_patch);
         free(s->base_kv_cache);
         free(s->ralm_kv_cache);
@@ -551,13 +601,21 @@ static struct ggml_tensor * gen_forward_ralm(vcpm_generate_state * state,
                                   &ralm_cfg, &ralm_w, &ralm_cache, pos);
 }
 
-/* ---- Build feat_encoder(prev_patch last pos) → enc_to_lm_proj audio embedding ---- */
+/* ---- Build feat_encoder(prev_patch) → enc_to_lm_proj audio embedding ---- */
 /* Returns ggml tensor [2048, 1] — the audio position embedding.
- * Also returns fe_out [1024, 1] for the fusion path. */
+ * Feeds ALL patch_size positions through LocEnc which internally prepends
+ * a CLS token and uses bidirectional attention (matching Python's
+ * VoxCPMLocEnc). The CLS output [1024, 1] is projected to LM hidden size.
+ * Also returns fe_out [1024, 1] for the fusion path (currently unused). */
 static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
                                                     struct ggml_context * ctx,
                                                     struct ggml_cgraph * graph,
                                                     struct ggml_tensor ** fe_out) {
+    int patch_size_for_fe = state->model ? state->model->config.patch_size : 1;
+    if (patch_size_for_fe < 1) patch_size_for_fe = 1;
+    /* LocEnc processes P positions + 1 CLS token, so KV cache needs P+1 */
+    int seq_len_with_cls = patch_size_for_fe + 1;
+
     /* Build LocEnc config from state */
     vcpm_locenc_config le_cfg;
     vcpm_locenc_config_fill(&le_cfg,
@@ -568,9 +626,9 @@ static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
                              state->enc_intermediate_size,
                              state->head_dim,
                              state->rms_norm_eps,
-                             1,  /* max_seq_len=1 (single patch) */
+                             seq_len_with_cls,  /* max_seq_len = P+1 for CLS + patches */
                              state->enc_feat_dim,
-                             1); /* patch_size=1 */
+                             1); /* patch_size=1 (each pos is 64-dim) */
 
     vcpm_locenc_weights le_w;
     le_w.in_proj_weight  = state->fe_in_proj_weight;
@@ -579,42 +637,29 @@ static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
     le_w.norm_weight     = state->fe_norm;
     le_w.layer_weights   = state->fe_layer_weights;
 
-    /* The feat_encoder uses the last position of prev_patch for conditioning.
-     * This matches Python's z_prev[:,:,-1:] usage. */
-    int patch_size_for_fe = state->model ? state->model->config.patch_size : 1;
-    if (patch_size_for_fe < 1) patch_size_for_fe = 1;
-    int last_pos_offset = (patch_size_for_fe - 1) * state->enc_feat_dim;
-
-    /* Create prev_patch_last tensor [feat_dim, 1] */
+    /* Create input tensor with ALL patch positions: [feat_dim, P] */
+    int total_fe_dim = state->enc_feat_dim * patch_size_for_fe;
     struct ggml_tensor * latent_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
-                                                         state->enc_feat_dim, 1);
+                                                         state->enc_feat_dim,
+                                                         patch_size_for_fe);
     if (latent_t && latent_t->data && state->prev_patch) {
-        memcpy(latent_t->data, state->prev_patch + last_pos_offset,
-               (size_t)state->enc_feat_dim * sizeof(float));
+        memcpy(latent_t->data, state->prev_patch,
+               (size_t)total_fe_dim * sizeof(float));
     }
-    ggml_set_name(latent_t, "fe_input");
+    ggml_set_name(latent_t, "fe_input_all_patches");
 
-    /* Forward through feat_encoder. use_special=1 for first position
-     * (all zeros), 0 otherwise.
-     * Since prev_patch is initialized to zeros, the first call gets special_token. */
-    int use_special = 1;
-    /* Check if prev_patch last position is all zeros */
-    {
-        int all_zero = 1;
-        for (int i = 0; i < state->enc_feat_dim && all_zero; i++) {
-            if (state->prev_patch[last_pos_offset + i] != 0.0f) all_zero = 0;
-        }
-        use_special = all_zero;
-    }
+    /* Forward through feat_encoder.
+     * use_special is ignored — the CLS token is always prepended when
+     * feat_encoder.special_token weight exists. */
     struct ggml_tensor * fe_output = vcpm_locenc_forward(ctx, graph, latent_t,
-                                                          &le_cfg, &le_w, use_special);
+                                                           &le_cfg, &le_w, 1);
     if (!fe_output) return NULL;
     ggml_set_name(fe_output, "fe_output");
     if (fe_out) *fe_out = fe_output;
 
-    /* Project feat_encoder output to LM hidden size */
+    /* Project feat_encoder CLS output to LM hidden size */
     struct ggml_tensor * audio_embed = vcpm_linear_proj(ctx, fe_output,
-                                                          state->enc_to_lm_proj);
+                                                           state->enc_to_lm_proj);
     ggml_set_name(audio_embed, "audio_embed");
     return audio_embed;
 }
@@ -654,8 +699,8 @@ static struct ggml_tensor * gen_fsq_hidden(vcpm_generate_state * state,
 vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                            const int32_t * token_ids,
                            int fill_pos,
-                           const vcpm_generation_params * gen_params,
-                           float * output_patch) {
+                            const vcpm_generation_params * gen_params,
+                            float * output_patch) {
     if (!state || !token_ids || !output_patch) return VCPM_ERR_INVALID_ARG;
     struct ggml_cgraph * graph = state->step_graph;
     ggml_graph_clear(graph);
@@ -668,14 +713,21 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     float cfg_value = gen_params ? gen_params->cfg_value : 2.0f;
 
     /*
-     * ========== PHASE 1: Pre-CFM (feat_encoder → LM → FSQ → RALM → mu) ==========
-     * Uses scratch_ctx — freed after data is copied to heap.
-     * Only the KV cache (in kv_ctx) survives between gen_step calls.
+     * ========== PHASE 1: Build mu from saved state (Python ordering) ==========
      *
-     * Root cause fix: Previously ALL tensors (pre-CFM + CFM loop) were allocated
-     * from the same linear ggml context, accumulating memory across steps.
-     * Now pre-CFM uses a scratch context freed here, and CFM uses per-substep
-     * contexts freed each Euler iteration.
+     * REORDERING FIX: Python computes mu from the CURRENT lm_hidden and
+     * residual_hidden (saved from previous step or prompt eval), BEFORE
+     * running CFM. The LM update happens AFTER CFM.
+     *
+     * Old C code (wrong):
+     *   audio_embed = fe(prev_patch) → LM → FSQ → RALM → mu → CFM
+     *
+     * New C code (matches Python):
+     *   mu = proj(lm_hidden_state, residual_hidden_state) → CFM → encode_output
+     *   → LM → FSQ → RALM → update state for next step
+     *
+     * Also fixed: mu uses FSQ'd lm_hidden (Python: lm_hidden = FSQ(lm_output)),
+     * not pre-FSQ base_lm output.
      */
     size_t scratch_mem = 3ULL * 1024 * 1024 * 1024;  /* 3 GB for pre-CFM tensors */
     struct ggml_init_params scratch_params = {
@@ -685,89 +737,57 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     };
     struct ggml_context * scratch_ctx = ggml_init(scratch_params);
 
-    /* ========== Step 1: Build audio embedding from prev_patch (last pos) ========== */
-    struct ggml_tensor * fe_out = NULL;
-    struct ggml_tensor * audio_embed = gen_build_audio_embed(state, scratch_ctx, graph, &fe_out);
-    if (!audio_embed) { ggml_free(scratch_ctx); return VCPM_ERR_BACKEND; }
-    ggml_set_name(audio_embed, "audio_embed");
-    vcpm_debug_tensor_shape("step.audio_embed", audio_embed);
-
-    /* ========== Step 2: Forward through base_lm with audio_embed ========== */
-    vcpm_minicpm4_config base_cfg;
-    vcpm_minicpm4_config_from_model(&base_cfg,
-                                     hidden_size, state->n_base_layers,
-                                     state->n_base_heads, state->n_base_kv_heads,
-                                     state->intermediate_size, state->head_dim,
-                                     state->rms_norm_eps, state->rope_theta,
-                                     state->max_seq_len, state->vocab_size,
-                                     0);
-
-    vcpm_minicpm4_weights base_w;
-    base_w.embed_tokens_weight = state->base_embed_tokens;
-    base_w.norm_weight         = state->base_norm;
-    base_w.lm_head_weight      = state->base_lm_head;
-    base_w.layer_weights       = state->base_layer_weights;
-
-    vcpm_kv_cache base_cache;
-    base_cache.layers     = (vcpm_kv_cache_unit *)state->base_kv_cache;
-    base_cache.n_layers   = state->n_base_layers;
-    base_cache.max_seq_len = state->max_seq_len;
-
-    /* Use audio_embed as the input instead of token embedding */
-    struct ggml_tensor * base_hidden = vcpm_minicpm4_forward(scratch_ctx, graph,
-                                                               audio_embed, &base_cfg,
-                                                               &base_w, &base_cache,
-                                                               fill_pos);
-    if (!base_hidden) { ggml_free(scratch_ctx); return VCPM_ERR_BACKEND; }
-    ggml_set_name(base_hidden, "base_hidden");
-    vcpm_debug_tensor_shape("step.base_hidden", base_hidden);
-
-    /* ========== Step 3: FSQ on base_hidden ========== */
-    struct ggml_tensor * fsq_out = gen_fsq_hidden(state, scratch_ctx, graph, base_hidden);
-    ggml_set_name(fsq_out, "fsq_out");
-    vcpm_debug_tensor_shape("step.fsq_out", fsq_out);
-
-    /* ========== Step 4: Fusion concat for RALM input ========== */
-    struct ggml_tensor * fusion_in = ggml_concat(scratch_ctx, fsq_out, audio_embed, 0);
-    ggml_set_name(fusion_in, "fusion_in");
-    vcpm_debug_tensor_shape("step.fusion_in", fusion_in);
-    struct ggml_tensor * ralm_in = vcpm_linear_proj(scratch_ctx, fusion_in,
-                                                      state->fusion_concat_proj);
-    ggml_set_name(ralm_in, "ralm_in");
-    vcpm_debug_tensor_shape("step.ralm_in", ralm_in);
-
-    /* ========== Step 5: Forward RALM ========== */
-    struct ggml_tensor * ralm_hidden = gen_forward_ralm(state, scratch_ctx, graph,
-                                                          ralm_in, fill_pos);
-    if (ralm_hidden) ggml_set_name(ralm_hidden, "ralm_hidden");
-    vcpm_debug_tensor_shape("step.ralm_hidden", ralm_hidden);
-
-    /* ========== Step 6: Build mu (DiT conditioning) ========== */
+    /* ========== Step 1: Build mu (DiT conditioning) from saved state ==========
+     * Uses FSQ'd lm_hidden_state (Python: lm_hidden after FSQ)
+     * and residual_hidden_state.
+     *
+     * The mu is computed before any LM forward for the current step,
+     * matching Python: mu = proj(lm_hidden[i], residual_hidden[i])
+     * where these are the states from the previous step (or prompt eval). */
     struct ggml_tensor * mu = NULL;
-    if (state->lm_to_dit_proj && ralm_hidden) {
-        struct ggml_tensor * lm_cond = vcpm_linear_proj(scratch_ctx, base_hidden,
+    if (state->lm_to_dit_proj && state->res_to_dit_proj &&
+        state->lm_hidden_state && state->residual_hidden_state) {
+        /* Create tensor from saved FSQ'd lm_hidden_state */
+        struct ggml_tensor * lm_h_t = ggml_new_tensor_2d(scratch_ctx, GGML_TYPE_F32,
+                                                           hidden_size, 1);
+        if (lm_h_t && lm_h_t->data) {
+            memcpy(lm_h_t->data, state->lm_hidden_state,
+                   (size_t)hidden_size * sizeof(float));
+        }
+        ggml_set_name(lm_h_t, "mu_lm_hidden");
+
+        /* Create tensor from saved residual_hidden_state */
+        struct ggml_tensor * res_h_t = ggml_new_tensor_2d(scratch_ctx, GGML_TYPE_F32,
+                                                            state->res_hidden_size, 1);
+        if (res_h_t && res_h_t->data) {
+            memcpy(res_h_t->data, state->residual_hidden_state,
+                   (size_t)state->res_hidden_size * sizeof(float));
+        }
+        ggml_set_name(res_h_t, "mu_res_hidden");
+
+        struct ggml_tensor * lm_cond = vcpm_linear_proj(scratch_ctx, lm_h_t,
                                                           state->lm_to_dit_proj);
         ggml_set_name(lm_cond, "lm_cond");
-        struct ggml_tensor * res_cond = vcpm_linear_proj(scratch_ctx, ralm_hidden,
+        struct ggml_tensor * res_cond = vcpm_linear_proj(scratch_ctx, res_h_t,
                                                            state->res_to_dit_proj);
         ggml_set_name(res_cond, "res_cond");
         mu = ggml_concat(scratch_ctx, lm_cond, res_cond, 0);
         ggml_set_name(mu, "dit_mu");
-    } else if (state->lm_to_dit_proj) {
-        mu = vcpm_linear_proj(scratch_ctx, base_hidden, state->lm_to_dit_proj);
+    } else if (state->lm_to_dit_proj && state->lm_hidden_state) {
+        struct ggml_tensor * lm_h_t = ggml_new_tensor_2d(scratch_ctx, GGML_TYPE_F32,
+                                                           hidden_size, 1);
+        if (lm_h_t && lm_h_t->data) {
+            memcpy(lm_h_t->data, state->lm_hidden_state,
+                   (size_t)hidden_size * sizeof(float));
+        }
+        mu = vcpm_linear_proj(scratch_ctx, lm_h_t, state->lm_to_dit_proj);
         ggml_set_name(mu, "dit_mu_lm_only");
     }
     vcpm_debug_tensor_shape("step.mu", mu);
 
-    /* ========== Step 7: Compute pre-CFM graph ========== */
+    /* Compute mu graph so we can copy data to heap */
     if (mu) ggml_build_forward_expand(graph, mu);
     ggml_graph_compute_with_ctx(scratch_ctx, graph, 1);
-
-    /* Capture base_lm hidden after FSQ for stop predictor */
-    if (state->last_lm_hidden && fsq_out && fsq_out->data) {
-        memcpy(state->last_lm_hidden, fsq_out->data,
-               (size_t)state->hidden_size * sizeof(float));
-    }
 
     /* Extract mu data for CFM loop (copy to heap before freeing scratch_ctx) */
     float * mu_data = NULL;
@@ -785,7 +805,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         memcpy(prev_data, state->prev_patch, (size_t)prev_dim * sizeof(float));
     }
 
-    /* ===== Free scratch_ctx — reclaim ALL pre-CFM tensor memory ===== */
+    /* ===== Free scratch_ctx after mu extraction ===== */
     ggml_graph_clear(graph);
     ggml_free(scratch_ctx);
 
@@ -999,9 +1019,9 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     free(prev_data);
 
     /*
-     * ========== PHASE 3: Post-CFM FSQ quantize (small temp context) ==========
+     * ========== PHASE 3: Post-CFM FSQ quantize ==========
      */
-    size_t post_mem = 512ULL * 1024 * 1024;  /* 512 MB for FSQ */
+    size_t post_mem = 512ULL * 1024 * 1024;  /* 512 MB for FSQ + LM update */
     struct ggml_init_params post_params = {
         .mem_size   = post_mem,
         .mem_buffer = NULL,
@@ -1031,17 +1051,127 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         ggml_graph_compute_with_ctx(post_ctx, graph, 1);
     }
 
-    /* Copy output and update prev_patch */
-    if (quantized && quantized->data) {
-        memcpy(output_patch, quantized->data, (size_t)total_patch_dim * sizeof(float));
-        memcpy(state->prev_patch, quantized->data, (size_t)total_patch_dim * sizeof(float));
-    } else {
-        memcpy(output_patch, x_data, (size_t)total_patch_dim * sizeof(float));
-        memcpy(state->prev_patch, x_data, (size_t)total_patch_dim * sizeof(float));
-    }
+    /* Copy CFM output to output_patch and prev_patch first (before LM update) */
+    const float * output_src = (quantized && quantized->data) ? (const float *)quantized->data : x_data;
+    memcpy(output_patch, output_src, (size_t)total_patch_dim * sizeof(float));
+    memcpy(state->prev_patch, output_src, (size_t)total_patch_dim * sizeof(float));
 
     ggml_free(post_ctx);
+    /* x_data is no longer needed after copying to output_patch */
     free(x_data);
+
+    /*
+     * ========== PHASE 4: LM update (encode output → LM → FSQ → RALM) ==========
+     *
+     * Python ordering (after CFM/stop):
+     *   curr_embed = enc_to_lm_proj(feat_encoder(pred_feat))
+     *   lm_hidden = base_lm.forward_step(curr_embed)
+     *   lm_hidden = FSQ(lm_hidden)
+     *   residual_hidden = residual_lm.forward_step(concat(lm_hidden, curr_embed))
+     *
+     * This updates the hidden states for the NEXT step's mu computation.
+     */
+    {
+        size_t update_mem = 3ULL * 1024 * 1024 * 1024;  /* 3 GB for LM update */
+        struct ggml_init_params update_params = {
+            .mem_size   = update_mem,
+            .mem_buffer = NULL,
+            .no_alloc   = false,
+        };
+        struct ggml_context * update_ctx = ggml_init(update_params);
+        if (!update_ctx) return VCPM_ERR_OOM;
+
+        ggml_graph_clear(graph);
+
+        /* Step 4a: Encode CFM output → audio_embed (via feat_encoder + enc_to_lm_proj)
+         * This is Python's: curr_embed = enc_to_lm_proj(feat_encoder(pred_feat)) */
+        struct ggml_tensor * fe_out = NULL;
+        struct ggml_tensor * audio_embed = gen_build_audio_embed(state, update_ctx, graph, &fe_out);
+        if (!audio_embed) { ggml_free(update_ctx); return VCPM_ERR_BACKEND; }
+        ggml_set_name(audio_embed, "update_audio_embed");
+        vcpm_debug_tensor_shape("update.audio_embed", audio_embed);
+
+        /* Step 4b: Forward through base_lm with audio_embed
+         * Python: lm_hidden = base_lm.forward_step(curr_embed) */
+        vcpm_minicpm4_config base_cfg;
+        vcpm_minicpm4_config_from_model(&base_cfg,
+                                         hidden_size, state->n_base_layers,
+                                         state->n_base_heads, state->n_base_kv_heads,
+                                         state->intermediate_size, state->head_dim,
+                                         state->rms_norm_eps, state->rope_theta,
+                                         state->max_seq_len, state->vocab_size,
+                                         0);
+
+        vcpm_minicpm4_weights base_w;
+        base_w.embed_tokens_weight = state->base_embed_tokens;
+        base_w.norm_weight         = state->base_norm;
+        base_w.lm_head_weight      = state->base_lm_head;
+        base_w.layer_weights       = state->base_layer_weights;
+
+        vcpm_kv_cache base_cache;
+        base_cache.layers     = (vcpm_kv_cache_unit *)state->base_kv_cache;
+        base_cache.n_layers   = state->n_base_layers;
+        base_cache.max_seq_len = state->max_seq_len;
+
+        struct ggml_tensor * base_hidden = vcpm_minicpm4_forward(update_ctx, graph,
+                                                                   audio_embed, &base_cfg,
+                                                                   &base_w, &base_cache,
+                                                                   fill_pos);
+        if (!base_hidden) { ggml_free(update_ctx); return VCPM_ERR_BACKEND; }
+        ggml_set_name(base_hidden, "update_base_hidden");
+        vcpm_debug_tensor_shape("update.base_hidden", base_hidden);
+
+        /* Step 4c: FSQ on base_hidden
+         * Python: lm_hidden = FSQ(lm_hidden) */
+        struct ggml_tensor * fsq_out = gen_fsq_hidden(state, update_ctx, graph, base_hidden);
+        ggml_set_name(fsq_out, "update_fsq_out");
+
+        /* Compute graph to materialize fsq_out */
+        if (fsq_out) ggml_build_forward_expand(graph, fsq_out);
+        ggml_graph_compute_with_ctx(update_ctx, graph, 1);
+
+        /* Save FSQ'd hidden as lm_hidden_state for next step's mu */
+        if (state->lm_hidden_state && fsq_out && fsq_out->data) {
+            memcpy(state->lm_hidden_state, fsq_out->data,
+                   (size_t)hidden_size * sizeof(float));
+        }
+
+        /* Save for stop predictor (base_lm after FSQ) */
+        if (state->last_lm_hidden && fsq_out && fsq_out->data) {
+            memcpy(state->last_lm_hidden, fsq_out->data,
+                   (size_t)hidden_size * sizeof(float));
+        }
+
+        /* Step 4d: Fusion concat for RALM input
+         * Python: concat(lm_hidden_fsq, curr_embed) */
+        struct ggml_tensor * fusion_in = ggml_concat(update_ctx, fsq_out, audio_embed, 0);
+        ggml_set_name(fusion_in, "update_fusion_in");
+        struct ggml_tensor * ralm_in = vcpm_linear_proj(update_ctx, fusion_in,
+                                                          state->fusion_concat_proj);
+        ggml_set_name(ralm_in, "update_ralm_in");
+
+        /* Step 4e: Forward RALM
+         * Python: residual_hidden = residual_lm.forward_step(...) */
+        struct ggml_tensor * ralm_hidden = gen_forward_ralm(state, update_ctx, graph,
+                                                              ralm_in, fill_pos);
+        if (ralm_hidden) {
+            ggml_set_name(ralm_hidden, "update_ralm_hidden");
+            ggml_build_forward_expand(graph, ralm_hidden);
+        }
+
+        /* Compute RALM graph */
+        ggml_graph_compute_with_ctx(update_ctx, graph, 1);
+
+        /* Save residual_hidden_state for next step's mu */
+        if (state->residual_hidden_state && ralm_hidden && ralm_hidden->data) {
+            memcpy(state->residual_hidden_state, ralm_hidden->data,
+                   (size_t)state->res_hidden_size * sizeof(float));
+        }
+
+        ggml_graph_clear(graph);
+        ggml_free(update_ctx);
+    }
+
     return VCPM_OK;
 }
 
@@ -1055,68 +1185,149 @@ static vcpm_status gen_prompt_eval(vcpm_generate_state * state,
                                    int n_text_tokens) {
     if (n_text_tokens <= 0) return VCPM_OK;
 
-    /* Step 1: Forward text tokens through base_lm */
+    int hidden_size = state->hidden_size;
+    int feat_dim = state->enc_feat_dim;
+    int patch_size = state->model ? state->model->config.patch_size : 1;
+    if (patch_size < 1) patch_size = 1;
+
+    /* Step 1: Forward text tokens through base_lm (positions 0 to n_text_tokens-1) */
     struct ggml_tensor * base_hidden = NULL;
     vcpm_status st = gen_forward_text(state, ctx, graph, token_ids,
-                                       n_text_tokens, 0, &base_hidden);
+                                        n_text_tokens, 0, &base_hidden);
     if (st != VCPM_OK) return st;
     if (!base_hidden) return VCPM_ERR_BACKEND;
 
-    /* Step 2: Forward text embeddings through RALM too.
-     * RALM needs text hidden states in its KV cache for the full sequence. */
-    if (state->res_n_layers > 0 && state->ralm_layer_weights[0].q_proj_weight) {
-        /* For text positions, RALM input = base_lm input embeddings.
-         * We re-create the token embedding since the original might not be
-         * accessible from the base_lm forward path.
-         * Use gen_forward_text's approach: create embedding from token_ids. */
-        vcpm_minicpm4_config base_cfg;
-        vcpm_minicpm4_config_from_model(&base_cfg,
-                                         state->hidden_size,
-                                         state->n_base_layers,
-                                         state->n_base_heads,
-                                         state->n_base_kv_heads,
-                                         state->intermediate_size,
-                                         state->head_dim,
-                                         state->rms_norm_eps,
-                                         state->rope_theta,
-                                         state->max_seq_len,
-                                         state->vocab_size,
-                                         0);
+    /* Step 2: Build feat_encoder embedding for the first audio position.
+     * Python processes feat_encoder(zeros) → enc_to_lm_proj and feeds it
+     * as the input embedding at position n_text_tokens (audio_start). */
+    struct ggml_tensor * fe_out = NULL;
+    struct ggml_tensor * audio_embed = gen_build_audio_embed(state, ctx, graph, &fe_out);
+    if (!audio_embed) return VCPM_ERR_BACKEND;
+    ggml_set_name(audio_embed, "prompt_audio_embed");
 
-        struct ggml_tensor * text_embed = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
-                                                               state->hidden_size,
-                                                               n_text_tokens);
-        if (text_embed && text_embed->data && state->base_embed_tokens &&
-            state->base_embed_tokens->data) {
-            const ggml_fp16_t * ed = (const ggml_fp16_t *)state->base_embed_tokens->data;
-            int64_t stride = state->base_embed_tokens->ne[0];
-            int64_t n_rows = state->base_embed_tokens->ne[1];
-            float * dst = (float *)text_embed->data;
-            for (int i = 0; i < n_text_tokens; i++) {
-                int idx = token_ids[i];
-                if (idx < 0 || idx >= n_rows) idx = 0;
-                for (int j = 0; j < stride; j++) {
-                    dst[i * stride + j] = ggml_fp16_to_fp32(ed[idx * stride + j]);
+    /* Step 3: Forward audio_embed through base_lm at position n_text_tokens,
+     * extending the KV cache. This matches Python's prompt eval which processes
+     * all T positions (text + feat) in one base_lm forward call. */
+    vcpm_minicpm4_config base_cfg;
+    vcpm_minicpm4_config_from_model(&base_cfg,
+                                     hidden_size,
+                                     state->n_base_layers,
+                                     state->n_base_heads,
+                                     state->n_base_kv_heads,
+                                     state->intermediate_size,
+                                     state->head_dim,
+                                     state->rms_norm_eps,
+                                     state->rope_theta,
+                                     state->max_seq_len,
+                                     state->vocab_size,
+                                     0);
+
+    vcpm_minicpm4_weights base_w;
+    base_w.embed_tokens_weight = state->base_embed_tokens;
+    base_w.norm_weight         = state->base_norm;
+    base_w.lm_head_weight      = state->base_lm_head;
+    base_w.layer_weights       = state->base_layer_weights;
+
+    vcpm_kv_cache base_cache;
+    base_cache.layers     = (vcpm_kv_cache_unit *)state->base_kv_cache;
+    base_cache.n_layers   = state->n_base_layers;
+    base_cache.max_seq_len = state->max_seq_len;
+
+    /* Forward audio_embed through base_lm at position n_text_tokens */
+    struct ggml_tensor * audio_hidden = vcpm_minicpm4_forward(ctx, graph,
+                                                                audio_embed, &base_cfg,
+                                                                &base_w, &base_cache,
+                                                                n_text_tokens);
+    if (!audio_hidden) return VCPM_ERR_BACKEND;
+    ggml_set_name(audio_hidden, "prompt_audio_hidden");
+
+    /* Step 4: FSQ on audio_hidden (feat positions get FSQ in Python,
+     * text positions don't). The audio_start position IS a feat position. */
+    struct ggml_tensor * fsq_out = gen_fsq_hidden(state, ctx, graph, audio_hidden);
+    ggml_set_name(fsq_out, "prompt_fsq_out");
+
+    /* Build graph for base_lm text + audio forward */
+    ggml_build_forward_expand(graph, base_hidden);
+    ggml_build_forward_expand(graph, audio_hidden);
+    if (fsq_out) ggml_build_forward_expand(graph, fsq_out);
+
+    /* Save FSQ'd audio_hidden as lm_hidden_state (Python: lm_hidden from position -1) */
+    struct ggml_tensor * lm_hidden_for_state = (fsq_out && fsq_out->data) ? fsq_out : audio_hidden;
+
+    /* Step 5: Forward through RALM with fusion concat of FSQ'd hidden + audio_embed.
+     * Python: residual_enc_inputs = fusion_concat_proj(concat(fsq_out, feat_embed)) */
+    struct ggml_tensor * ralm_hidden = NULL;
+    if (state->res_n_layers > 0 && state->ralm_layer_weights[0].q_proj_weight &&
+        state->fusion_concat_proj) {
+        /* Also forward text through RALM first */
+        {
+            struct ggml_tensor * text_embed = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
+                                                                   hidden_size,
+                                                                   n_text_tokens);
+            if (text_embed && text_embed->data && state->base_embed_tokens &&
+                state->base_embed_tokens->data) {
+                const ggml_fp16_t * ed = (const ggml_fp16_t *)state->base_embed_tokens->data;
+                int64_t stride = state->base_embed_tokens->ne[0];
+                int64_t n_rows = state->base_embed_tokens->ne[1];
+                float * dst = (float *)text_embed->data;
+                for (int i = 0; i < n_text_tokens; i++) {
+                    int idx = token_ids[i];
+                    if (idx < 0 || idx >= n_rows) idx = 0;
+                    for (int j = 0; j < stride; j++) {
+                        dst[i * stride + j] = ggml_fp16_to_fp32(ed[idx * stride + j]);
+                    }
                 }
             }
+            ggml_set_name(text_embed, "prompt_text_embed");
+            struct ggml_tensor * ralm_text = gen_forward_ralm(state, ctx, graph, text_embed, 0);
+            if (ralm_text) {
+                ggml_set_name(ralm_text, "prompt_ralm_text");
+                ggml_build_forward_expand(graph, ralm_text);
+            }
         }
-        ggml_set_name(text_embed, "prompt_text_embed");
 
-        struct ggml_tensor * ralm_hidden = gen_forward_ralm(state, ctx, graph,
-                                                               text_embed, 0);
+        /* Fusion concat for audio position: fsq_out + audio_embed */
+        struct ggml_tensor * fusion_in = ggml_concat(ctx, fsq_out, audio_embed, 0);
+        ggml_set_name(fusion_in, "prompt_fusion_in");
+        struct ggml_tensor * ralm_in = vcpm_linear_proj(ctx, fusion_in,
+                                                          state->fusion_concat_proj);
+        ggml_set_name(ralm_in, "prompt_ralm_in");
+
+        ralm_hidden = gen_forward_ralm(state, ctx, graph, ralm_in, n_text_tokens);
         if (ralm_hidden) {
-            ggml_set_name(ralm_hidden, "prompt_ralm_hidden");
-            /* CRITICAL: Expand RALM hidden so its KV cache writes are computed.
-             * Without this, the RALM KV cache stays zeroed during prompt eval
-             * and the residual LM enters autoregressive mode with no context,
-             * producing incoherent audio. */
+            ggml_set_name(ralm_hidden, "prompt_ralm_audio");
             ggml_build_forward_expand(graph, ralm_hidden);
         }
     }
 
-    /* CRITICAL: Compute graph to execute KV cache writes (both base_lm and RALM) */
-    ggml_build_forward_expand(graph, base_hidden);
+    /* CRITICAL: Compute graph to execute all KV cache writes */
     ggml_graph_compute_with_ctx(ctx, graph, 1);
+
+    /* Save initial autoregressive hidden states from the AUDIO position
+     * (matching Python's lm_hidden = base_lm_out[:, -1, :] after FSQ). */
+    if (state->lm_hidden_state && lm_hidden_for_state && lm_hidden_for_state->data) {
+        const float * src = (const float *)lm_hidden_for_state->data;
+        memcpy(state->lm_hidden_state, src, (size_t)hidden_size * sizeof(float));
+        if (vcpm_debug_shapes()) {
+            fprintf(stderr, "VCPM_DEBUG init lm_hidden_state[0]=%.6f [%d]=%.6f (from audio pos)\n",
+                    state->lm_hidden_state[0], hidden_size-1,
+                    state->lm_hidden_state[hidden_size-1]);
+        }
+    }
+
+    /* Save residual_hidden from audio position */
+    if (state->residual_hidden_state && ralm_hidden && ralm_hidden->data) {
+        const float * src = (const float *)ralm_hidden->data;
+        memcpy(state->residual_hidden_state, src,
+               (size_t)state->res_hidden_size * sizeof(float));
+        if (vcpm_debug_shapes()) {
+            fprintf(stderr, "VCPM_DEBUG init residual_hidden_state[0]=%.6f [%d]=%.6f (from audio pos)\n",
+                    state->residual_hidden_state[0],
+                    state->res_hidden_size-1,
+                    state->residual_hidden_state[state->res_hidden_size-1]);
+        }
+    }
+
     return VCPM_OK;
 }
 
@@ -1176,9 +1387,14 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
 
     struct ggml_cgraph * graph = state->step_graph;
 
-    /* Step 1: Prompt eval for text positions — use scratch context */
+    /* Step 1: Prompt eval for text positions + first audio position.
+     * gen_prompt_eval now processes BOTH text tokens AND the first audio_start
+     * position (feat_encoder(zeros) → enc_to_lm_proj → base_lm → FSQ),
+     * matching Python's prompt eval which handles all T positions in one pass.
+     * The lm_hidden_state and residual_hidden_state are set from the audio position. */
     if (first_audio_pos > 0) {
-        size_t prompt_mem = 3ULL * 1024 * 1024 * 1024;  /* 3 GB for prompt eval tensors */
+        /* Need enough memory for text + audio position forward (base_lm + RALM + FSQ) */
+        size_t prompt_mem = 4ULL * 1024 * 1024 * 1024;  /* 4 GB for prompt eval + audio pos */
         struct ggml_init_params prompt_params = {
             .mem_size   = prompt_mem,
             .mem_buffer = NULL,
@@ -1194,11 +1410,31 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
         if (st != VCPM_OK) return st;
     }
 
-    /* Step 2: Generate audio patches one at a time with stop predictor
-     * Each patch produces patch_size latent vectors of latent_dim each.
-     * Advance the output pointer by total_patch_dim per patch. */
+    /* Step 2: Generate audio patches one at a time.
+     * gen_prompt_eval has already processed first_audio_pos (audio_start) with
+     * zero feat input, setting lm_hidden_state from that position.
+     * The autoregressive loop starts at first_audio_pos + 1 so that the LM
+     * forward_step APPENDS to the KV cache (matching Python's behavior).
+     *
+     * In Python:
+     *   Prompt eval: positions 0..T-1 (text + audio_start with zero feat)
+     *   lm_hidden = output[T-1] (audio_start position, FSQ'd)
+     *   Step 0: mu from lm_hidden → CFM → pred_feat[0]
+     *           → forward_step at position T → lm_hidden = output[T]
+     *   Step 1: mu from lm_hidden → CFM → pred_feat[1]
+     *           → forward_step at position T+1 → ...
+     *
+     * In C (fixed):
+     *   gen_prompt_eval processes positions 0..first_audio_pos (incl. audio_start)
+     *   lm_hidden_state from first_audio_pos (FSQ'd)
+     *   Step 0 at first_audio_pos+1: mu from lm_hidden_state → CFM → pred_feat[0]
+     *           → LM update at first_audio_pos+1 (appends KV) → lm_hidden_state
+     *   Step 1 at first_audio_pos+2: ...
+     *
+     * This matches Python's cache structure exactly. */
     int total_patch_dim = latent_dim * patch_size;
-    for (int pos = first_audio_pos; pos < seq_len && n_patches < effective_max; pos++) {
+    int first_gen_pos = first_audio_pos + 1;  /* audio_start already in prompt_eval */
+    for (int pos = first_gen_pos; pos < seq_len && n_patches < effective_max; pos++) {
         if (audio_mask[pos] != 1) continue;
         float * patch = latent_out + (size_t)n_patches * (size_t)total_patch_dim;
         vcpm_status st = vcpm_gen_step(state, token_ids, pos, gen_params, patch);
@@ -1273,7 +1509,7 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
     /* Create a temporary ggml context for VAE decode only.
      * This isolates the large VAE tensors (diagonal weight expansions, padded
      * inputs) from the main step_ctx which holds accumulated inference tensors. */
-    size_t vae_mem = 0x380000000ULL;  /* 14 GiB for VAE tensors + graph (work buffer external) */
+    size_t vae_mem = 0x500000000ULL;  /* 20 GiB for VAE tensors + graph (work buffer external) */
     struct ggml_init_params vae_params = {
         .mem_size   = vae_mem,
         .mem_buffer = NULL,
@@ -1523,6 +1759,8 @@ void vcpm_gen_free(vcpm_generate_state * state) {
     free(state->base_kv_cache);
     free(state->ralm_kv_cache);
     free(state->prev_patch);
+    free(state->lm_hidden_state);
+    free(state->residual_hidden_state);
     free(state->last_lm_hidden);
     free(state);
 }

@@ -49,6 +49,18 @@ py_*.npy
 # Test fixtures (large binary)
 tests/fixtures/*.gguf
 
+# Build output (MSVC)
+build_msvc/
+
+# Debug dumps
+*.raw
+snap_*.bin
+*_dump.bin
+
+# Temporary debug scripts
+__*.py
+check_*.py
+
 # Python venv
 .venv/
 venv/

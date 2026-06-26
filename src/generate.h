@@ -140,6 +140,19 @@ typedef struct vcpm_generate_state {
      * Updated after each gen_step call. */
     float * prev_patch;                   /* [feat_dim * patch_size] allocated in gen_init */
 
+    /* Current autoregressive hidden states (for mu computation).
+     * Following Python ordering: mu is computed FROM these states,
+     * THEN CFM predicts the next feature, THEN these states are
+     * updated via LM forward_step + FSQ + RALM forward_step.
+     *
+     * Initialized from prompt eval's last position.
+     * Updated after each gen_step's CFM + LM forward.
+     *
+     * Python equivalent: lm_hidden (FSQ'd) and residual_hidden
+     * after each base_lm.forward_step / residual_lm.forward_step. */
+    float * lm_hidden_state;              /* [hidden_size] FSQ'd, for mu/lm_to_dit_proj */
+    float * residual_hidden_state;        /* [res_hidden_size], for mu/res_to_dit_proj */
+
     /* Last base_lm hidden state (after FSQ) for stop predictor.
      * Updated after each gen_step with fsq_out data. */
     float * last_lm_hidden;               /* [hidden_size] or NULL */

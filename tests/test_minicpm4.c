@@ -325,7 +325,7 @@ static void test_attention_graph(void) {
                                                &n_cache_used,
                                                n_heads, n_kv,
                                                head_dim, 0,
-                                               10000, 0);
+                                               10000, 0, 0);
     ggml_build_forward_expand(graph, out);
 
     /* Verify output shape */

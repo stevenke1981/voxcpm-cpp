@@ -96,6 +96,18 @@ struct ggml_tensor * vcpm_vae_v2_encode(
     const vcpm_audio_vae_v2_config * cfg,
     struct ggml_tensor ** out_logvar);
 
+/*
+ * F32 precision conv1d using explicit F32 im2col + F32 matmul.
+ * weight: [K, IC, OC] (F16 or F32)
+ * input:  [N, IC] (F32)
+ * Output: [OW, OC] after reshape.
+ * Exposed for test/verification tools.
+ */
+struct ggml_tensor * vcpm_conv1d_f32(struct ggml_context * ctx,
+                                      struct ggml_tensor * weight,
+                                      struct ggml_tensor * input,
+                                      int s0, int p0, int d0);
+
 /* Debug: get pointers to intermediate tensors (valid after ggml_graph_compute) */
 void vcpm_vae_v2_get_debug_tensors(struct ggml_tensor *** tensors, int * count);
 void vcpm_vae_v2_reset_debug(void);

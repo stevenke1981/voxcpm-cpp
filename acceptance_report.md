@@ -256,3 +256,46 @@
 | Build | ✅ | MSVC Release target build completed for `voxcpm-c`, `test_tokenizer_parity`, `test_model_tts_smoke` |
 | TTS smoke after tokenizer fix | ✅ | `test_model_tts_smoke.exe voxcpm2_v2_full.gguf` passes normal + stream |
 | Full latent parity | ❌ | C generated latent dump still has cosine about `-0.018` vs Python `generated_feat.npy`; next fix is runtime state/decode ordering |
+
+#### Additional Fixes (Session 10 — Autoregressive Loop Ordering)
+
+25. **Autoregressive loop state ordering inverted vs Python** (`src/generate.c: vcpm_gen_step`)
+    - **Symptom**: C output had RMS 0.172, partial speech content but low amplitude and wrong spectral distribution.
+    - **Root cause**: The C autoregressive loop ordering was:
+      1. LM forward → 2. FSQ → 3. RALM → 4. mu from `base_hidden` → 5. CFM decode
+      But the Python reference ordering is:
+      1. mu from saved FSQ'd `lm_hidden` + `residual_hidden` → 2. CFM decode → 3. LM forward → 4. FSQ → 5. RALM → update states
+      Additionally, mu used `base_hidden` (pre-FSQ) instead of `lm_hidden` (post-FSQ), producing incorrect conditioning for CFM.
+    - **Fix** (3 changes):
+      a. Added `lm_hidden_state` and `residual_hidden_state` fields to `vcpm_generate_state` in `generate.h`. Allocated/freed in `vcpm_gen_init` / `vcpm_gen_free`.
+      b. Modified `gen_prompt_eval` to save initial FSQ'd `lm_hidden_state` and `residual_hidden_state` from prompt eval's last position.
+      c. Restructured `vcpm_gen_step` to Python ordering: mu from saved states → CFM → LM forward → FSQ → RALM → update states.
+    - **Verification**: Audio RMS improved from 0.172 to 0.643, range from [-0.42, 0.41] to [-0.98, 1.0].
+
+26. **feat_encoder (LocEnc) architecture mismatch vs Python VoxCPMLocEnc** (`src/locenc.c`, `src/generate.c`)
+    - **Symptom**: C latents had near-zero cosine similarity (~-0.03) vs Python `generated_feat.npy` even after ordering fix.
+    - **Root cause**: Python `VoxCPMLocEnc.forward(x)` architecture (verified from `export_ref_fixtures.py`):
+      1. `in_proj(x)`: Projects ALL P patch positions in parallel via `nn.Linear(feat_dim, hidden_size)`
+      2. CLS prepend: Creates a `special_token` [hidden_size,1] and prepends it via `torch.cat([special_token, h], dim=1)`
+      3. Bidirectional attention: `MiniCPMAttention(is_causal=False)` — all tokens attend to all others
+      4. CLS extraction: Takes position 0 output (CLS token position) via `outputs[:,0,:]`
+      The C implementation:
+      - Processed only the last patch position (not all P)
+      - Added `special_token` to the projection output (not prepended)
+      - Used causal attention (`no_causal=0`)
+    - **Fix**:
+      a. Rewrote `locenc.c` to process all P positions in parallel via `ggml_mul_mat(ctx, in_proj_weight, x)` on a [feat_dim, P] input
+      b. Prepends CLS token via `ggml_concat(ctx, st_2d, h, 1)` producing [hidden_size, P+1]
+      c. Uses bidirectional attention (`no_causal=1`)
+      d. Extracts CLS output via `ggml_view_2d(ctx, h_out, hidden_size, 1, ...)`
+      e. Removed `use_special` gating — CLS is always prepended (matches Python unconditional behavior)
+      f. Updated `gen_build_audio_embed` in `generate.c` to feed all P=4 patch positions as a [feat_dim, P] tensor
+      g. Updated LocEnc config `max_seq_len` to P+1 (5) for KV cache
+    - **Verification**: Both `test_model_tts_smoke` and stream smoke paths PASS. Audio quality: RMS 0.162, range [-0.977, 0.986], no NaN/Inf, 2.56 sec at 48kHz.
+
+### Updated Remaining Risks
+
+1. **Full latent parity still pending**: C generates reasonable audio (RMS 0.162, full range) after ordering + feat_encoder fixes, but exact cosine similarity vs Python `generated_feat.npy` is still near zero (~-0.03). The text inputs differ (C uses "Hello, this is a model fixture speech test." vs Python fixture "Hello world."). Need deterministic comparison with same text/seed/max_len.
+2. **C latents vs Python with same inputs**: Need to run C with same text "Hello world." and compare against Python `generated_feat.npy` for exact structure parity.
+3. **Stop predictor firing**: Fires at reasonable patch counts; still needs verification against Python `step*_stop_logits.npy`.
+4. **CFM trajectory parity**: Only structural verification; full CFM trajectory parity pending.
