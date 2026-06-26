@@ -1,0 +1,41 @@
+# VoxCPM-C clang-tidy configuration (C11)
+# Enable checks relevant for embedded/ML inference code.
+---
+Checks: >
+    -*,
+    bugprone-*,
+    clang-analyzer-*,
+    misc-*,
+    performance-*,
+    portability-*,
+    readability-*,
+    -misc-no-recursion,
+    -readability-magic-numbers,
+    -readability-uppercase-literal-suffix,
+    -readability-function-cognitive-complexity,
+    -readability-else-after-return,
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*'
+FormatStyle:     file
+CheckOptions:
+  - key:   readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key:   readability-identifier-naming.StructCase
+    value: CamelCase
+  - key:   readability-identifier-naming.UnionCase
+    value: CamelCase
+  - key:   readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key:   readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key:   readability-identifier-naming.VariableCase
+    value: camelBack
+  - key:   readability-identifier-naming.ConstantCase
+    value: UPPER_CASE
+  - key:   readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
+  - key:   readability-identifier-naming.PrivateMemberPrefix
+    value: ''
+  - key:   bugprone-suspicious-missing-comma.MaxLines
+    value: 100
+...

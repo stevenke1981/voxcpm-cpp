@@ -308,6 +308,7 @@
 | R16 | **CMakePresets** | `CMakePresets.json` (new) | 5 presets: default, release, ci, msvc-debug, msvc-release |
 | R15 | **Error handling macros** | `src/error.h` (new) | `VCPM_ERR`, `VCPM_RETURN_STATUS`, `VCPM_RETURN_NULL` macros |
 | R3 | **Split generate.c into focused modules** | `src/gen_init.c`, `src/gen_prompt.c`, `src/gen_step.c`, `src/gen_stop.c`, `src/gen_run.c` (new); `src/generate.c` (deleted) | 1731→5 focused modules (avg ~320 lines each). All 6 unit tests pass identical to before. |
+| R16b | **Build system hardening (part 2): Install, CPack, ccache, clang-tidy, clang-format** | `CMakeLists.txt`, `.clang-tidy`, `.clang-format` | Install rules for library/binary, CPack packaging config, ccache auto-detection, clang-tidy with C11 checks, clang-format LLVM style |
 
 ### Verification
 
@@ -316,6 +317,8 @@
 - `voxcpm-c bench --help` shows proper usage
 - CMakePresets validated via JSON syntax
 - generate.c split into 5 focused modules (R3); avg module size ~320 lines vs original 1731
+- Install rules for voxcpm library + voxcpm-c binary validated
+- ccache auto-detection added; clang-tidy/clang-format config files created
 
 ### Updated Remaining Risks
 

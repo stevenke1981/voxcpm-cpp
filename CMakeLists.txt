@@ -4,6 +4,27 @@ project(voxcpm_c LANGUAGES C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# ---- ccache support ----
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    message(STATUS "ccache found: ${CCACHE_PROGRAM}")
+else()
+    message(STATUS "ccache not found - consider installing it for faster rebuilds")
+endif()
+
+# ---- clang-tidy support (optional, not enabled by default) ----
+option(VCPM_ENABLE_CLANG_TIDY "Enable clang-tidy static analysis" OFF)
+if(VCPM_ENABLE_CLANG_TIDY)
+    find_program(CLANG_TIDY_PROGRAM clang-tidy)
+    if(CLANG_TIDY_PROGRAM)
+        set(CMAKE_C_CLANG_TIDY "${CLANG_TIDY_PROGRAM}")
+        message(STATUS "clang-tidy enabled: ${CLANG_TIDY_PROGRAM}")
+    else()
+        message(WARNING "clang-tidy requested but not found")
+    endif()
+endif()
+
 # ---- Options ----
 option(VCPM_BUILD_TESTS "Build tests" ON)
 set(VCPM_GGML_DIR "" CACHE PATH "Path to an existing ggml checkout")
@@ -78,9 +99,33 @@ target_link_libraries(voxcpm
     PUBLIC  ggml
 )
 
+# ---- Install rules ----
+include(GNUInstallDirs)
+install(TARGETS voxcpm
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+set_target_properties(voxcpm PROPERTIES PUBLIC_HEADER "include/voxcpm.h")
+# ---- CPack packaging ----
+set(CPACK_PACKAGE_NAME "voxcpm-c")
+set(CPACK_PACKAGE_VERSION "0.1.0")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "VoxCPM2 TTS inference engine in C/ggml")
+set(CPACK_PACKAGE_VENDOR "VoxCPM-C Authors")
+set(CPACK_PACKAGE_CONTACT "https://github.com/stevenke1981/voxcpm-cpp")
+set(CPACK_GENERATOR "ZIP;TGZ")
+if(WIN32)
+    list(APPEND CPACK_GENERATOR "NSIS")
+endif()
+if(APPLE)
+    list(APPEND CPACK_GENERATOR "DragNDrop")
+endif()
+include(CPack)
+
 # ---- CLI ----
 add_executable(voxcpm-c src/main.c)
 target_link_libraries(voxcpm-c PRIVATE voxcpm)
+install(TARGETS voxcpm-c RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # ---- Tests ----
 if(VCPM_BUILD_TESTS)

@@ -73,6 +73,7 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 
 | T15-R16 | build_report.md | build system hardening: CMakePresets.json, Install rules, test labels | ✅ | CMakePresets.json, CMakeLists.txt test labels |
 | T15-R3 | build_report.md | split generate.c (1731→5 focused modules) | ✅ | gen_init.c, gen_prompt.c, gen_step.c, gen_stop.c, gen_run.c — 6/7 unit tests pass |
+| T15-R16b | build_report.md | Install rules, CPack, ccache, clang-tidy, clang-format | ✅ | CMakeLists.txt: install/CPack/ccache. New .clang-tidy, .clang-format files |
 
 ## Legend
 
