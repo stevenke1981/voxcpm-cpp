@@ -235,11 +235,13 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         mu_data = (float *)malloc((size_t)mu_len * sizeof(float));
         if (mu_data) memcpy(mu_data, mu->data, (size_t)mu_len * sizeof(float));
         if (vcpm_debug_shapes_env()) {
+            char mu_label[64];
+            snprintf(mu_label, sizeof(mu_label), "mu_init_%04d", ar_step_counter);
             FILE * df = fopen("c_mu_init.bin", "wb");
             if (df) { fwrite(mu_data, sizeof(float), (size_t)mu_len, df); fclose(df); }
             /* mu shape: ggml ne=[dit_hidden_size*2, 1] = [2048,1] in zero-shot case
-               Python step0000_cfm_cond.npy: [1, 64, 4] — need reshape comparison */
-            vcpm_dump_tensor("cfm_cond", mu_data,
+               Python step0000_dit_hidden.npy: [1, 2048] — need reshape comparison */
+            vcpm_dump_tensor(mu_label, mu_data,
                               state->dit_hidden_size * 2, 1, 0);
         }
     }
@@ -261,7 +263,9 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     if (vcpm_debug_shapes_env() && prev_data) {
         /* prev_data is prev_patch: shape [latent_dim * patch_size] flat
            Python step0000_cfm_cond.npy: [1, 64, 4] — need as [1, latent_dim, patch_size] */
-        vcpm_dump_tensor("step_cond", prev_data,
+        char step_label[64];
+        snprintf(step_label, sizeof(step_label), "step_cond_%04d", ar_step_counter);
+        vcpm_dump_tensor(step_label, prev_data,
                           latent_dim, patch_size, 0);
     }
     {
@@ -285,7 +289,9 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         }
     }
     if (vcpm_debug_shapes_env()) {
-        vcpm_dump_tensor("step_noise", x_data,
+        char step_label[64];
+        snprintf(step_label, sizeof(step_label), "step_noise_%04d", ar_step_counter);
+        vcpm_dump_tensor(step_label, x_data,
                           latent_dim, patch_size, 0);
     }
 
@@ -454,7 +460,9 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     }
 
     if (vcpm_debug_shapes_env()) {
-        vcpm_dump_tensor("step_pred_feat", x_data,
+        char step_label[64];
+        snprintf(step_label, sizeof(step_label), "step_pred_feat_%04d", ar_step_counter);
+        vcpm_dump_tensor(step_label, x_data,
                           latent_dim, patch_size, 0);
     }
 
@@ -505,6 +513,17 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     {
         vcpm_status st = gen_lm_update(state, fill_pos);
         if (st != VCPM_OK) return st;
+    }
+
+    /* DUMP: lm_hidden and residual_hidden after Phase 4 update (using step counter) */
+    if (vcpm_debug_shapes_env()) {
+        char step_label[64];
+        snprintf(step_label, sizeof(step_label), "lm_hidden_ar_%04d", ar_step_counter);
+        vcpm_dump_tensor(step_label, state->lm_hidden_state,
+                          state->hidden_size, 1, 0);
+        snprintf(step_label, sizeof(step_label), "residual_hidden_ar_%04d", ar_step_counter);
+        vcpm_dump_tensor(step_label, state->residual_hidden_state,
+                          state->res_hidden_size, 1, 0);
     }
 
     return VCPM_OK;
@@ -579,6 +598,13 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
                (size_t)state->hidden_size * sizeof(float));
     }
 
+    if (vcpm_debug_shapes_env() && state->lm_hidden_state) {
+        char label[64];
+        snprintf(label, sizeof(label), "lm_hidden_step_%04d", fill_pos);
+        vcpm_dump_tensor(label, state->lm_hidden_state,
+                          state->hidden_size, 1, 0);
+    }
+
     struct ggml_tensor * fusion_in = ggml_concat(update_ctx, fsq_out, audio_embed, 0);
     ggml_set_name(fusion_in, "update_fusion_in");
     struct ggml_tensor * ralm_in = vcpm_linear_proj(update_ctx, fusion_in,
@@ -597,6 +623,13 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
     if (state->residual_hidden_state && ralm_hidden && ralm_hidden->data) {
         memcpy(state->residual_hidden_state, ralm_hidden->data,
                (size_t)state->res_hidden_size * sizeof(float));
+    }
+
+    if (vcpm_debug_shapes_env() && state->residual_hidden_state) {
+        char label[64];
+        snprintf(label, sizeof(label), "residual_hidden_step_%04d", fill_pos);
+        vcpm_dump_tensor(label, state->residual_hidden_state,
+                          state->res_hidden_size, 1, 0);
     }
 
     ggml_graph_clear(graph);

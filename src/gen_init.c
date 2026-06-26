@@ -354,7 +354,7 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     };
     s->step_ctx = ggml_init(params);
     if (!s->step_ctx) { ggml_free(s->kv_ctx); free(s); return NULL; }
-    s->step_graph = ggml_new_graph_custom(s->step_ctx, 65536, false);
+    s->step_graph = ggml_new_graph_custom(s->step_ctx, 131072, false);
     if (!s->step_graph) { ggml_free(s->step_ctx); ggml_free(s->kv_ctx); free(s); return NULL; }
 
     s->base_kv_cache = (vcpm_gen_cache_unit *)calloc(

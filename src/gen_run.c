@@ -205,14 +205,16 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
             n_patches, patch_size, n_timesteps, latent_dim);
 
     /* Estimate VAE decoder ggml context memory.
-     * Peak intermediate tensor is ~upconv_dim * upsampled_timesteps,
-     * with ~8x overhead for residual intermediates.
-     * Cap at 2 GB, minimum 256 MB. */
-    size_t vae_mem = (size_t)n_timesteps * latent_dim * 512;
-    if (vae_mem < 256ULL * 1024 * 1024)
-        vae_mem = 256ULL * 1024 * 1024;
-    if (vae_mem > 2ULL * 1024 * 1024 * 1024)
-        vae_mem = 2ULL * 1024 * 1024 * 1024;
+     * The decoder builds 6 upconv blocks + 3 residual units each, creating many
+     * large intermediate tensors. Peak memory scales with n_timesteps:
+     *   ~18 MB per timestep (from empirical measurement at T=512 needing ~8.9 GB),
+     *   plus ~1.5 GB fixed overhead for graph plan work buffers.
+     * Cap at 16 GB, minimum 3 GB. */
+    size_t vae_mem = (size_t)n_timesteps * 64ULL * 1024 * 1024 + 2048ULL * 1024 * 1024;
+    if (vae_mem < 4ULL * 1024 * 1024 * 1024)
+        vae_mem = 4ULL * 1024 * 1024 * 1024;
+    if (vae_mem > 16ULL * 1024 * 1024 * 1024)
+        vae_mem = 16ULL * 1024 * 1024 * 1024;
     struct ggml_init_params vae_params = {
         .mem_size   = vae_mem,
         .mem_buffer = NULL,
