@@ -201,8 +201,9 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
      * Transpose to [2, hidden] for concatenation */
     struct ggml_tensor * mu_tok = NULL;
     if (mu) {
+        size_t hidden_stride = (size_t)hidden * ggml_type_size(mu->type);
         struct ggml_tensor * mu_view = ggml_view_2d(ctx, mu, hidden, 2,
-                                                      mu->nb[0], 0);
+                                                      hidden_stride, 0);
         mu_tok = ggml_cont(ctx, ggml_transpose(ctx, mu_view));
         ggml_set_name(mu_tok, "dit_mu_tok");
     } else {
@@ -279,7 +280,7 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
     int x_len = P;
     struct ggml_tensor * h_x_slice = ggml_view_2d(ctx, h, hidden, x_len,
                                                     h->nb[1],
-                                                    x_start * sizeof(float));
+                                                    (size_t)x_start * h->nb[1]);
     ggml_set_name(h_x_slice, "dit_h_x_slice");
     locdit_debug_tensor_shape("locdit.h_x_slice", h_x_slice);
 

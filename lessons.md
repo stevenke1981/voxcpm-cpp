@@ -43,3 +43,9 @@
 13. **ggml_conv_1d uses F16 im2col hardcoded**: `ggml_conv_1d()` internally calls `ggml_im2col()` with `GGML_TYPE_F16` regardless of input or weight type. For full F32 precision, use `ggml_im2col(GGML_TYPE_F32)` + `ggml_mul_mat` directly. This produces the same output as the F16 path for model.9 (identical RMS), but F32 accumulation is safer for deeper layers and avoids cumulative precision loss.
 
 14. **Verify test code independently**: When a verification produces an unexpected discrepancy, the first hypothesis should be that the test code itself has a bug — especially when dealing with tensor indexing, offsets, and tensor selection from arrays.
+
+---
+## Lesson #15 — 2026-06-26
+**Trigger:** LocDiT produced high-frequency/noise-like audio even though WAV writer and AudioVAE fixed-latent parity passed.
+**Rule:** When using `ggml_view_2d` to reinterpret token rows, compute `nb1` and `offset` in bytes from the full row stride (`row_index * tensor->nb[1]` or `hidden * type_size`), not from element counts like `row_index * sizeof(float)`.
+**Source:** VoxCPM C/C++ high-frequency WAV noise fix

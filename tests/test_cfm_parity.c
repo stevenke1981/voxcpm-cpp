@@ -114,7 +114,11 @@ int main(int argc, char ** argv) {
     printf("Fixtures: %s\n", fixture_dir);
 
     /* ---- Load model ---- */
-    vcpm_model * model = vcpm_model_load(gguf_path);
+    char err_buf[512] = {0};
+    vcpm_model * model = vcpm_model_load(gguf_path, err_buf, sizeof(err_buf));
+    if (!model && err_buf[0]) {
+        fprintf(stderr, "Failed to load GGUF: %s\n", err_buf);
+    }
     assert(model && "Failed to load GGUF model");
     printf("Model loaded: %d tensors\n", model->n_tensors);
 
@@ -200,7 +204,7 @@ int main(int argc, char ** argv) {
     /* ---- Check if we can run the model (ggml backend available) ---- */
     /* Create minimal context and try to run LocDiT forward */
     printf("=== Attempting single DiT forward ===\n");
-    size_t mem_size = 512 * 1024 * 1024; /* 512 MB */
+    size_t mem_size = 1024ULL * 1024 * 1024; /* 1 GB */
     struct ggml_init_params params = {
         .mem_size   = mem_size,
         .mem_buffer = NULL,
@@ -221,7 +225,7 @@ int main(int argc, char ** argv) {
         mcfg->dit_num_heads,
         mcfg->dit_num_heads / 2, /* n_kv_heads = half */
         mcfg->dit_hidden_size * 4,
-        mcfg->dit_hidden_size / mcfg->dit_num_heads,
+        mcfg->head_dim,
         mcfg->rms_norm_eps,
         mcfg->max_seq_len);
 
@@ -283,6 +287,10 @@ int main(int argc, char ** argv) {
         snprintf(key, sizeof(key), "feat_decoder.estimator.blk.%d.post_attention_layernorm.weight", i);
         dit_w.layer_weights[i].post_attention_layernorm_weight = vcpm_model_get_tensor(model, key);
     }
+    if (dit_w.layer_weights[0].k_proj_weight) {
+        int inferred_kv = (int)(dit_w.layer_weights[0].k_proj_weight->ne[1] / dit_cfg.head_dim);
+        if (inferred_kv > 0) dit_cfg.n_kv_heads = inferred_kv;
+    }
 
     /* Allocate input tensors from fixture data */
     int seq_len = 4;
@@ -306,27 +314,25 @@ int main(int argc, char ** argv) {
     memcpy(cond->data, cond_data, (size_t)n_cond * sizeof(float));
 
     /* mu: LM+RALM conditioning — load from fixture */
-    struct ggml_tensor * mu = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2048, seq_len);
+    struct ggml_tensor * mu = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2048, 1);
     assert(mu && mu->data);
-    /* Fixture is [1, 2048]; broadcast to [2048, seq_len] */
-    {
-        float * md = (float *)mu->data;
-        for (int s = 0; s < seq_len; s++) {
-            memcpy(md + s * 2048, mu_data, 2048 * sizeof(float));
-        }
-    }
+    memcpy(mu->data, mu_data, 2048 * sizeof(float));
 
     /* timestep: t=1.0 (first CFM step) */
     struct ggml_tensor * timestep = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
     assert(timestep && timestep->data);
     ((float *)timestep->data)[0] = 1.0f;
 
+    struct ggml_tensor * dt = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
+    assert(dt && dt->data);
+    ((float *)dt->data)[0] = -0.1f;
+
     /* Create compute graph */
-    struct ggml_cgraph * graph = ggml_new_graph(ctx);
+    struct ggml_cgraph * graph = ggml_new_graph_custom(ctx, 65536, false);
 
     /* Run LocDiT forward */
-    struct ggml_tensor * vel = vcpm_locdit_forward(ctx, graph, x_t, cond, timestep, mu,
-                                                    &dit_cfg, &dit_w);
+    struct ggml_tensor * vel = vcpm_locdit_forward(ctx, graph, x_t, cond, timestep, dt,
+                                                    mu, &dit_cfg, &dit_w);
     if (!vel) {
         printf("  ERROR: vcpm_locdit_forward returned NULL\n");
         printf("  Test cannot proceed without valid forward pass.\n");
@@ -339,6 +345,7 @@ int main(int argc, char ** argv) {
 
     /* Compute graph */
     printf("  Computing graph...\n");
+    ggml_build_forward_expand(graph, vel);
     ggml_graph_compute_with_ctx(ctx, graph, 1);
 
     /* ---- Compare velocity against expected pred_feat ---- */

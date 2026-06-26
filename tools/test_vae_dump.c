@@ -92,8 +92,10 @@ int main(int argc, char ** argv) {
 
     /* VAE config */
     vcpm_audio_vae_v2_config vaecfg;
-    vcpm_audio_vae_v2_config_fill(&vaecfg, vae_latent_dim, 2048,
+    int default_encoder_rates[4] = {2, 5, 8, 8};
+    vcpm_audio_vae_v2_config_fill(&vaecfg, vae_latent_dim, 2048, 2048,
                                    cfg->vae_decoder_rates,
+                                   default_encoder_rates,
                                    cfg->vae_sample_rate,
                                    cfg->vae_out_sample_rate);
 
