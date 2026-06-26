@@ -244,23 +244,25 @@ int vcpm_backend_compute_graph(vcpm_backend * be, struct ggml_context * ctx,
 #endif
 
     if (is_gpu) {
-        /* GPU path: allocate tensors on device, then compute.
-         * Notes:
-         *  - Weight tensors (from GGUF) are still on CPU.
-         *  - ggml_backend_alloc_ctx_tensors will allocate compute tensors
-         *    on the GPU backend.
-         *  - Weight data is copied to GPU lazily by the backend on first use.
-         *  - For full GPU acceleration the weights should be pre-copied,
-         *    but that requires a larger refactor of model_loader.c.
-         *    This path works correctly but may have CPU<->GPU transfer overhead.
+        /* GPU path: allocate context tensors on device, compute, then free.
+         *
+         * Weight tensors should have been pre-copied to GPU by a prior call
+         * to vcpm_model_offload() after model loading.  The gallocr in
+         * vcpm_backend_compute() handles intermediate graph tensors.
+         *
+         * The buffer allocated here holds the context's explicitly-created
+         * tensors (graph inputs/outputs).  It is freed after compute to
+         * avoid leaking GPU memory on every call.
+         *
+         * BUGFIX: previously (void)buf leaked the buffer — the caller's
+         * ggml_free(ctx) does NOT free backend buffers.
          */
         struct ggml_backend_buffer * buf = ggml_backend_alloc_ctx_tensors(ctx, be->backend);
+        int ret = vcpm_backend_compute(be, graph);
         if (buf) {
-            /* Store temporarily; will be freed when ctx is freed by caller */
-            (void)buf;
+            ggml_backend_buffer_free(buf);
         }
-
-        return vcpm_backend_compute(be, graph);
+        return ret;
     }
 #else
     (void)n_threads;

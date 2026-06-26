@@ -127,6 +127,17 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     s->backend_initialized = 1;
     fprintf(stderr, "vcpm_gen_init: backend=%s\n", vcpm_backend_type_name(&s->backend));
 
+    /* Pre-copy weight tensors to GPU device memory for non-CPU backends.
+     * This avoids CPU→GPU transfer overhead on every compute graph evaluation. */
+    if (!ggml_backend_is_cpu(s->backend.backend)) {
+        if (vcpm_model_offload((struct vcpm_model *)model, s->backend.backend) == 0) {
+            fprintf(stderr, "vcpm_gen_init: weight tensors pre-copied to %s\n",
+                    vcpm_backend_type_name(&s->backend));
+        } else {
+            fprintf(stderr, "warning: vcpm_model_offload failed (continuing with CPU staging)\n");
+        }
+    }
+
     const vcpm_model_config * cfg = &model->config;
 
     s->hidden_size        = cfg->hidden_size;
