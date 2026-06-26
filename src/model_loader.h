@@ -7,6 +7,7 @@
 /* Forward declaration - ggml types are opaque */
 struct gguf_context;
 struct ggml_context;
+struct ggml_backend;
 
 /* Maximum number of tensors we track by name lookup cache */
 #define VCPM_MAX_TENSOR_CACHE 1024
@@ -142,5 +143,19 @@ int vcpm_model_cache_tensor(vcpm_model * model, const char * name);
 int vcpm_model_tensor_name(char * buf, size_t buf_size,
                             const char * prefix, int layer,
                             const char * suffix);
+
+/*
+ * Offload model tensors from CPU to a ggml backend (e.g., CUDA, Metal, Vulkan).
+ *
+ * Saves current CPU tensor data, allocates tensor memory on the given backend,
+ * and copies weights. After this call, all tensor->data pointers point to
+ * backend device memory.
+ *
+ * The model must already be loaded with vcpm_model_load(). This is safe to
+ * call before any compute graph is built.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int vcpm_model_offload(struct vcpm_model * model, struct ggml_backend * backend);
 
 #endif /* VCPM_MODEL_LOADER_H */

@@ -2,6 +2,8 @@
 
 #include "gguf.h"
 #include "ggml.h"
+#include "ggml-backend.h"
+#include "ggml-alloc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -455,4 +457,80 @@ int vcpm_model_tensor_name(char * buf, size_t buf_size,
                             const char * prefix, int layer,
                             const char * suffix) {
     return snprintf(buf, buf_size, "%s.%d.%s", prefix, layer, suffix);
+}
+
+int vcpm_model_offload(vcpm_model * model, struct ggml_backend * backend) {
+    if (!model || !backend || !model->ggml_ctx) return -1;
+
+    struct ggml_context * ctx = model->ggml_ctx;
+
+    /* Count tensors in the context */
+    int n = 0;
+    for (struct ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+        n++;
+    }
+    if (n == 0) return 0;
+
+    fprintf(stderr, "vcpm: offloading %d tensors to backend\n", n);
+
+    /* Allocate temporary arrays for CPU data pointers and tensor pointers */
+    void ** cpu_data = (void **)malloc((size_t)n * sizeof(void *));
+    struct ggml_tensor ** tensors = (struct ggml_tensor **)malloc((size_t)n * sizeof(struct ggml_tensor *));
+    if (!cpu_data || !tensors) {
+        free(cpu_data);
+        free(tensors);
+        return -1;
+    }
+
+    /* Save all CPU data pointers */
+    int i = 0;
+    for (struct ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+        tensors[i] = t;
+        cpu_data[i] = t->data;
+        i++;
+    }
+
+    /*
+     * Clear data/buffer pointers so ggml_backend_alloc_ctx_tensors()
+     * will allocate them on the backend.  The GGML_ASSERT inside that
+     * function checks ggml_get_no_alloc(ctx) == true, so we must set
+     * no_alloc before the call.
+     */
+    for (i = 0; i < n; i++) {
+        tensors[i]->data   = NULL;
+        tensors[i]->buffer = NULL;
+    }
+    ggml_set_no_alloc(ctx, true);
+
+    /* Allocate all tensors on the target backend */
+    struct ggml_backend_buffer * buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
+    if (!buf) {
+        fprintf(stderr, "vcpm: failed to allocate tensors on backend\n");
+        /* Restore CPU data pointers so the model remains usable */
+        for (i = 0; i < n; i++) {
+            tensors[i]->data   = cpu_data[i];
+            tensors[i]->buffer = NULL;
+        }
+        ggml_set_no_alloc(ctx, false);
+        free(cpu_data);
+        free(tensors);
+        return -1;
+    }
+
+    /* Copy weight data from CPU staging area to backend device memory */
+    for (i = 0; i < n; i++) {
+        ggml_backend_tensor_set(tensors[i], cpu_data[i], 0, ggml_nbytes(tensors[i]));
+    }
+
+    /* The CPU staging buffers are still owned by the ggml context and will
+       be freed when the context is freed.  tensor->data now points into
+       the backend buffer. */
+
+    size_t total_bytes = ggml_backend_buffer_get_size(buf);
+    fprintf(stderr, "vcpm: offloaded %d tensors (%.2f MB) to backend\n",
+            n, (double)total_bytes / (1024.0 * 1024.0));
+
+    free(cpu_data);
+    free(tensors);
+    return 0;
 }
