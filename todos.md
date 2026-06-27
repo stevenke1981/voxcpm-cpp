@@ -210,6 +210,15 @@ C generates 2.6s audio with RMS=0.169, range [-0.97, 0.98], no NaN/Inf. **Sounds
 - [x] `voxcpm-c bench` command with RTF measurement.
 - [x] Q8_0 quantization (45% size reduction, 2.44 GB).
 - [ ] **Fix CUDA OOM** — 9 GB model on 8 GB VRAM crashes. Use Q8_0 or partial offload.
+- [ ] **GPU acceleration gap requested but not done** — Current CUDA path exists, but the user-facing
+  acceleration target is not satisfied until a normal `tts` run works on the available 8 GB GPU without
+  OOM and produces the same deterministic debug/parity outputs as CPU.
+  - [ ] Add a documented Q8_0-CUDA inference path for `voxcpm-c tts` and `bench`.
+  - [ ] Add partial / layer-by-layer GPU offload for the full f16 GGUF when it cannot fit in VRAM.
+  - [ ] Add backend selection diagnostics that report actual CPU/CUDA tensor placement and VRAM usage.
+  - [ ] Add GPU smoke command with acceptance threshold: no OOM, WAV produced, finite audio, and CFM
+    fixture dumps comparable to the CPU path.
+  - [ ] Add benchmark acceptance: record CPU vs CUDA vs Q8_0-CUDA RTF for the same text/model/settings.
 - [ ] Add CPU thread setting (`--threads N`).
 - [ ] Reuse KV cache across generations.
 - [ ] Compare RTF: CPU vs CUDA vs Q8_0-CUDA.
