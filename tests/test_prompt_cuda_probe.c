@@ -20,6 +20,7 @@
 #include <float.h>
 #include <math.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -199,6 +200,16 @@ static int run_prompt_probe(const char * model_path,
     }
     memcpy(out->data, base_hidden->data, out->n * sizeof(float));
     calc_stats(out);
+    if (backend_type == VCPM_BACKEND_CUDA) {
+        printf("CUDA_OUT type=%d nbytes=%zu data=%p ne=[%lld,%lld,%lld] first4_hex: ",
+               base_hidden->type, ggml_nbytes(base_hidden),
+               (void*)base_hidden->data,
+               (long long)base_hidden->ne[0], (long long)base_hidden->ne[1],
+               (long long)base_hidden->ne[2]);
+        uint32_t * u32 = (uint32_t *)out->data;
+        for (int i = 0; i < 4 && i < out->hidden_size; i++) printf("0x%08X ", u32[i]);
+        printf("\n");
+    }
 
     printf("%s prompt: tokens=%d prompt=%d shape=[%d,%d] rms=%.6f min=%+.6f max=%+.6f zero=%zu/%zu finite=%zu/%zu\n",
            backend_type == VCPM_BACKEND_CUDA ? "CUDA" : "CPU",
@@ -240,6 +251,23 @@ int main(int argc, char ** argv) {
         free_result(&cuda);
         return 1;
     }
+
+    /* DEBUG: dump first few values for comparison */
+    int ndump = cpu.hidden_size > 16 ? 16 : cpu.hidden_size;
+    printf("\nDEBUG: token[0] first %d hidden values:\n", ndump);
+    printf("  CPU: ");
+    for (int i = 0; i < ndump; i++) printf("%+.4f ", cpu.data[i]);
+    printf("\n  CUD: ");
+    for (int i = 0; i < ndump; i++) printf("%+.4f ", cuda.data[i]);
+    printf("\n");
+    /* Also dump last token */
+    int last_tok = (cpu.n_prompt - 1) * cpu.hidden_size;
+    printf("DEBUG: token[%d] first %d hidden values:\n", cpu.n_prompt - 1, ndump);
+    printf("  CPU: ");
+    for (int i = 0; i < ndump; i++) printf("%+.4f ", cpu.data[last_tok + i]);
+    printf("\n  CUD: ");
+    for (int i = 0; i < ndump; i++) printf("%+.4f ", cuda.data[last_tok + i]);
+    printf("\n");
 
     double cos = cosine_similarity(cpu.data, cuda.data, cpu.n);
     double err = rmse(cpu.data, cuda.data, cpu.n);

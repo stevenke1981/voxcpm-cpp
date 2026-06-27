@@ -22,6 +22,8 @@
 #include "ggml-cuda.h"
 #endif
 
+#include <inttypes.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -294,6 +296,17 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
     }
     if (vcpm_debug_env()) {
         fprintf(stderr, "VCPM_DEBUG compute: collected %d CPU leaf tensors\n", n_cpu);
+        /* DEBUG: dump first 5 leaf names */
+        for (int d = 0; d < 5 && d < n_cpu; d++) {
+            fprintf(stderr, "  leaf[%d]: name='%s' type=%d ne=[%lld,%lld,%lld,%lld] nbytes=%zu\n",
+                    d, cpu_tensors[d]->name ? cpu_tensors[d]->name : "?",
+                    cpu_tensors[d]->type,
+                    (long long)cpu_tensors[d]->ne[0],
+                    (long long)cpu_tensors[d]->ne[1],
+                    (long long)cpu_tensors[d]->ne[2],
+                    (long long)cpu_tensors[d]->ne[3],
+                    cpu_nbytes[d]);
+        }
     }
 
     /* Reserve and allocate graph on GPU */
@@ -306,6 +319,20 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
     }
     if (vcpm_debug_env()) {
         fprintf(stderr, "VCPM_DEBUG compute: gallocr allocated graph\n");
+        /* DEBUG: check if weight tensor buffer changed (gallocr reallocation) */
+        for (int di = 0; di < ggml_graph_n_nodes(graph) && di < 5; di++) {
+            struct ggml_tensor * tn = ggml_graph_node(graph, di);
+            if (!tn) continue;
+            for (int si = 0; si < GGML_MAX_SRC && tn->src[si]; si++) {
+                struct ggml_tensor * s = tn->src[si];
+                if (s->name && strstr(s->name, ".weight")) {
+                    fprintf(stderr, "  DEBUG weight_check: src[%d] name='%s' buffer=%p type=%d ne=[%lld,%lld]\n",
+                            si, s->name ? s->name : "?", (void*)s->buffer,
+                            s->type, (long long)s->ne[0], (long long)s->ne[1]);
+                    break;
+                }
+            }
+        }
     }
 
     /* Copy CPU input data to newly-allocated GPU tensors. */
@@ -315,6 +342,19 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
             ggml_backend_buffer_t eff_buf = t->view_src ? t->view_src->buffer : t->buffer;
             if (eff_buf) {
                 ggml_backend_tensor_set(t, cpu_ptrs[j], 0, cpu_nbytes[j]);
+                /* DEBUG: verify upload for named tensors */
+                if (t->name && (strstr(t->name, "layer_0_input") || strstr(t->name, "base_embed"))) {
+                    float upload_check[8];
+                    ggml_backend_tensor_get(t, upload_check, 0, sizeof(upload_check));
+                    float * src = (float *)cpu_ptrs[j];
+                    fprintf(stderr, "VCPM_DEBUG verify_upload(%s): type=%d ne0=%d ne1=%d nbytes=%zu\n",
+                            t->name, t->type, (int)t->ne[0], (int)t->ne[1], cpu_nbytes[j]);
+                    fprintf(stderr, "  CPU src[0..7]:");
+                    for (int k = 0; k < 8 && k < (int)t->ne[0]; k++) fprintf(stderr, " %+.4f", src[k]);
+                    fprintf(stderr, "\n  GPU readback:");
+                    for (int k = 0; k < 8; k++) fprintf(stderr, " %+.4f", upload_check[k]);
+                    fprintf(stderr, "\n");
+                }
             } else {
                 fprintf(stderr, "VCPM_DEBUG compute: tensor %d has no effective buffer after alloc (name='%s')\n",
                         j, t->name ? t->name : "?");
@@ -346,60 +386,83 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
     }
 #endif
 
-    /* Read back ALL graph tensors from GPU to CPU using fresh CPU copies.
-     * We iterate the entire graph and allocate a copy for every tensor
-     * that has a GPU buffer. Leaf tensors (from ggml context) get their
-     * original data pointer restored. Output tensors get new CPU copies
-     * tracked in be->cpu_copies (automatically freed on next compute). */
+    /* Read back ALL graph tensors from GPU to CPU.
+     *
+     * KEY INSIGHT: gallocr aliases GPU memory — leaf-tensor GPU buffers may
+     * contain stale data from DIFFERENT tensors after compute (gallocr reuses
+     * memory for efficiency).  Reading back all leaf tensor data blindly can
+     * return garbage.
+     *
+     * Strategy:
+     *   1. Read back graph NODE outputs (computation results) using their
+     *      current GPU buffers — each node's buffer is valid at this point.
+     *   2. Restore leaf CPU pointers, clear all GPU buffers.
+     *   3. Read back KV cache tensors (their GPU buffers are still set). */
 
-    /* First pass: handle leaf tensors — restore original ggml-context pointer */
-    for (int j = 0; j < n_cpu; j++) {
-        struct ggml_tensor * t = cpu_tensors[j];
-        if (!t) continue;
-        ggml_backend_buffer_t eff_buf = t->view_src ? t->view_src->buffer : t->buffer;
-        if (eff_buf && cpu_ptrs[j]) {
-            if (ok) {
-                ggml_backend_tensor_get(t, cpu_ptrs[j], 0, cpu_nbytes[j]);
-            }
-        }
-        /* Restore the original CPU data pointer (ggml context memory) */
-        t->data   = cpu_ptrs[j];
-        t->buffer = NULL;
-    }
-
-    /* Extract OLD CPU copies list before appending new ones */
-    struct vcpm_cpu_copy * old_copies = be->cpu_copies;
-    be->cpu_copies = NULL;
-
-    /* Second pass: handle non-leaf (output) tensors — allocate fresh CPU copies */
+    /* Step 1: read back ALL graph node outputs from GPU.
+     * Leaf nodes read back to pre-allocated ctx memory.
+     * Non-leaf nodes allocate fresh CPU copies (tracked for later free). */
     for (int i = 0; i < ggml_graph_n_nodes(graph); i++) {
         struct ggml_tensor * t = ggml_graph_node(graph, i);
         if (!t) continue;
         ggml_backend_buffer_t eff_buf = t->view_src ? t->view_src->buffer : t->buffer;
         if (!eff_buf) continue;
-        /* Skip leaf tensors (already handled above) */
-        int is_leaf = 0;
+
+        int leaf_idx = -1;
         for (int j = 0; j < n_cpu; j++) {
-            if (cpu_tensors[j] == t) { is_leaf = 1; break; }
+            if (cpu_tensors[j] == t) { leaf_idx = j; break; }
         }
-        if (is_leaf) continue;
-        /* Allocate CPU buffer and read back from GPU */
-        size_t nb = ggml_nbytes(t);
-        void * cpu_copy = malloc(nb);
-        if (!cpu_copy) continue;
-        if (ok) {
-            ggml_backend_tensor_get(t, cpu_copy, 0, nb);
+
+        if (leaf_idx >= 0 && cpu_ptrs[leaf_idx]) {
+            /* Leaf node: read back to pre-allocated ctx memory */
+            if (ok) {
+                ggml_backend_tensor_get(t, cpu_ptrs[leaf_idx], 0, cpu_nbytes[leaf_idx]);
+            }
         } else {
-            memset(cpu_copy, 0, nb);
+            /* Non-leaf node: allocate fresh CPU copy (tracked for free) */
+            size_t nb = ggml_nbytes(t);
+            void * cpu_copy = malloc(nb);
+            if (!cpu_copy) continue;
+            if (ok) {
+                ggml_backend_tensor_get(t, cpu_copy, 0, nb);
+            } else {
+                memset(cpu_copy, 0, nb);
+            }
+            t->data   = cpu_copy;
+            t->buffer = NULL;
+            struct vcpm_cpu_copy * node = (struct vcpm_cpu_copy *)malloc(sizeof(*node));
+            if (node) {
+                node->data = cpu_copy;
+                node->next = be->cpu_copies;
+                be->cpu_copies = node;
+            }
         }
-        t->data   = cpu_copy;
+    }
+    /* Note: t->buffer is still set for leaf nodes after readback above. */
+
+    /* Extract OLD CPU copies list before appending new ones */
+    struct vcpm_cpu_copy * old_copies = be->cpu_copies;
+    be->cpu_copies = NULL;
+
+    /* Step 2: restore leaf tensor CPU/ctx pointers, clear GPU buffers.
+     * This must happen AFTER the readback above because ggml_backend_tensor_get
+     * requires t->buffer to be non-NULL. */
+    for (int j = 0; j < n_cpu; j++) {
+        struct ggml_tensor * t = cpu_tensors[j];
+        if (!t) continue;
+        t->data   = cpu_ptrs[j];
         t->buffer = NULL;
-        /* Track for later freeing */
-        struct vcpm_cpu_copy * node = (struct vcpm_cpu_copy *)malloc(sizeof(*node));
-        if (node) {
-            node->data = cpu_copy;
-            node->next = be->cpu_copies;
-            be->cpu_copies = node;
+    }
+
+    /* DEBUG: after readback, check final output values */
+    if (vcpm_debug_env() && ggml_graph_n_nodes(graph) > 0) {
+        struct ggml_tensor * last = ggml_graph_node(graph, ggml_graph_n_nodes(graph) - 1);
+        if (last && last->data && last->type == 0) {
+            float * f = (float *)last->data;
+            fprintf(stderr, "  DEBUG final output after readback: type=%d data=%p\n", last->type, (void*)last->data);
+            fprintf(stderr, "  output[0..7]:");
+            for (int d = 0; d < 8 && d < (int)last->ne[0]; d++) fprintf(stderr, " %+.4f", f[d]);
+            fprintf(stderr, "\n");
         }
     }
 
@@ -417,18 +480,21 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
         }
     }
 
-    /* Clear GPU buffer references on KV cache tensors so they are treated as
-     * CPU-backed leaf tensors on the next compute call.
+    /* Read back KV cache tensors and clear their GPU buffer references.
      *
-     * The gallocr allocates GPU memory for view source tensors (k_cache/v_cache
-     * from kv_ctx) and sets their ->buffer field. Without this cleanup, the
-     * buffer pointer persists across compute calls. On the next call, new views
-     * inherit the stale buffer, bypass leaf collection (->buffer != NULL),
-     * and their CPU data is never copied to/from GPU — producing all-zero output.
+     * KV cache tensors are updated by attention writes during compute but
+     * may NOT be graph nodes (they are view sources).  We must read them
+     * back here so their updated data persists for the next compute call.
+     *
+     * After readback, clear ->buffer so next call treats them as CPU-backed
+     * leaf tensors (re-uploads via leaf collection).
      */
     if (be->kv_cache_ctx) {
         for (struct ggml_tensor * t = ggml_get_first_tensor(be->kv_cache_ctx);
              t != NULL; t = ggml_get_next_tensor(be->kv_cache_ctx, t)) {
+            if (ok && t->buffer && t->data) {
+                ggml_backend_tensor_get(t, t->data, 0, ggml_nbytes(t));
+            }
             t->buffer = NULL;
         }
     }
@@ -437,6 +503,34 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
 
     if (vcpm_debug_env()) {
         fprintf(stderr, "VCPM_DEBUG compute: done OK\n");
+        /* DEBUG: check first leaf tensor values after readback */
+        if (n_cpu > 0 && cpu_tensors[0] && cpu_ptrs[0]) {
+            float * f = (float *)cpu_ptrs[0];
+            fprintf(stderr, "  DEBUG leaf[0] after compute: name='%s' type=%d\n",
+                    cpu_tensors[0]->name ? cpu_tensors[0]->name : "?", cpu_tensors[0]->type);
+            fprintf(stderr, "  values[0..7]:");
+            for (int d = 0; d < 8 && d < (int)cpu_tensors[0]->ne[0]; d++)
+                fprintf(stderr, " %+.4f", f[d]);
+            fprintf(stderr, "\n");
+        }
+        /* Also check the output tensor (last graph node) */
+        if (ggml_graph_n_nodes(graph) > 0) {
+            struct ggml_tensor * last = ggml_graph_node(graph, ggml_graph_n_nodes(graph) - 1);
+            if (last) {
+                fprintf(stderr, "  DEBUG last graph node: name='%s' type=%d ne=[%lld,%lld,%lld,%lld] data=%p buffer=%p\n",
+                        last->name ? last->name : "?", last->type,
+                        (long long)last->ne[0], (long long)last->ne[1],
+                        (long long)last->ne[2], (long long)last->ne[3],
+                        (void*)last->data, (void*)last->buffer);
+                if (last->data) {
+                    float * f = (float *)last->data;
+                    fprintf(stderr, "  values[0..7]:");
+                    for (int d = 0; d < 8 && d < (int)last->ne[0]; d++)
+                        fprintf(stderr, " %+.4f", f[d]);
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
     }
     return 0;
 }
