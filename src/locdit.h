@@ -72,6 +72,9 @@ void vcpm_locdit_config_fill(vcpm_locdit_config * cfg,
                               float rms_norm_eps, int max_seq_len);
 
 /* Create sinusoidal timestep embedding.
+ * Matches Python SinusoidalPosEmb: angle = 1000 * t *
+ * exp(-i * log(10000) / (half_dim - 1)).
+ *
  * t:        scalar timestep tensor [1, 1]
  * dim:      embedding dimension
  * max_period: max wavelength (default 10000)
@@ -127,5 +130,11 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
                                            struct ggml_tensor * mu,
                                            const vcpm_locdit_config * cfg,
                                            const vcpm_locdit_weights * w);
+
+/* Debug probe support. When VCPM_DEBUG_SHAPES is set, vcpm_locdit_forward()
+ * records selected intermediate tensors and callers may dump them after graph
+ * compute but before freeing the ggml context. */
+void vcpm_locdit_debug_reset(void);
+void vcpm_locdit_debug_dump(const char * kind, int ar_step, int diff_step);
 
 #endif /* VCPM_LOCDIT_H */

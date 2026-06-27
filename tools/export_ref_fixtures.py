@@ -37,6 +37,7 @@ log = logging.getLogger("export_ref_fixtures")
 _ORIG_INFERENCE = None
 _FIXTURE_DIR = None
 _STEP_COUNTER = [0]
+_DIFF_COUNTER = [0]
 
 
 def _dump_tensor(name: str, tensor: torch.Tensor, step: int = -1):
@@ -354,6 +355,7 @@ def _patch_cfm_sampler(cfm_module):
                         dt_in = torch.zeros_like(dt_in)
                     cond_in[:b], cond_in[b:] = cond, cond
 
+                    _DIFF_COUNTER[0] = step
                     dphi_dt = self.estimator(x_in, mu_in, t_in, cond_in, dt_in)
                     dphi_dt, cfg_dphi_dt = torch.split(dphi_dt, [x.size(0), x.size(0)], dim=0)
                     _dump_tensor(f"ar{ar_step:04d}_d{step:04d}_cfm_velocity_cond", dphi_dt)
@@ -364,6 +366,7 @@ def _patch_cfm_sampler(cfm_module):
                         negative_flat = cfg_dphi_dt.view(b, -1)
                         st_star = self.optimized_scale(positive_flat, negative_flat)
                         st_star = st_star.view(b, *([1] * (len(dphi_dt.shape) - 1)))
+                        _dump_tensor(f"ar{ar_step:04d}_d{step:04d}_cfm_cfg_st_star", st_star)
                     else:
                         st_star = 1.0
 
@@ -382,6 +385,70 @@ def _patch_cfm_sampler(cfm_module):
             return x
 
         cfm_module.solve_euler = _patched_solve_euler.__get__(cfm_module, type(cfm_module))
+
+
+def _dump_locdit_probe(name: str, tensor: torch.Tensor):
+    ar_step = _STEP_COUNTER[0]
+    diff_step = _DIFF_COUNTER[0]
+    if tensor.size(0) >= 1:
+        _dump_tensor(f"ar{ar_step:04d}_d{diff_step:04d}_locdit_cond_{name}", tensor[:1])
+    if tensor.size(0) >= 2:
+        _dump_tensor(f"ar{ar_step:04d}_d{diff_step:04d}_locdit_uncond_{name}", tensor[1:2])
+
+
+def _patch_locdit_forward(estimator):
+    """Patch VoxCPMLocDiT.forward to dump selected internal tensors."""
+    if hasattr(estimator, "forward_orig"):
+        return
+    estimator.forward_orig = estimator.forward
+
+    def _patched_forward(self, x: torch.Tensor, mu: torch.Tensor, t: torch.Tensor,
+                         cond: torch.Tensor, dt: torch.Tensor):
+        x = self.in_proj(x.transpose(1, 2).contiguous())
+        _dump_locdit_probe("x_proj", x)
+
+        cond = self.cond_proj(cond.transpose(1, 2).contiguous())
+        _dump_locdit_probe("cond_proj", cond)
+        prefix = cond.size(1)
+
+        t = self.time_embeddings(t).to(x.dtype)
+        _dump_locdit_probe("t_sin", t)
+        t = self.time_mlp(t)
+        _dump_locdit_probe("t_feat", t)
+        dt = self.time_embeddings(dt).to(x.dtype)
+        _dump_locdit_probe("dt_sin", dt)
+        dt = self.delta_time_mlp(dt)
+        _dump_locdit_probe("dt_feat", dt)
+        t = t + dt
+        _dump_locdit_probe("t_combined", t)
+
+        mu = mu.view(x.size(0), -1, x.size(-1))
+        x = torch.cat([mu, t.unsqueeze(1), cond, x], dim=1)
+        _dump_locdit_probe("seq", x)
+
+        hidden_states = x
+        next_decoder_cache = []
+        position_emb = None
+        if self.decoder.rope_emb is not None:
+            position_ids = torch.arange(0, hidden_states.size(1), dtype=torch.long, device=hidden_states.device)
+            position_emb = self.decoder.rope_emb(position_ids)
+
+        for layer_idx, decoder_layer in enumerate(self.decoder.layers):
+            hidden_states, this_cache = decoder_layer(hidden_states, position_emb, False)
+            next_decoder_cache.append(this_cache)
+            if layer_idx == 0:
+                _dump_locdit_probe("block00", hidden_states)
+            elif layer_idx == len(self.decoder.layers) - 1:
+                _dump_locdit_probe("block_last", hidden_states)
+
+        hidden = self.decoder.norm(hidden_states)
+        hidden = hidden[:, prefix + mu.size(1) + 1 :, :]
+        _dump_locdit_probe("norm", hidden)
+        hidden = self.out_proj(hidden)
+        _dump_locdit_probe("output", hidden)
+        return hidden.transpose(1, 2).contiguous()
+
+    estimator.forward = _patched_forward.__get__(estimator, type(estimator))
 
 
 # ---------------------------------------------------------------------------
@@ -512,6 +579,7 @@ def main():
 
     # ---- Patch CFM sampler for trajectory ----
     _patch_cfm_sampler(model.feat_decoder)
+    _patch_locdit_forward(model.feat_decoder.estimator)
 
     # ---- Dump reference config values ----
     ref_cfg = {

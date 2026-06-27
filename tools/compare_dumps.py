@@ -84,6 +84,14 @@ def compare_one(label, c_data, c_shape, py_data, py_shape):
     if exact_zero_match:
         print("  [MATCH] (both tensors are exactly zero)")
         matched = True
+    elif n == 1:
+        scalar_abs = float(abs_err[0])
+        scalar_rel = float(rel_err[0])
+        if scalar_abs <= 1e-5 or scalar_rel <= 1e-4:
+            print(f"  [MATCH] (scalar abs={scalar_abs:.6g}, rel={scalar_rel:.6g})")
+            matched = True
+        else:
+            print(f"  [DIFFERENT] (scalar abs={scalar_abs:.6g}, rel={scalar_rel:.6g})")
     elif cos_sim > 0.99:
         print(f"  [MATCH] (cos={cos_sim:.6f})")
         matched = True
@@ -104,6 +112,13 @@ def compare_one(label, c_data, c_shape, py_data, py_shape):
 
 def reshape_c_to_py(dump_name, c_data, c_shape, py_data, py_shape):
     """Transpose/reshape C data to match Python layout where needed."""
+    if dump_name.startswith("dump_locdit_"):
+        if len(py_shape) == 3 and py_shape[2] == c_shape[0] and py_shape[1] == c_shape[1]:
+            return c_data, py_data.transpose(0, 2, 1)
+        if len(py_shape) == 3 and py_shape[1] == c_shape[0] and py_shape[2] == c_shape[1]:
+            return c_data, py_data.reshape(c_shape[0], c_shape[1])
+        if len(py_shape) == 2 and py_shape[1] == c_shape[0] and c_shape[1] == 1:
+            return c_data.flatten(), py_data.flatten()
     if (dump_name.startswith("dump_step_cond_") or
             dump_name.startswith("dump_step_noise_") or
             dump_name.startswith("dump_step_pred_feat_") or
@@ -213,6 +228,16 @@ def find_cfm_traj_fixture(fixtures_dir, ar_step, diff_step):
 
 def find_cfm_velocity_fixture(fixtures_dir, kind, ar_step, diff_step):
     fpath = os.path.join(fixtures_dir, f"ar{ar_step:04d}_d{diff_step:04d}_cfm_velocity_{kind}.npy")
+    return fpath if os.path.exists(fpath) else None
+
+
+def find_cfm_cfg_st_star_fixture(fixtures_dir, ar_step, diff_step):
+    fpath = os.path.join(fixtures_dir, f"ar{ar_step:04d}_d{diff_step:04d}_cfm_cfg_st_star.npy")
+    return fpath if os.path.exists(fpath) else None
+
+
+def find_locdit_probe_fixture(fixtures_dir, kind, probe, ar_step, diff_step):
+    fpath = os.path.join(fixtures_dir, f"ar{ar_step:04d}_d{diff_step:04d}_locdit_{kind}_{probe}.npy")
     return fpath if os.path.exists(fpath) else None
 
 
@@ -343,7 +368,10 @@ def main():
     # Compare step-specific dumps
     dump_by_step = {}
     for d in all_dumps:
-        if d.startswith("dump_cfm_traj_state_") or d.startswith("dump_cfm_velocity_"):
+        if (d.startswith("dump_cfm_traj_state_") or
+                d.startswith("dump_cfm_velocity_") or
+                d.startswith("dump_cfm_cfg_st_star_") or
+                d.startswith("dump_locdit_")):
             continue
         m = re.match(r"dump_(.+)_(\d{4})\.bin", d)
         if m:
@@ -459,6 +487,73 @@ def main():
         matched = compare_one(f"{dump_name} vs {fixture_name}",
                               c_compare, c_shape,
                               py_compare, py_data.shape)
+        results.append((dump_name, fixture_name, matched))
+
+    # Compare selected LocDiT internal probes.
+    locdit_dumps = []
+    for d in all_dumps:
+        m = re.match(r"dump_locdit_(cond|uncond)_(.+)_(\d{4})_(\d{4})\.bin", d)
+        if m:
+            locdit_dumps.append((m.group(1), m.group(2), int(m.group(3)), int(m.group(4)), d))
+
+    if locdit_dumps:
+        print(f"\n{'='*60}")
+        print("LOCDIT PROBE COMPARISONS")
+        print(f"{'='*60}")
+        print(f"Found {len(locdit_dumps)} LocDiT probe dumps")
+
+    for kind, probe, ar_step, diff_step, dump_name in sorted(locdit_dumps):
+        dump_path = os.path.join(args.dump_dir, dump_name)
+        fixture_path = find_locdit_probe_fixture(args.fixtures_dir, kind, probe, ar_step, diff_step)
+        if fixture_path is None:
+            print(f"\n--- {dump_name}: No matching ar{ar_step:04d}_d{diff_step:04d}_locdit_{kind}_{probe}.npy fixture ---")
+            continue
+
+        try:
+            c_data, c_shape = load_bin(dump_path)
+        except Exception as e:
+            print(f"\n--- {dump_name}: ERROR loading: {e} ---")
+            continue
+
+        py_data = load_npy(fixture_path)
+        fixture_name = os.path.basename(fixture_path)
+        c_compare, py_compare = reshape_c_to_py(dump_name, c_data, c_shape, py_data, py_data.shape)
+        matched = compare_one(f"{dump_name} vs {fixture_name}",
+                              c_compare, c_shape,
+                              py_compare, py_data.shape)
+        results.append((dump_name, fixture_name, matched))
+
+    # Compare CFG-Zero* optimized scale scalars.
+    cfg_scale_dumps = []
+    for d in all_dumps:
+        m = re.match(r"dump_cfm_cfg_st_star_(\d{4})_(\d{4})\.bin", d)
+        if m:
+            cfg_scale_dumps.append((int(m.group(1)), int(m.group(2)), d))
+
+    if cfg_scale_dumps:
+        print(f"\n{'='*60}")
+        print("CFM CFG ST* COMPARISONS")
+        print(f"{'='*60}")
+        print(f"Found {len(cfg_scale_dumps)} CFG st_star dumps")
+
+    for ar_step, diff_step, dump_name in sorted(cfg_scale_dumps):
+        dump_path = os.path.join(args.dump_dir, dump_name)
+        fixture_path = find_cfm_cfg_st_star_fixture(args.fixtures_dir, ar_step, diff_step)
+        if fixture_path is None:
+            print(f"\n--- {dump_name}: No matching ar{ar_step:04d}_d{diff_step:04d}_cfm_cfg_st_star.npy fixture ---")
+            continue
+
+        try:
+            c_data, c_shape = load_bin(dump_path)
+        except Exception as e:
+            print(f"\n--- {dump_name}: ERROR loading: {e} ---")
+            continue
+
+        py_data = load_npy(fixture_path)
+        fixture_name = os.path.basename(fixture_path)
+        matched = compare_one(f"{dump_name} vs {fixture_name}",
+                              c_data, c_shape,
+                              py_data, py_data.shape)
         results.append((dump_name, fixture_name, matched))
 
     # Compare CFM velocity dumps with Python arXXXX_dYYYY_cfm_velocity_KIND.npy.

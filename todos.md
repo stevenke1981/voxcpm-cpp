@@ -174,10 +174,17 @@ C generates 2.6s audio with RMS=0.169, range [-0.97, 0.98], no NaN/Inf. **Sounds
      `cfm_velocity_cond`, `cfm_velocity_uncond`, and `cfm_velocity_blend`.
      With deterministic fixture noise, the first non-zero AR0 velocity was strongly anti-correlated
      before sign normalization (`blend` cos=-0.9414, `cond` cos=-0.9562, `uncond` cos=-0.9472).
-     The C sampler now normalizes LocDiT velocity sign before CFG-Zero* blending/integration; AR0 d0002
-     flips to positive high similarity (`blend` cos=0.9414, `cond` cos=0.9562, `uncond` cos=0.9472).
-     Final CFM output is still not parity (`step_pred_feat_0000` cos≈0.8444), so the next blocker is
-     LocDiT velocity magnitude/internal numeric drift and CFG blend details after sign alignment.
+     Follow-up showed this was a compensating symptom: the C timestep sinusoidal embedding used the wrong
+     frequency formula. C now matches Python `SinusoidalPosEmb(scale=1000)` with denominator
+     `half_dim - 1`, and the earlier LocDiT velocity sign normalization has been removed.
+   - 2026-06-27 update: Debug fixtures now dump CFG-Zero* `st_star` scalars and selected LocDiT internal
+     probes (`x_proj`, `cond_proj`, `t_sin`, `t_feat`, `dt_sin`, `dt_feat`, `t_combined`, `seq`,
+     `block00`, `block_last`, `norm`, `output`). With fixed timestep embedding and deterministic noise,
+     AR0 d0002 velocities are directionally aligned (`cond` cos=0.945882, `uncond` cos=0.954876), but CFG
+     blend still drifts (`blend` cos=0.847530) because the optimized scale differs (`st_star` C=0.833775,
+     Python≈1.015625). Recomputing from dumped velocities shows C cond/uncond correlation is lower
+     (0.952888 vs Python 0.990402), so the next blocker is LocDiT internal numeric drift that changes
+     velocity magnitude/correlation before CFG blending.
 
 3. **[MED] Verify stop predictor against Python** — Compare `step*_stop_logits.npy` from Python fixture vs C `gen_predict_stop` output. Early stopping could truncate audio.
 

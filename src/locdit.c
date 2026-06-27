@@ -21,6 +21,7 @@
  */
 #include "locdit.h"
 #include "minicpm4.h"
+#include "debug_dump.h"
 
 #include "ggml.h"
 #include <math.h>
@@ -36,6 +37,68 @@
 static int locdit_debug_shapes(void) {
     const char * v = getenv("VCPM_DEBUG_SHAPES");
     return v && v[0] && strcmp(v, "0") != 0;
+}
+
+typedef struct vcpm_locdit_debug_entry {
+    const char * name;
+    struct ggml_tensor * tensor;
+} vcpm_locdit_debug_entry;
+
+static vcpm_locdit_debug_entry g_locdit_debug_entries[32];
+static int g_locdit_debug_count = 0;
+
+void vcpm_locdit_debug_reset(void) {
+    g_locdit_debug_count = 0;
+    memset(g_locdit_debug_entries, 0, sizeof(g_locdit_debug_entries));
+}
+
+static void locdit_debug_capture(const char * name, struct ggml_tensor * tensor) {
+    if (!locdit_debug_shapes()) return;
+    if (!name || !tensor) return;
+    if (g_locdit_debug_count >= (int)(sizeof(g_locdit_debug_entries) / sizeof(g_locdit_debug_entries[0]))) return;
+    g_locdit_debug_entries[g_locdit_debug_count].name = name;
+    g_locdit_debug_entries[g_locdit_debug_count].tensor = tensor;
+    g_locdit_debug_count++;
+}
+
+static int locdit_debug_dump_tensor(const char * label, const struct ggml_tensor * t) {
+    if (!t || !t->data || t->type != GGML_TYPE_F32) return -1;
+
+    int ne0 = (int)t->ne[0];
+    int ne1 = (int)t->ne[1];
+    int ne2 = (t->ne[2] > 1) ? (int)t->ne[2] : 0;
+    int nz = ne2 > 0 ? ne2 : 1;
+    size_t total = (size_t)ne0 * (size_t)ne1 * (size_t)nz;
+    float * tmp = (float *)malloc(total * sizeof(float));
+    if (!tmp) return -1;
+
+    const char * base = (const char *)t->data;
+    size_t out = 0;
+    for (int k = 0; k < nz; ++k) {
+        for (int j = 0; j < ne1; ++j) {
+            for (int i = 0; i < ne0; ++i) {
+                const char * p = base + (size_t)k * t->nb[2] + (size_t)j * t->nb[1] + (size_t)i * t->nb[0];
+                tmp[out++] = *(const float *)p;
+            }
+        }
+    }
+
+    int rc = vcpm_dump_tensor(label, tmp, ne0, ne1, ne2);
+    free(tmp);
+    return rc;
+}
+
+void vcpm_locdit_debug_dump(const char * kind, int ar_step, int diff_step) {
+    if (!locdit_debug_shapes()) return;
+    if (!kind) return;
+    for (int i = 0; i < g_locdit_debug_count; ++i) {
+        struct ggml_tensor * t = g_locdit_debug_entries[i].tensor;
+        if (!t || !t->data || t->type != GGML_TYPE_F32) continue;
+        char label[128];
+        snprintf(label, sizeof(label), "locdit_%s_%s_%04d_%04d",
+                 kind, g_locdit_debug_entries[i].name, ar_step, diff_step);
+        locdit_debug_dump_tensor(label, t);
+    }
 }
 
 static void locdit_debug_tensor_shape(const char * label, const struct ggml_tensor * t) {
@@ -92,9 +155,10 @@ static struct ggml_tensor * dit_sinusoidal_t_embed(struct ggml_context * ctx,
     int half_dim = dim / 2;
     struct ggml_tensor * freqs = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, half_dim);
     float * freq_data = (float *)freqs->data;
-    float max_period = 10000.0f;
+    float log_max_period = logf(10000.0f);
+    float denom = (half_dim > 1) ? (float)(half_dim - 1) : 1.0f;
     for (int i = 0; i < half_dim; i++) {
-        freq_data[i] = 1.0f / (float)pow(max_period, 2.0 * i / dim);
+        freq_data[i] = 1000.0f * expf(-(float)i * log_max_period / denom);
     }
     ggml_set_name(freqs, "dit_sin_freqs");
     locdit_debug_tensor_shape("locdit.sin.freqs", freqs);
@@ -155,6 +219,7 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
         h_x = dit_add_bias_2d(ctx, h_x, w->input_proj_bias);
     }
     ggml_set_name(h_x, "dit_x_proj");
+    locdit_debug_capture("x_proj", h_x);
     locdit_debug_tensor_shape("locdit.x_proj", h_x);
 
     /* Transpose to [P, hidden] for concatenation */
@@ -167,6 +232,7 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
         h_c = dit_add_bias_2d(ctx, h_c, w->cond_proj_bias);
     }
     ggml_set_name(h_c, "dit_cond_proj");
+    locdit_debug_capture("cond_proj", h_c);
     locdit_debug_tensor_shape("locdit.cond_proj", h_c);
     struct ggml_tensor * cond_tok = ggml_cont(ctx, ggml_transpose(ctx, h_c));
 
@@ -176,22 +242,27 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
      * Combined: t = t_feat + dt_feat */
     struct ggml_tensor * t_sin = dit_sinusoidal_t_embed(ctx, timestep, hidden);
     ggml_set_name(t_sin, "dit_t_sin");
+    locdit_debug_capture("t_sin", t_sin);
     struct ggml_tensor * t_feat = vcpm_time_mlp_forward(ctx, graph, t_sin,
                                                           w->time_mlp_w1, w->time_mlp_b1,
                                                           w->time_mlp_w2, w->time_mlp_b2);
     ggml_set_name(t_feat, "dit_t_feat");
+    locdit_debug_capture("t_feat", t_feat);
 
     struct ggml_tensor * dt_sin = dit_sinusoidal_t_embed(ctx, dt, hidden);
     ggml_set_name(dt_sin, "dit_dt_sin");
+    locdit_debug_capture("dt_sin", dt_sin);
     struct ggml_tensor * dt_feat = vcpm_time_mlp_forward(ctx, graph, dt_sin,
                                                            w->delta_time_mlp_w1,
                                                            w->delta_time_mlp_b1,
                                                            w->delta_time_mlp_w2,
                                                            w->delta_time_mlp_b2);
     ggml_set_name(dt_feat, "dit_dt_feat");
+    locdit_debug_capture("dt_feat", dt_feat);
 
     struct ggml_tensor * t_combined = ggml_add(ctx, t_feat, dt_feat);
     ggml_set_name(t_combined, "dit_t_combined");
+    locdit_debug_capture("t_combined", t_combined);
     /* Transpose to [1, hidden] for concatenation */
     struct ggml_tensor * t_tok = ggml_cont(ctx, ggml_transpose(ctx, t_combined));
 
@@ -220,6 +291,7 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
     seq = ggml_concat(ctx, seq, cond_tok, 0);                        /* [3+P, hidden] */
     seq = ggml_concat(ctx, seq, x_tok, 0);                           /* [3+2P, hidden] */
     ggml_set_name(seq, "dit_seq_concat");
+    locdit_debug_capture("seq", seq);
     locdit_debug_tensor_shape("locdit.seq", seq);
 
     /* Transpose to [hidden, seq_len] for DiT blocks */
@@ -266,6 +338,11 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
                                  1,        /* no_causal = 1 — bidirectional */
                                  1.0f,     /* scale = 1.0 (no DeepNorm for DiT) */
                                  cfg->rms_norm_eps);
+        if (i == 0) {
+            locdit_debug_capture("block00", h);
+        } else if (i == cfg->n_layers - 1) {
+            locdit_debug_capture("block_last", h);
+        }
         if (locdit_debug_shapes()) {
             char label[64];
             snprintf(label, sizeof(label), "locdit.block.%d.h", i);
@@ -284,17 +361,20 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
                                                     h->nb[1],
                                                     (size_t)x_start * h->nb[1]);
     ggml_set_name(h_x_slice, "dit_h_x_slice");
+    locdit_debug_capture("x_slice", h_x_slice);
     locdit_debug_tensor_shape("locdit.h_x_slice", h_x_slice);
 
     /* ---- Step 8: Final RMSNorm + Output projection ---- */
     h = vcpm_rms_norm(ctx, h_x_slice, w->norm_weight, cfg->rms_norm_eps);
     ggml_set_name(h, "dit_norm");
+    locdit_debug_capture("norm", h);
 
     struct ggml_tensor * out = ggml_mul_mat(ctx, w->output_proj_weight, h);
     if (w->output_proj_bias) {
         out = dit_add_bias_2d(ctx, out, w->output_proj_bias);
     }
     ggml_set_name(out, "dit_output");
+    locdit_debug_capture("output", out);
     locdit_debug_tensor_shape("locdit.output", out);
     return out;
 }

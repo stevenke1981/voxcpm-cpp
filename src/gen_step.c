@@ -53,10 +53,10 @@ static int vcpm_cfm_zero_star_steps(int n_steps) {
     return zero_steps > 1 ? zero_steps : 1;
 }
 
-static void vcpm_cfm_apply_cfg_zero_star(float * uncond,
-                                          const float * cond,
-                                          int n,
-                                          float cfg_value) {
+static float vcpm_cfm_apply_cfg_zero_star(float * uncond,
+                                           const float * cond,
+                                           int n,
+                                           float cfg_value) {
     double dot = 0.0;
     double norm = 0.0;
     for (int i = 0; i < n; ++i) {
@@ -69,6 +69,7 @@ static void vcpm_cfm_apply_cfg_zero_star(float * uncond,
         const float uncond_scaled = uncond[i] * scale;
         uncond[i] = uncond_scaled + cfg_value * (cond[i] - uncond_scaled);
     }
+    return scale;
 }
 
 static int vcpm_cfm_read_npy_f32(const char * path, float * dst, size_t expected_n) {
@@ -201,11 +202,12 @@ static void vcpm_cfm_dump_velocity(const char * kind,
     vcpm_dump_tensor(label, velocity, latent_dim, patch_size, 0);
 }
 
-static void vcpm_cfm_negate(float * data, int n) {
-    if (!data || n <= 0) return;
-    for (int i = 0; i < n; ++i) {
-        data[i] = -data[i];
-    }
+static void vcpm_cfm_dump_cfg_st_star(int ar_step, int diff_step, float scale) {
+    if (!vcpm_debug_shapes_env()) return;
+    char label[96];
+    snprintf(label, sizeof(label), "cfm_cfg_st_star_%04d_%04d",
+             ar_step, diff_step);
+    vcpm_dump_tensor(label, &scale, 1, 1, 1);
 }
 
 /* ---- Build feat_encoder(prev_patch) → enc_to_lm_proj audio embedding ---- */
@@ -548,6 +550,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
 
         if (use_cfg) {
             /* --- Pass 1: Conditioned --- */
+            vcpm_locdit_debug_reset();
             struct ggml_tensor * v_cond = vcpm_locdit_forward(sub_ctx, graph,
                                                                 x_t, cond_t,
                                                                 t_tensor, dt_tensor, mu_t,
@@ -558,6 +561,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
 
             ggml_build_forward_expand(graph, v_cond);
             ggml_graph_compute_with_ctx(sub_ctx, graph, 1);
+            vcpm_locdit_debug_dump("cond", ar_step_counter, step + 1);
 
             /* --- Pass 2: Unconditioned --- */
             ggml_graph_clear(graph);
@@ -582,6 +586,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             struct ggml_tensor * dt2 = ggml_new_tensor_1d(sub_ctx, GGML_TYPE_F32, 1);
             if (dt2->data) ((float *)dt2->data)[0] = 0.0f;
 
+            vcpm_locdit_debug_reset();
             struct ggml_tensor * v_uncond = vcpm_locdit_forward(sub_ctx, graph,
                                                                   x_t2, cond_t2,
                                                                   t2, dt2, NULL,
@@ -592,18 +597,18 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
 
             ggml_build_forward_expand(graph, v_uncond);
             ggml_graph_compute_with_ctx(sub_ctx, graph, 1);
+            vcpm_locdit_debug_dump("uncond", ar_step_counter, step + 1);
 
             float * cond_data = (float *)(v_cond->data ? v_cond->data : NULL);
             float * uncond_data = (float *)(v_uncond->data ? v_uncond->data : NULL);
             if (cond_data && uncond_data) {
-                vcpm_cfm_negate(cond_data, total_patch_dim);
-                vcpm_cfm_negate(uncond_data, total_patch_dim);
                 vcpm_cfm_dump_velocity("cond", ar_step_counter, step + 1,
                                        cond_data, latent_dim, patch_size);
                 vcpm_cfm_dump_velocity("uncond", ar_step_counter, step + 1,
                                        uncond_data, latent_dim, patch_size);
-                vcpm_cfm_apply_cfg_zero_star(uncond_data, cond_data,
-                                             total_patch_dim, cfg_value);
+                float st_star = vcpm_cfm_apply_cfg_zero_star(uncond_data, cond_data,
+                                                             total_patch_dim, cfg_value);
+                vcpm_cfm_dump_cfg_st_star(ar_step_counter, step + 1, st_star);
                 float * vel = uncond_data;
                 vcpm_cfm_dump_velocity("blend", ar_step_counter, step + 1,
                                        vel, latent_dim, patch_size);
@@ -612,6 +617,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                 }
             }
         } else {
+            vcpm_locdit_debug_reset();
             struct ggml_tensor * velocity = vcpm_locdit_forward(sub_ctx, graph,
                                             x_t, cond_t,
                                             t_tensor, dt_tensor, mu_t,
@@ -621,10 +627,10 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
 
             ggml_build_forward_expand(graph, velocity);
             ggml_graph_compute_with_ctx(sub_ctx, graph, 1);
+            vcpm_locdit_debug_dump("cond", ar_step_counter, step + 1);
 
             if (velocity->data) {
                 float * vel = (float *)velocity->data;
-                vcpm_cfm_negate(vel, total_patch_dim);
                 vcpm_cfm_dump_velocity("cond", ar_step_counter, step + 1,
                                        vel, latent_dim, patch_size);
                 vcpm_cfm_dump_velocity("blend", ar_step_counter, step + 1,

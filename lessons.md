@@ -79,3 +79,9 @@
 **Trigger:** LocDiT conditioned/unconditioned/blended velocity comparisons were strongly anti-correlated with Python after deterministic noise and zero-star states already matched.
 **Rule:** Before changing the CFM sampler again, compare conditioned, unconditioned, and blended velocity tensors; if all non-zero velocity dumps have strong negative cosine while zero-star/noise match exactly, normalize the LocDiT velocity sign convention first.
 **Source:** VoxCPM C/C++ LocDiT velocity sign parity
+
+---
+## Lesson #21 — 2026-06-27
+**Trigger:** LocDiT velocity sign normalization looked correct only while the C timestep sinusoidal embedding formula was still wrong.
+**Rule:** Before accepting compensating sign or magnitude fixes, verify upstream embedding formulas and re-run velocity sign checks after the formula fix; dump CFG-Zero* `st_star` because scalar blend drift can remain even when conditioned and unconditioned velocities are individually close.
+**Source:** VoxCPM C/C++ LocDiT timestep and CFG scale parity
