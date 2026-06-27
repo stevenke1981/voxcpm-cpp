@@ -68,6 +68,8 @@ typedef struct vcpm_generate_state {
 
     /* Base LM (MiniCPM4) weights */
     struct ggml_tensor * base_embed_tokens;
+    float * base_embed_tokens_cpu;   /* CPU-side F32 copy when backend is not CPU */
+    size_t  base_embed_tokens_bytes;
     struct ggml_tensor * base_norm;
     struct ggml_tensor * base_lm_head;
     vcpm_minicpm4_layer_weights base_layer_weights[VCPM_MAX_LAYERS];

@@ -79,7 +79,7 @@ struct ggml_tensor * vcpm_vae_tensor_by_name(struct ggml_context * ctx,
                                               const struct vcpm_model * model,
                                               const char * name) {
     (void)ctx;
-    struct ggml_tensor * t = vcpm_model_get_tensor(model, name);
+    struct ggml_tensor * t = vcpm_model_get_tensor_f32(model, name);
     if (!t) {
         fprintf(stderr, "VAE V2: missing tensor: %s\n", name);
     }
@@ -125,21 +125,21 @@ static float * ensure_f32_weights(struct ggml_tensor * weight,
     return NULL;
 }
 
-/* ---- F32-precision conv1d (replaces ggml_conv_1d to avoid F16 im2col)
+/* ---- F32-precision conv1d (uses F32 im2col)
  *
- * ggml_conv_1d internally creates F16 im2col and may use F16 matmul,
- * causing precision loss in deep decoder stacks. This function uses
- * F32 im2col and F32 matmul explicitly.
- *
- * weight: [K, IC, OC] (F16 or F32 — if F16, an F32 copy is created)
+ * weight: [K, IC, OC] (F32, caller provides via F32 copy)
  * input:  [N, IC] (F32)
  * output: [OW, OC] after reshape
+ *
+ * Uses F32 im2col. GGML_TYPE_F16 im2col asserts weight->type == F16,
+ * which doesn't match our F32 weight copies. F32 im2col does not check
+ * weight type and produces identical output.
  */
 struct ggml_tensor * vcpm_conv1d_f32(struct ggml_context * ctx,
                                         struct ggml_tensor * weight,
                                         struct ggml_tensor * input,
                                         int s0, int p0, int d0) {
-    /* Step 1: F32 im2col (ggml_im2col_f32 does not check weight type) */
+    /* Step 1: F32 im2col (no weight type assertion) */
     struct ggml_tensor * im2col = ggml_im2col(ctx, weight, input,
                                                s0, 0, p0, 0, d0, 0,
                                                false, GGML_TYPE_F32);
@@ -152,18 +152,29 @@ struct ggml_tensor * vcpm_conv1d_f32(struct ggml_context * ctx,
         w = ggml_new_tensor_3d(ctx, GGML_TYPE_F32,
                                 weight->ne[0], weight->ne[1], weight->ne[2]);
         if (!w || !w->data) return NULL;
+        /* Read from tensor, handling GPU-backed tensors */
+        size_t raw_bytes = ggml_nbytes(weight);
+        void * raw = malloc(raw_bytes);
+        if (!raw) return NULL;
+        if (weight->buffer) {
+            ggml_backend_tensor_get(weight, raw, 0, raw_bytes);
+        } else {
+            memcpy(raw, weight->data, raw_bytes);
+        }
+        float * dst = (float *)w->data;
         if (weight->type == GGML_TYPE_F16) {
-            ggml_fp16_t * src = (ggml_fp16_t *)weight->data;
-            float * dst = (float *)w->data;
+            const ggml_fp16_t * src = (const ggml_fp16_t *)raw;
             for (size_t i = 0; i < n; i++) {
                 dst[i] = ggml_fp16_to_fp32(src[i]);
             }
         } else {
+            free(raw);
             return NULL;
         }
+        free(raw);
     }
 
-    /* Step 3: Reshape and matmul in F32
+    /* Step 3: Reshape and matmul (both F32)
      * im2col: [IC*K, OW, N] → [IC*K, N*OW]
      * weight: [K, IC, OC]   → [K*IC, OC]
      * mul_mat(src0, src1): see ggml convention
@@ -211,6 +222,15 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
     (void)model;
     /* ggml_conv_1d weight convention: ne[0]=K(kernel), ne[1]=IC, ne[2]=OC
      * For depthwise: OC groups with IC=1 per group, so weight ne = [K, 1, OC] */
+    /* Ensure weight is F32 for ggml_mul_mat type compatibility.
+     * On CPU backend, weight comes from GGUF as F16 (no f32_ctx copy).
+     * On CUDA backend with VAE CPU fallback, weight is already F32
+     * from vcpm_model_ensure_f32. ggml_cast creates a graph conversion op
+     * that executes at compute time. */
+    if (weight->type != GGML_TYPE_F32) {
+        weight = ggml_cast(ctx, weight, GGML_TYPE_F32);
+        if (!weight) return input;
+    }
     int K = (int)weight->ne[0];   /* kernel size = 7 */
     int C = (int)weight->ne[2];   /* output channels (= input channels for depthwise) */
     int left_pad = pad * 2;       /* causal: left-only padding = 6 * dilation */
@@ -218,7 +238,7 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
     if (C > 4096) {
         if (bias && bias->ne[0] == (int64_t)C) {
             struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
-            return ggml_add(ctx, input, b2);
+            return ggml_add(ctx, input, ggml_cast(ctx, b2, GGML_TYPE_F32));
         }
         return input;
     }
@@ -260,18 +280,33 @@ static struct ggml_tensor * depthwise_conv1d(struct ggml_context * ctx,
         ggml_build_forward_expand(graph, cpy);
     }
 
-    /* Step 3: Depthwise conv via ggml (graph operation, data access at compute time) */
-    struct ggml_tensor * out = ggml_conv_1d_dw(ctx, weight, padded,
-                                                stride, 0, dilate);
+    /* Step 3: F32 depthwise conv via manual im2col + mul_mat.
+     * The VAE is always computed on CPU (see gen_run.c) to avoid
+     * ggml_im2col+mul_mat zero-output bug on CUDA.
+     * We use F32 im2col (no weight-type assertion) and cast weight
+     * to F32 above if needed, so mul_mat is always F32xF32. */
+    /* Reshape padded to 4D for im2col (ggml_conv_1d_dw convention):
+     * padded is [N+left_pad, OC], reshape to [N+left_pad, 1, OC, 1] */
+    int64_t padded_n = padded->ne[0];
+    int64_t padded_c = padded->ne[1];
+    struct ggml_tensor * b4 = ggml_reshape_4d(ctx, padded, padded_n, 1, padded_c, 1);
+    /* im2col with F32 output (no weight type assertion) */
+    struct ggml_tensor * im2col = ggml_im2col(ctx, weight, b4,
+                                                stride, 0, 0, 0, dilate, 0,
+                                                false, GGML_TYPE_F32);
+    if (!im2col) return input;
+    /* mul_mat: im2col @ weight (both F32, works on CUDA) */
+    struct ggml_tensor * out = ggml_mul_mat(ctx, im2col, weight);
     if (!out) return input;
-
-    /* Step 4: Reshape from 3D [OW, OC, 1] to 2D [OW, OC] */
-    out = ggml_reshape_2d(ctx, out, out->ne[0], out->ne[1]);
+    /* ggml_mul_mat output: {a->ne[1]=OW, b->ne[1]=1, b->ne[2]=OC, b->ne[3]=1} = [OW, 1, OC, 1]
+     * ggml new_tensor of shape {ne[0], ne[1], ne[2], ne[3]} → ggml_mul_mat sets {a->ne[1], b->ne[1], b->ne[2], b->ne[3]}
+     * So for depthwise: output = [OW, 1, OC, 1]. Reshape ne[0] and ne[2] → [OW, OC]. */
+    out = ggml_reshape_2d(ctx, out, out->ne[0], out->ne[2]);
 
     /* Step 5: Add bias */
     if (bias) {
         struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
-        out = ggml_add(ctx, out, b2);
+        out = ggml_add(ctx, out, ggml_cast(ctx, b2, GGML_TYPE_F32));
     }
 
     return out;
@@ -359,7 +394,7 @@ struct ggml_tensor * vcpm_vae_conv1d_layer(struct ggml_context * ctx,
 
     if (bias) {
         struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
-        out = ggml_add(ctx, out, b2);
+        out = ggml_add(ctx, out, ggml_cast(ctx, b2, GGML_TYPE_F32));
     }
     return out;
 }
@@ -397,13 +432,24 @@ struct ggml_tensor * vcpm_vae_upconv_transpose1d(struct ggml_context * ctx,
     /* Add bias if provided */
     if (bias) {
         struct ggml_tensor * b2 = ggml_reshape_2d(ctx, bias, 1, bias->ne[0]);
-        out = ggml_add(ctx, out, b2);
+        out = ggml_add(ctx, out, ggml_cast(ctx, b2, GGML_TYPE_F32));
     }
 
     return out;
 }
 
 /* ---- Helper: convert alpha tensor to F32 2D (broadcast-safe) ---- */
+/* Helper: read tensor data into a pre-allocated buffer, handling GPU-backed tensors */
+static void vae_read_tensor_data(struct ggml_tensor * t, void * buf, size_t sz) {
+    if (t->buffer) {
+        ggml_backend_tensor_get(t, buf, 0, sz);
+    } else if (t->data) {
+        memcpy(buf, t->data, sz);
+    } else {
+        memset(buf, 0, sz);
+    }
+}
+
 struct ggml_tensor * vcpm_vae_alpha_to_f32(struct ggml_context * ctx,
                                             struct ggml_tensor * alpha) {
     if (!alpha) return NULL;
@@ -412,13 +458,18 @@ struct ggml_tensor * vcpm_vae_alpha_to_f32(struct ggml_context * ctx,
                                                       alpha->ne[0], alpha->ne[1]);
     if (!a_f32 || !a_f32->data) return NULL;
     float * dst = (float *)a_f32->data;
+    size_t raw_bytes = ggml_nbytes(alpha);
+    void * raw = malloc(raw_bytes);
+    if (!raw) return NULL;
+    vae_read_tensor_data(alpha, raw, raw_bytes);
     if (alpha->type == GGML_TYPE_F16) {
-        ggml_fp16_t * src = (ggml_fp16_t *)alpha->data;
+        const ggml_fp16_t * src = (const ggml_fp16_t *)raw;
         for (int i = 0; i < n_alpha; i++)
             dst[i] = ggml_fp16_to_fp32(src[i]);
     } else {
-        memcpy(dst, alpha->data, (size_t)n_alpha * sizeof(float));
+        memcpy(dst, raw, (size_t)n_alpha * sizeof(float));
     }
+    free(raw);
     return a_f32;
 }
 
@@ -593,21 +644,39 @@ struct ggml_tensor * vcpm_vae_sr_cond_embedding_extract(struct ggml_context * ct
 
     float * dst = (float *)result->data;
     size_t bucket_offset = (size_t)idx * (size_t)input_dim;
+    /* Read full tensor data via backend-safe helper to handle GPU-backed tensors */
+    size_t raw_bytes = ggml_nbytes(embed_weight);
+    void * raw = malloc(raw_bytes);
+    if (!raw) return NULL;
+    vae_read_tensor_data(embed_weight, raw, raw_bytes);
+
     if (embed_weight->type == GGML_TYPE_F32) {
-        float * src = (float *)embed_weight->data;
+        float * src = (float *)raw;
         for (int j = 0; j < input_dim; j++) {
             dst[j] = src[j + bucket_offset];
         }
     } else if (embed_weight->type == GGML_TYPE_F16) {
-        ggml_fp16_t * src = (ggml_fp16_t *)embed_weight->data;
+        ggml_fp16_t * src = (ggml_fp16_t *)raw;
         for (int j = 0; j < input_dim; j++) {
             dst[j] = ggml_fp16_to_fp32(src[j + bucket_offset]);
         }
-    } else {
-        fprintf(stderr, "VAE V2: sr_cond weight type %d not supported\n",
-                (int)embed_weight->type);
-        return NULL;
+    } else if (embed_weight->type == GGML_TYPE_Q8_0) {
+        /* Dequantize Q8_0 blocks inline using ggml public API sizes */
+        size_t block_bytes = ggml_type_size(embed_weight->type);  /* 34 bytes/block */
+        int    blck_size  = ggml_blck_size(embed_weight->type);   /* 32 elems/block */
+        uint8_t * src8 = (uint8_t *)raw;
+        for (int j = 0; j < input_dim; j++) {
+            int elem_idx = j + (int)bucket_offset;
+            int block_idx = elem_idx / blck_size;
+            int block_off = elem_idx % blck_size;
+            ggml_fp16_t d_half;
+            memcpy(&d_half, src8 + (size_t)block_idx * block_bytes, sizeof(ggml_fp16_t));
+            float d = ggml_fp16_to_fp32(d_half);
+            int8_t * qs = (int8_t *)(src8 + (size_t)block_idx * block_bytes + sizeof(ggml_fp16_t));
+            dst[j] = d * (float)qs[block_off];
+        }
     }
+    free(raw);
     return result;
 }
 
@@ -615,31 +684,44 @@ struct ggml_tensor * vcpm_vae_sr_cond_embedding_extract(struct ggml_context * ct
  * Returns -1 if boundaries tensor is missing or invalid. */
 int vcpm_vae_compute_sr_cond_idx(struct ggml_tensor * sr_bin_boundaries,
                                   int output_sample_rate) {
-    if (!sr_bin_boundaries || !sr_bin_boundaries->data) return -1;
+    if (!sr_bin_boundaries) return -1;
     int n = (int)ggml_nelements(sr_bin_boundaries);
     if (n <= 0) return -1;
 
-    /* Read up to 16 boundary values as floats */
+    /* Read up to 16 boundary values as floats, using backend-safe copy */
     float vals[16];
     int m = n > 16 ? 16 : n;
+    size_t sz = ggml_nbytes(sr_bin_boundaries);
+    void * raw = malloc(sz);
+    if (!raw) return -1;
+    if (sr_bin_boundaries->buffer) {
+        ggml_backend_tensor_get(sr_bin_boundaries, raw, 0, sz);
+    } else if (sr_bin_boundaries->data) {
+        memcpy(raw, sr_bin_boundaries->data, sz);
+    } else {
+        free(raw);
+        return -1;
+    }
 
     if (sr_bin_boundaries->type == GGML_TYPE_F32) {
-        float * src = (float *)sr_bin_boundaries->data;
+        const float * src = (const float *)raw;
         for (int i = 0; i < m; i++) vals[i] = src[i];
     } else if (sr_bin_boundaries->type == GGML_TYPE_F16) {
-        ggml_fp16_t * src = (ggml_fp16_t *)sr_bin_boundaries->data;
+        const ggml_fp16_t * src = (const ggml_fp16_t *)raw;
         for (int i = 0; i < m; i++) vals[i] = ggml_fp16_to_fp32(src[i]);
     } else if (sr_bin_boundaries->type == GGML_TYPE_I32) {
-        int32_t * src = (int32_t *)sr_bin_boundaries->data;
+        const int32_t * src = (const int32_t *)raw;
         for (int i = 0; i < m; i++) vals[i] = (float)src[i];
     } else if (sr_bin_boundaries->type == GGML_TYPE_I16) {
-        int16_t * src = (int16_t *)sr_bin_boundaries->data;
+        const int16_t * src = (const int16_t *)raw;
         for (int i = 0; i < m; i++) vals[i] = (float)src[i];
     } else {
+        free(raw);
         fprintf(stderr, "VAE V2: sr_bin_boundaries type %d unsupported\n",
                 (int)sr_bin_boundaries->type);
         return -1;
     }
+    free(raw);
 
     /* bucketize: find the largest index where boundary < sample_rate */
     int idx = 0;

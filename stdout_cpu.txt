@@ -1,0 +1,2 @@
+Generating: text="hi"
+  cfg=2.0 steps=2 backend=cpu threads=0

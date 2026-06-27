@@ -1,0 +1,1125 @@
+vcpm: overriding rms_norm_eps from GGUF (0.0e+00) to 1e-5 (Python reference)
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 8191 MiB):
+  Device 0: NVIDIA GeForce RTX 3060 Ti, compute capability 8.6, VMM: yes, VRAM: 8191 MiB
+vcpm_backend: initialized CUDA backend (device 0: NVIDIA GeForce RTX 3060 Ti)
+vcpm_gen_init: backend=CUDA
+vcpm: created 162 F32 weight copies (385214 KB)
+vcpm: offloaded 814 tensors (9095.91 MB) to backend
+vcpm: kept 162 F32 copies (384170.62 KB) on CPU for VAE
+vcpm_gen_init: weight tensors pre-copied to CUDA
+vcpm_gen_init: created CPU F32 copy of embed_tokens (573 MB)
+INFO: DiT k_proj ne[1]=256 -> 2 KV heads (inferred).
+VCPM_DEBUG: starting AudioVAE config
+VCPM_DEBUG fe_in_proj_weight: [64, 1024] type=1
+VCPM_DEBUG fe_norm: [1024, 1]
+VCPM_DEBUG fe_special_token: [1024, 1, 1, 1]
+VCPM_DEBUG enc_to_lm_proj: [1024, 2048]
+VCPM_DEBUG fsq_in_proj: [2048, 512]
+VCPM_DEBUG lm_to_dit_proj: [2048, 1024]
+VCPM_DEBUG res_to_dit_proj: [2048, 1024]
+VCPM_DEBUG fusion_concat_proj: [4096, 2048]
+VCPM_DEBUG: AudioVAE config done, creating KV ctx
+VCPM_DEBUG: KV ctx created, allocating KV caches
+VCPM_DUMP text_embed [2048,3,0] 6144 floats -> dump_text_embed.bin
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 3, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG compute: enter, backend=000001DBC192BC40
+VCPM_DEBUG compute: gallocr created
+VCPM_DEBUG compute: collected 5014 CPU leaf tensors
+VCPM_DEBUG compute: gallocr allocated graph
+VCPM_DEBUG compute: starting graph compute (4940 nodes, 5014 leaves collected)
+VCPM_DEBUG compute: graph compute OK (status=0)
+VCPM_DEBUG compute: done OK
+VCPM_NAN "prompt_base_hidden" [6144]: NaN=0 Inf=0 valid=6144 min=+0.000000 max=+1.437500 mean=+0.438989 rms=0.760642
+VCPM_DUMP base_lm_out [2048,3,0] 6144 floats -> dump_base_lm_out.bin
+VCPM_DEBUG init lm_hidden_state[0]=0.000000 [2047]=0.000000 (from text pos 2)
+VCPM_DEBUG init residual_hidden_state[0]=0.000000 [2047]=0.000000 (from text pos 2)
+VCPM_DEBUG compute: enter, backend=000001DBC192BC40
+VCPM_DEBUG compute: collected 5 CPU leaf tensors
+VCPM_DEBUG compute: gallocr allocated graph
+VCPM_DEBUG compute: starting graph compute (3 nodes, 5 leaves collected)
+VCPM_DEBUG compute: graph compute OK (status=0)
+VCPM_DEBUG compute: done OK
+VCPM_DUMP mu_init_0000 [2048,1,0] 2048 floats -> dump_mu_init_0000.bin
+VCPM_DUMP step_cond_0000 [64,4,0] 256 floats -> dump_step_cond_0000.bin
+VCPM_DUMP step_noise_0000 [64,4,0] 256 floats -> dump_step_noise_0000.bin
+VCPM_DUMP cfm_traj_state_0000_0000 [64,4,0] 256 floats -> dump_cfm_traj_state_0000_0000.bin
+VCPM_DUMP cfm_velocity_blend_0000_0001 [64,4,0] 256 floats -> dump_cfm_velocity_blend_0000_0001.bin
+VCPM_DUMP cfm_traj_state_0000_0001 [64,4,0] 256 floats -> dump_cfm_traj_state_0000_0001.bin
+VCPM_DEBUG locdit.x_proj: [1024, 4, 1, 1] type=f32
+VCPM_DEBUG locdit.cond_proj: [1024, 4, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.freqs: [512, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.t: [1, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.angles: [512, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.freqs: [512, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.t: [1, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.angles: [512, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.seq: [11, 1024, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.0.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.1.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.2.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.3.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.4.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.5.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.6.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.7.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.8.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.9.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.10.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.11.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.h_x_slice: [1024, 4, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 4, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 4, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.output: [64, 4, 1, 1] type=f32
+VCPM_DEBUG compute: enter, backend=000001DBC192BC40
+VCPM_DEBUG compute: collected 5283 CPU leaf tensors
+VCPM_DEBUG compute: gallocr allocated graph
+VCPM_DEBUG compute: starting graph compute (5252 nodes, 5283 leaves collected)
+VCPM_DEBUG compute: graph compute OK (status=0)
+VCPM_DEBUG compute: done OK
+VCPM_DUMP locdit_cond_x_proj_0000_0002 [1024,4,0] 4096 floats -> dump_locdit_cond_x_proj_0000_0002.bin
+VCPM_DUMP locdit_cond_cond_proj_0000_0002 [1024,4,0] 4096 floats -> dump_locdit_cond_cond_proj_0000_0002.bin
+VCPM_DUMP locdit_cond_t_sin_0000_0002 [1024,1,0] 1024 floats -> dump_locdit_cond_t_sin_0000_0002.bin
+VCPM_DUMP locdit_cond_t_feat_0000_0002 [1024,1,0] 1024 floats -> dump_locdit_cond_t_feat_0000_0002.bin
+VCPM_DUMP locdit_cond_dt_sin_0000_0002 [1024,1,0] 1024 floats -> dump_locdit_cond_dt_sin_0000_0002.bin
+VCPM_DUMP locdit_cond_dt_feat_0000_0002 [1024,1,0] 1024 floats -> dump_locdit_cond_dt_feat_0000_0002.bin
+VCPM_DUMP locdit_cond_t_combined_0000_0002 [1024,1,0] 1024 floats -> dump_locdit_cond_t_combined_0000_0002.bin
+VCPM_DUMP locdit_cond_seq_0000_0002 [11,1024,0] 11264 floats -> dump_locdit_cond_seq_0000_0002.bin
+VCPM_DUMP locdit_cond_block00_0000_0002 [1024,11,0] 11264 floats -> dump_locdit_cond_block00_0000_0002.bin
+VCPM_DUMP locdit_cond_block_last_0000_0002 [1024,11,0] 11264 floats -> dump_locdit_cond_block_last_0000_0002.bin
+VCPM_DUMP locdit_cond_x_slice_0000_0002 [1024,4,0] 4096 floats -> dump_locdit_cond_x_slice_0000_0002.bin
+VCPM_DUMP locdit_cond_norm_0000_0002 [1024,4,0] 4096 floats -> dump_locdit_cond_norm_0000_0002.bin
+VCPM_DUMP locdit_cond_output_0000_0002 [64,4,0] 256 floats -> dump_locdit_cond_output_0000_0002.bin
+VCPM_DEBUG locdit.x_proj: [1024, 4, 1, 1] type=f32
+VCPM_DEBUG locdit.cond_proj: [1024, 4, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.freqs: [512, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.t: [1, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.angles: [512, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.freqs: [512, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.t: [1, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.sin.angles: [512, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.seq: [11, 1024, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.0.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.1.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.2.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.3.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.4.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.5.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.6.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.7.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.8.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.9.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.10.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.block.11.h: [1024, 11, 1, 1] type=f32
+VCPM_DEBUG locdit.h_x_slice: [1024, 4, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 4, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 4, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG locdit.output: [64, 4, 1, 1] type=f32
+VCPM_DEBUG compute: enter, backend=000001DBC192BC40
+VCPM_DEBUG compute: collected 5280 CPU leaf tensors
+VCPM_DEBUG compute: gallocr allocated graph
+VCPM_DEBUG compute: starting graph compute (5249 nodes, 5280 leaves collected)
+VCPM_DEBUG compute: graph compute OK (status=0)
+VCPM_DEBUG compute: done OK
+VCPM_DUMP locdit_uncond_x_proj_0000_0002 [1024,4,0] 4096 floats -> dump_locdit_uncond_x_proj_0000_0002.bin
+VCPM_DUMP locdit_uncond_cond_proj_0000_0002 [1024,4,0] 4096 floats -> dump_locdit_uncond_cond_proj_0000_0002.bin
+VCPM_DUMP locdit_uncond_t_sin_0000_0002 [1024,1,0] 1024 floats -> dump_locdit_uncond_t_sin_0000_0002.bin
+VCPM_DUMP locdit_uncond_t_feat_0000_0002 [1024,1,0] 1024 floats -> dump_locdit_uncond_t_feat_0000_0002.bin
+VCPM_DUMP locdit_uncond_dt_sin_0000_0002 [1024,1,0] 1024 floats -> dump_locdit_uncond_dt_sin_0000_0002.bin
+VCPM_DUMP locdit_uncond_dt_feat_0000_0002 [1024,1,0] 1024 floats -> dump_locdit_uncond_dt_feat_0000_0002.bin
+VCPM_DUMP locdit_uncond_t_combined_0000_0002 [1024,1,0] 1024 floats -> dump_locdit_uncond_t_combined_0000_0002.bin
+VCPM_DUMP locdit_uncond_seq_0000_0002 [11,1024,0] 11264 floats -> dump_locdit_uncond_seq_0000_0002.bin
+VCPM_DUMP locdit_uncond_block00_0000_0002 [1024,11,0] 11264 floats -> dump_locdit_uncond_block00_0000_0002.bin
+VCPM_DUMP locdit_uncond_block_last_0000_0002 [1024,11,0] 11264 floats -> dump_locdit_uncond_block_last_0000_0002.bin
+VCPM_DUMP locdit_uncond_x_slice_0000_0002 [1024,4,0] 4096 floats -> dump_locdit_uncond_x_slice_0000_0002.bin
+VCPM_DUMP locdit_uncond_norm_0000_0002 [1024,4,0] 4096 floats -> dump_locdit_uncond_norm_0000_0002.bin
+VCPM_DUMP locdit_uncond_output_0000_0002 [64,4,0] 256 floats -> dump_locdit_uncond_output_0000_0002.bin
+VCPM_DUMP cfm_velocity_cond_0000_0002 [64,4,0] 256 floats -> dump_cfm_velocity_cond_0000_0002.bin
+VCPM_DUMP cfm_velocity_uncond_0000_0002 [64,4,0] 256 floats -> dump_cfm_velocity_uncond_0000_0002.bin
+VCPM_DUMP cfm_cfg_st_star_0000_0002 [1,1,1] 1 floats -> dump_cfm_cfg_st_star_0000_0002.bin
+VCPM_DUMP cfm_velocity_blend_0000_0002 [64,4,0] 256 floats -> dump_cfm_velocity_blend_0000_0002.bin
+VCPM_DUMP cfm_traj_state_0000_0002 [64,4,0] 256 floats -> dump_cfm_traj_state_0000_0002.bin
+VCPM_DUMP step_pred_feat_0000 [64,4,0] 256 floats -> dump_step_pred_feat_0000.bin
+VCPM_NAN "cfm_output_0000" [256]: NaN=0 Inf=0 valid=256 min=-3.180204 max=+3.743106 mean=+0.026528 rms=1.169318
+VCPM_DUMP post_cfm_feat_0000 [64,4,0] 256 floats -> dump_post_cfm_feat_0000.bin
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [4096, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [1024, 5, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [1024, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG compute: enter, backend=000001DBC192BC40
+VCPM_DEBUG compute: collected 4399 CPU leaf tensors
+VCPM_DEBUG compute: gallocr allocated graph
+VCPM_DEBUG compute: starting graph compute (4317 nodes, 4399 leaves collected)
+VCPM_DEBUG compute: graph compute OK (status=0)
+VCPM_DEBUG compute: done OK
+VCPM_NAN "base_hidden_0003" [2048]: NaN=0 Inf=0 valid=2048 min=-15.129238 max=+16.487843 mean=-0.037006 rms=1.821883
+VCPM_DUMP base_hidden_update_0003 [2048,1,0] 2048 floats -> dump_base_hidden_update_0003.bin
+VCPM_DUMP audio_embed_update_0003 [2048,1,0] 2048 floats -> dump_audio_embed_update_0003.bin
+VCPM_DUMP fe_output_update_0003 [1024,1,0] 1024 floats -> dump_fe_output_update_0003.bin
+VCPM_DUMP lm_hidden_step_0003 [2048,1,0] 2048 floats -> dump_lm_hidden_step_0003.bin
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.gate: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.mlp.up: [6144, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.x: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.y: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG minicpm.rms.weight: [2048, 1, 1, 1] type=f32
+VCPM_DEBUG compute: enter, backend=000001DBC192BC40
+VCPM_DEBUG compute: collected 4924 CPU leaf tensors
+VCPM_DEBUG compute: gallocr allocated graph
+VCPM_DEBUG compute: starting graph compute (4826 nodes, 4924 leaves collected)
+VCPM_DEBUG compute: graph compute OK (status=0)
+VCPM_DEBUG compute: done OK
+VCPM_DUMP residual_hidden_step_0003 [2048,1,0] 2048 floats -> dump_residual_hidden_step_0003.bin
+VCPM_DUMP lm_hidden_ar_0000 [2048,1,0] 2048 floats -> dump_lm_hidden_ar_0000.bin
+VCPM_DUMP residual_hidden_ar_0000 [2048,1,0] 2048 floats -> dump_residual_hidden_ar_0000.bin
+VCPM_DUMP stop_hidden_0000 [2048,1,0] 2048 floats -> dump_stop_hidden_0000.bin
+VCPM_DUMP stop_logits_0000 [2,1,0] 2 floats -> dump_stop_logits_0000.bin
+VCPM_DEBUG_STOP: hidden[0]=2.6564 hidden[1]=-0.6213 hidden[2047]=-0.0669
+VCPM_DEBUG_STOP: proj_out[0]=-0.0297 proj_out[1]=-0.0000
+VCPM_DEBUG_STOP: logits[0]=-1.5319 logits[1]=0.9609
+VCPM_DEBUG_STOP: stop_prob=0.723294 softmax_stop=0.923630
+VCPM_DEBUG stop_prob=0.9236 at patch 1 (threshold=0.50)
+VCPM_DEBUG gen_run: n_patches=1 latent_dim=64 patch_size=4
+VCPM_DUMP wrote c_latent_dump.bin (1 patches, 4 ps, 64 dim)
+VCPM_DEBUG gen_decode: n_patches=1 patch_size=4 n_timesteps=4 latent_dim=64
+VCPM_NAN "vae_input" [256]: NaN=0 Inf=0 valid=256 min=-3.180204 max=+3.743106 mean=+0.026528 rms=1.169318
+VCPM_DEBUG VAE decode: enter
+VCPM_DEBUG VAE decode: step0
+VCPM_DEBUG VAE decode: w0=000001DCE7EFF4F0 b0=000001DCDE1D3F80
+VCPM_DEBUG VAE decode: model0 done
+VCPM_DEBUG VAE decode: step1
+VCPM_DEBUG VAE decode: step2
+VCPM_DEBUG VAE decode: sr_bin=000001DCDE1DFEB0 data=0000000F39B76800
+VAE V2: sr_cond_idx=3 (sr=48000, 3 boundaries)
+VCPM_DEBUG VAE decode: block bi=2 idx=0
+VCPM_DEBUG decoder_block: enter block_idx=2 h=000001E0BC15B460
+VCPM_DEBUG VAE block: pre_alpha=000001DCE7F7FED0
+VCPM_DEBUG VAE block: up_w=000001DCE7F82040
+VCPM_DEBUG VAE block: up_b=000001DCDE1D46B0
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001E0BC1635D0
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE decode: block bi=3 idx=1
+VCPM_DEBUG decoder_block: enter block_idx=3 h=000001E0BCB9C9B0
+VCPM_DEBUG VAE block: pre_alpha=000001DCF0B9E2F0
+VCPM_DEBUG VAE block: up_w=000001DCF0B9F460
+VCPM_DEBUG VAE block: up_b=000001DCDE1D64E0
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001E0BCBBCB20
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE decode: block bi=4 idx=2
+VCPM_DEBUG decoder_block: enter block_idx=4 h=000001E0BE919590
+VCPM_DEBUG VAE block: pre_alpha=000001DCF26ADF10
+VCPM_DEBUG VAE block: up_w=000001DCF26AE880
+VCPM_DEBUG VAE block: up_b=000001DCDE1D8310
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001E0BE979700
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE decode: block bi=5 idx=3
+VCPM_DEBUG decoder_block: enter block_idx=5 h=000001E0C32BC970
+VCPM_DEBUG VAE block: pre_alpha=000001DCF2C76730
+VCPM_DEBUG VAE block: up_w=000001DCF2C76CA0
+VCPM_DEBUG VAE block: up_b=000001DCDE1DA140
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001E0C33ACAE0
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE decode: block bi=6 idx=4
+VCPM_DEBUG decoder_block: enter block_idx=6 h=000001E0C7FB2F50
+VCPM_DEBUG VAE block: pre_alpha=000001DCF2D2B550
+VCPM_DEBUG VAE block: up_w=000001DCF2D2B8C0
+VCPM_DEBUG VAE block: up_b=000001DCDE1DBF70
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001E0C80A30C0
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE decode: block bi=7 idx=5
+VCPM_DEBUG decoder_block: enter block_idx=7 h=000001E0CCCA3430
+VCPM_DEBUG VAE block: pre_alpha=000001DCF2D5A670
+VCPM_DEBUG VAE block: up_w=000001DCF2D5A8E0
+VCPM_DEBUG VAE block: up_b=000001DCDE1DDDA0
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001E0CCD935A0
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE: after decode, audio_t=000001E0D24E8740
+VCPM_DEBUG VAE: about to compute
+VCPM_DEBUG VAE work_size=134250560 bytes (128.0 MB)

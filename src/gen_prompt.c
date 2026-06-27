@@ -19,6 +19,7 @@
 
 #include "ggml.h"
 #include "ggml-cpu.h"
+#include "ggml_backend.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,16 +67,65 @@ int gen_forward_text(vcpm_generate_state * state,
     struct ggml_tensor * hidden = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
                                                        state->hidden_size, n_tokens);
     int64_t stride = 0;
-    if (hidden && hidden->data && state->base_embed_tokens && state->base_embed_tokens->data) {
-        const ggml_fp16_t * embed_data = (const ggml_fp16_t *)state->base_embed_tokens->data;
-        stride = state->base_embed_tokens->ne[0];
-        int64_t n_rows = state->base_embed_tokens->ne[1];
-        float * hdata = (float *)hidden->data;
-        for (int i = 0; i < n_tokens; i++) {
-            int idx = token_ids[pos_start + i];
-            if (idx < 0 || idx >= n_rows) idx = 0;
-            for (int j = 0; j < stride; j++) {
-                hdata[i * stride + j] = ggml_fp16_to_fp32(embed_data[idx * stride + j]);
+    if (hidden && hidden->data) {
+        /* Prefer CPU-side F32 copy when available (CUDA backend) */
+        if (state->base_embed_tokens_cpu && state->base_embed_tokens_cpu) {
+            stride = state->base_embed_tokens->ne[0];
+            int64_t n_rows = state->base_embed_tokens->ne[1];
+            float * hdata = (float *)hidden->data;
+            const float * embed_f32 = state->base_embed_tokens_cpu;
+            for (int i = 0; i < n_tokens; i++) {
+                int idx = token_ids[pos_start + i];
+                if (idx < 0 || idx >= n_rows) idx = 0;
+                memcpy(&hdata[i * stride], &embed_f32[(int64_t)idx * stride],
+                       (size_t)stride * sizeof(float));
+            }
+        } else if (state->base_embed_tokens && state->base_embed_tokens->data) {
+            int embed_type = state->base_embed_tokens->type;
+            stride = state->base_embed_tokens->ne[0];
+            int64_t n_rows = state->base_embed_tokens->ne[1];
+            float * hdata = (float *)hidden->data;
+
+            if (embed_type == GGML_TYPE_F16) {
+                const ggml_fp16_t * embed_data = (const ggml_fp16_t *)state->base_embed_tokens->data;
+                for (int i = 0; i < n_tokens; i++) {
+                    int idx = token_ids[pos_start + i];
+                    if (idx < 0 || idx >= n_rows) idx = 0;
+                    for (int j = 0; j < stride; j++) {
+                        hdata[i * stride + j] = ggml_fp16_to_fp32(embed_data[idx * stride + j]);
+                    }
+                }
+            } else if (embed_type == GGML_TYPE_F32) {
+                const float * embed_data = (const float *)state->base_embed_tokens->data;
+                for (int i = 0; i < n_tokens; i++) {
+                    int idx = token_ids[pos_start + i];
+                    if (idx < 0 || idx >= n_rows) idx = 0;
+                    memcpy(&hdata[i * stride], &embed_data[idx * stride],
+                           (size_t)stride * sizeof(float));
+                }
+            } else if (embed_type == GGML_TYPE_Q8_0) {
+                /* Dequantize Q8_0 blocks on the fly */
+                const uint8_t * src8 = (const uint8_t *)state->base_embed_tokens->data;
+                size_t block_bytes = ggml_type_size(GGML_TYPE_Q8_0);  /* 34 */
+                int    blck_size  = ggml_blck_size(GGML_TYPE_Q8_0);   /* 32 */
+                int64_t total_elems = stride * n_rows;
+                for (int i = 0; i < n_tokens; i++) {
+                    int idx = token_ids[pos_start + i];
+                    if (idx < 0 || idx >= n_rows) idx = 0;
+                    for (int j = 0; j < stride; j++) {
+                        int elem_idx = idx * (int)stride + j;
+                        int bi = elem_idx / blck_size;
+                        int bo = elem_idx % blck_size;
+                        ggml_fp16_t d_half;
+                        memcpy(&d_half, src8 + (size_t)bi * block_bytes, sizeof(ggml_fp16_t));
+                        float d = ggml_fp16_to_fp32(d_half);
+                        const int8_t * qs = (const int8_t *)(src8 + (size_t)bi * block_bytes + sizeof(ggml_fp16_t));
+                        hdata[i * stride + j] = (float)qs[bo] * d;
+                    }
+                }
+            } else {
+                fprintf(stderr, "error: embed_tokens type %d not supported by prompt eval\n",
+                        embed_type);
             }
         }
     }
@@ -174,7 +224,13 @@ int gen_prompt_eval(vcpm_generate_state * state,
     ggml_build_forward_expand(graph, base_hidden);
     if (ralm_hidden) ggml_build_forward_expand(graph, ralm_hidden);
 
-    ggml_graph_compute_with_ctx(ctx, graph, 1);
+    vcpm_backend_compute_graph(&state->backend, ctx, graph, 1);
+
+    /* NaN check on base_hidden after prompt eval */
+    if (base_hidden && base_hidden->data) {
+        size_t nh = (size_t)base_hidden->ne[0] * (size_t)base_hidden->ne[1];
+        vcpm_check_nan((const float *)base_hidden->data, nh, "prompt_base_hidden");
+    }
 
     if (vcpm_debug_shapes_env() && base_hidden && base_hidden->data) {
         vcpm_dump_tensor("base_lm_out", (const float *)base_hidden->data,

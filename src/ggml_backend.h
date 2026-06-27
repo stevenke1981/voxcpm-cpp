@@ -12,6 +12,12 @@ struct ggml_cgraph;
 struct ggml_context;
 struct ggml_tensor;
 
+/* Linked list node for CPU copies of GPU output tensors */
+typedef struct vcpm_cpu_copy {
+    void *                data;
+    struct vcpm_cpu_copy * next;
+} vcpm_cpu_copy;
+
 /* Backend wrapper for VoxCPM runtime */
 typedef struct vcpm_backend {
     struct ggml_backend *      backend;    /* ggml backend (CPU/CUDA/etc) */
@@ -20,6 +26,7 @@ typedef struct vcpm_backend {
     struct ggml_backend_buffer * compute_buffer; /* persistent buffer for compute */
     int                         n_threads;
     int                         initialized;
+    struct vcpm_cpu_copy *      cpu_copies; /* linked list of malloc'd CPU buffers */
 } vcpm_backend;
 
 /* Initialize backend for given type */

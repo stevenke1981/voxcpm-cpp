@@ -84,6 +84,14 @@ typedef struct vcpm_model {
         char name[256];
         int idx;
     } tensor_cache[VCPM_MAX_TENSOR_CACHE];
+
+    /*
+     * Optional separate context with F32 copies of norm/bias/scale/offset
+     * tensors.  Created by vcpm_model_ensure_f32() to avoid ggml_cast on
+     * backends (CUDA) that do not support Q8_0/F16 → F32 conversion.
+     * All matmul weights stay quantized in ggml_ctx.
+     */
+    struct ggml_context * f32_ctx;
 } vcpm_model;
 
 /* Load model from GGUF file. Returns NULL on failure with error message in err_buf. */
@@ -157,5 +165,25 @@ int vcpm_model_tensor_name(char * buf, size_t buf_size,
  * Returns 0 on success, -1 on failure.
  */
 int vcpm_model_offload(struct vcpm_model * model, struct ggml_backend * backend);
+
+/*
+ * Create F32 copies of norm/bias/scale/offset tensors in a separate context
+ * (model->f32_ctx).  This avoids ggml_cast from Q8_0/F16 → F32 during graph
+ * compute, which CUDA does not support.
+ *
+ * Must be called after vcpm_model_load() and before vcpm_model_offload().
+ * The F32 context is offloaded together with the main context.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int vcpm_model_ensure_f32(struct vcpm_model * model);
+
+/*
+ * Get tensor by name, preferring the F32 copy when available.
+ *
+ * If model->f32_ctx contains a tensor with this name, returns that.
+ * Otherwise falls back to the original tensor in model->ggml_ctx.
+ */
+struct ggml_tensor * vcpm_model_get_tensor_f32(const struct vcpm_model * model, const char * name);
 
 #endif /* VCPM_MODEL_LOADER_H */

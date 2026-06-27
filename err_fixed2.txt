@@ -1,0 +1,14 @@
+vcpm: overriding rms_norm_eps from GGUF (0.0e+00) to 1e-5 (Python reference)
+vcpm_backend: initialized CPU backend
+vcpm_gen_init: backend=CPU
+INFO: DiT k_proj ne[1]=256 -> 2 KV heads (inferred).
+VCPM_DEBUG gen_run: n_patches=3 latent_dim=64 patch_size=4
+VCPM_DEBUG gen_decode: n_patches=3 patch_size=4 n_timesteps=12 latent_dim=64
+VAE V2: sr_cond_idx=3 (sr=48000, 3 boundaries)
+VCPM_DEBUG VAE work_size=67158080 bytes (64.0 MB)
+VCPM_DEBUG AUDIO: n_samples=23040 sample_rate=48000 duration=0.480 sec
+VCPM_DEBUG AUDIO: min=10000000000.00000000 max=-10000000000.00000000 mean=0.00000000 rms=0.00000000
+VCPM_DEBUG AUDIO: NaN=23040 Inf=0 valid=0/23040
+VCPM_DEBUG AUDIO: first 32 samples: +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan +nan
+VCPM_DEBUG AUDIO: dumped 23040 f32 samples to debug_pcm_f32.raw
+VCPM_DEBUG generate: n_patches=3 n_samples=23040 sample_rate=48000

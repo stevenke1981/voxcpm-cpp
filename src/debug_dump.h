@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 
 static inline int vcpm_dump_tensor(const char * label,
                                     const float * data,
@@ -39,6 +40,40 @@ static inline int vcpm_dump_tensor(const char * label,
     fprintf(stderr, "VCPM_DUMP %s [%d,%d,%d] %zu floats -> %s\n",
             label, ne0, ne1, ne2, total, path);
     return 0;
+}
+
+/* Generic VCPM_DEBUG env-var gate.
+ * Set VCPM_DEBUG=1 to enable verbose compute/VAE traces.
+ * Returns 1 when the env var is set to a non-zero value. */
+static inline int vcpm_debug_env(void) {
+    const char * v = getenv("VCPM_DEBUG");
+    return v && v[0] != '0';
+}
+
+/* NaN/Inf detection helper */
+static inline int vcpm_check_nan(const float * data, size_t n,
+                                  const char * label) {
+    if (!data || n == 0) return 0;
+    int nan_count = 0, inf_count = 0, valid = 0;
+    float fmin = 1e30f, fmax = -1e30f;
+    double sum = 0.0, sum_sq = 0.0;
+    for (size_t i = 0; i < n; i++) {
+        float v = data[i];
+        if (isnan(v)) { nan_count++; continue; }
+        if (isinf(v)) { inf_count++; continue; }
+        valid++;
+        if (v < fmin) fmin = v;
+        if (v > fmax) fmax = v;
+        sum += v;
+        sum_sq += (double)(v * v);
+    }
+    float mean = valid > 0 ? (float)(sum / valid) : 0.0f;
+    float rms  = valid > 0 ? (float)sqrt(sum_sq / valid) : 0.0f;
+    fprintf(stderr, "VCPM_NAN \"%s\" [%zu]: NaN=%d Inf=%d valid=%d"
+                    " min=%+.6f max=%+.6f mean=%+.6f rms=%.6f\n",
+            label, n, nan_count, inf_count, valid,
+            valid ? fmin : 0.0f, valid ? fmax : 0.0f, mean, rms);
+    return nan_count + inf_count;
 }
 
 #endif /* VCPM_DEBUG_DUMP_H */

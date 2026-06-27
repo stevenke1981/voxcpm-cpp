@@ -10,6 +10,7 @@
 #include "model_loader.h"
 #include "minicpm4.h"
 #include "log.h"
+#include "debug_dump.h"
 
 #include "ggml.h"
 #include "ggml-cpu.h"
@@ -25,7 +26,8 @@
 
 static struct ggml_tensor * resolve_weight(const struct vcpm_model * model,
                                             const char * name) {
-    return vcpm_model_get_tensor(model, name);
+    /* Prefer F32 copy when available (avoids ggml_cast on CUDA) */
+    return vcpm_model_get_tensor_f32(model, name);
 }
 
 /* Resolve MiniCPM4 layer weights from GGUF into array.
@@ -127,6 +129,13 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     s->backend_initialized = 1;
     fprintf(stderr, "vcpm_gen_init: backend=%s\n", vcpm_backend_type_name(&s->backend));
 
+    /* Create F32 copies of norm/bias/scale/offset tensors before offload.
+     * This avoids ggml_cast from Q8_0/F16 → F32 on backends (CUDA) that
+     * do not support it. */
+    if (!ggml_backend_is_cpu(s->backend.backend)) {
+        vcpm_model_ensure_f32((struct vcpm_model *)model);
+    }
+
     /* Pre-copy weight tensors to GPU device memory for non-CPU backends.
      * This avoids CPU→GPU transfer overhead on every compute graph evaluation. */
     if (!ggml_backend_is_cpu(s->backend.backend)) {
@@ -137,6 +146,9 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
             fprintf(stderr, "warning: vcpm_model_offload failed (continuing with CPU staging)\n");
         }
     }
+
+    s->base_embed_tokens_cpu = NULL;
+    s->base_embed_tokens_bytes = 0;
 
     const vcpm_model_config * cfg = &model->config;
 
@@ -250,6 +262,59 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
 
     fill_dit_weights(model, s->dit_layer_weights, s->dit_n_layers);
 
+    /* For non-CPU backends, create a CPU-side F32 copy of embed_tokens
+     * because gen_prompt.c reads it via tensor->data (GPU memory on CUDA). */
+    if (!ggml_backend_is_cpu(s->backend.backend) && s->base_embed_tokens && s->base_embed_tokens->data) {
+        struct ggml_tensor * et = s->base_embed_tokens;
+        size_t n_elems = (size_t)ggml_nelements(et);
+        size_t n_f32_bytes = n_elems * sizeof(float);
+        if (et->type == GGML_TYPE_F32) {
+            s->base_embed_tokens_cpu = (float *)malloc(n_f32_bytes);
+            if (s->base_embed_tokens_cpu) {
+                ggml_backend_tensor_get(et, s->base_embed_tokens_cpu, 0, ggml_nbytes(et));
+                s->base_embed_tokens_bytes = n_f32_bytes;
+            }
+        } else {
+            size_t raw_bytes = ggml_nbytes(et);
+            void * raw = malloc(raw_bytes);
+            if (raw) {
+                ggml_backend_tensor_get(et, raw, 0, raw_bytes);
+                float * f32 = (float *)malloc(n_f32_bytes);
+                if (f32) {
+                    if (et->type == GGML_TYPE_Q8_0) {
+                        const uint8_t * src8 = (const uint8_t *)raw;
+                        size_t blk_sz = 34;
+                        int blk_elems = 32;
+                        for (size_t j = 0; j < n_elems; j++) {
+                            size_t bi = j / (size_t)blk_elems;
+                            int bo = (int)(j % (size_t)blk_elems);
+                            ggml_fp16_t d_half;
+                            memcpy(&d_half, src8 + bi * blk_sz, 2);
+                            float d = ggml_fp16_to_fp32(d_half);
+                            const int8_t * qs = (const int8_t *)(src8 + bi * blk_sz + 2);
+                            f32[j] = (float)qs[bo] * d;
+                        }
+                    } else if (et->type == GGML_TYPE_F16) {
+                        const ggml_fp16_t * src = (const ggml_fp16_t *)raw;
+                        for (size_t j = 0; j < n_elems; j++)
+                            f32[j] = ggml_fp16_to_fp32(src[j]);
+                    } else {
+                        free(f32); f32 = NULL;
+                    }
+                    if (f32) {
+                        s->base_embed_tokens_cpu = f32;
+                        s->base_embed_tokens_bytes = n_f32_bytes;
+                    }
+                }
+                free(raw);
+            }
+        }
+        if (s->base_embed_tokens_cpu) {
+            fprintf(stderr, "vcpm_gen_init: created CPU F32 copy of embed_tokens (%zu MB)\n",
+                    s->base_embed_tokens_bytes / (1024 * 1024));
+        }
+    }
+
     /* DiT head counts: override from actual weight shapes. */
     if (s->dit_layer_weights[0].q_proj_weight) {
         int q_out = (int)s->dit_layer_weights[0].q_proj_weight->ne[1];
@@ -274,6 +339,8 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
         s->dit_n_kv_heads = s->dit_n_heads / 2;
     }
     if (s->dit_n_kv_heads < 1) s->dit_n_kv_heads = 1;
+
+    if (vcpm_debug_env()) fprintf(stderr, "VCPM_DEBUG: starting AudioVAE config\n");
 
     /* AudioVAE configs */
     s->vae_cfg = vcpm_audio_vae_config_default();
@@ -323,6 +390,7 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
                     s->fusion_concat_proj->ne[0], s->fusion_concat_proj->ne[1]);
     }
 
+    if (vcpm_debug_env()) fprintf(stderr, "VCPM_DEBUG: AudioVAE config done, creating KV ctx\n");
     /* Create kv_ctx for long-lived KV cache tensors.
      * Base LM: 28 * 2 * 128 * 2 * 32768 * 4 = ~1.79 GiB
      * RALM: 8 * 2 * 128 * 4 * 32768 * 4 = ~1.0 GiB
@@ -358,6 +426,7 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     s->step_graph = ggml_new_graph_custom(s->step_ctx, 131072, false);
     if (!s->step_graph) { ggml_free(s->step_ctx); ggml_free(s->kv_ctx); free(s); return NULL; }
 
+    if (vcpm_debug_env()) fprintf(stderr, "VCPM_DEBUG: KV ctx created, allocating KV caches\n");
     s->base_kv_cache = (vcpm_gen_cache_unit *)calloc(
         (size_t)s->n_base_layers, sizeof(vcpm_gen_cache_unit));
     s->ralm_kv_cache = (vcpm_gen_cache_unit *)calloc(

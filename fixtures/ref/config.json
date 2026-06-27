@@ -224,6 +224,6 @@
     "cond_out_layer": false
   },
   "max_length": 8192,
-  "device": "cpu",
+  "device": "cuda",
   "dtype": "bfloat16"
 }

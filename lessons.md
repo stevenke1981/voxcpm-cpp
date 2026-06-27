@@ -85,3 +85,9 @@
 **Trigger:** LocDiT velocity sign normalization looked correct only while the C timestep sinusoidal embedding formula was still wrong.
 **Rule:** Before accepting compensating sign or magnitude fixes, verify upstream embedding formulas and re-run velocity sign checks after the formula fix; dump CFG-Zero* `st_star` because scalar blend drift can remain even when conditioned and unconditioned velocities are individually close.
 **Source:** VoxCPM C/C++ LocDiT timestep and CFG scale parity
+
+---
+## Lesson #22 — 2026-06-27
+**Trigger:** Q8_0 quantized GGUF model produced 100% NaN in all pipeline stages. Binary search across 40 base_lm layers showed non-NaN when only `embed_tokens` was dequantized.
+**Rule:** When mixing quantized (Q8_0) and unquantized (F16) data in a GGUF, verify that every C-side read path matches the storage format. Tensors read via pointer cast (`(const ggml_fp16_t *)data`) must actually be F16 in the file — Q8_0 block data (34-byte blocks) cannot be reinterpreted as consecutive F16 values. The Q8_0 format is safe only for `ggml_mul_mat` which calls an explicit dequantization kernel.
+**Source:** VoxCPM C/C++ Q8_0 embed_tokens NaN fix

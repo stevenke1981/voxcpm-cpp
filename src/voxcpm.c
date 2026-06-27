@@ -4,6 +4,7 @@
 #include "sequence.h"
 #include "generate.h"
 #include "audio_vae_v2.h"
+#include "debug_dump.h"
 
 #include "ggml.h"
 #include "ggml-cpu.h"
@@ -504,8 +505,10 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         return st == VCPM_OK ? VCPM_ERR_MODEL_FORMAT : st;
     }
 
-    fprintf(stderr, "VCPM_DEBUG generate: n_patches=%d n_samples=%d sample_rate=%d\n",
-            n_patches, n_samples, output_sample_rate);
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG generate: n_patches=%d n_samples=%d sample_rate=%d\n",
+                n_patches, n_samples, output_sample_rate);
+    }
     out_audio->samples     = audio_buf;
     out_audio->sample_rate = output_sample_rate;
     out_audio->n_channels  = 1;

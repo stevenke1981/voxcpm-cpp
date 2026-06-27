@@ -1,0 +1,84 @@
+vcpm: overriding rms_norm_eps from GGUF (0.0e+00) to 1e-5 (Python reference)
+vcpm_backend: initialized CPU backend
+vcpm_gen_init: backend=CPU
+INFO: DiT k_proj ne[1]=256 -> 2 KV heads (inferred).
+VCPM_DEBUG: starting AudioVAE config
+VCPM_DEBUG: AudioVAE config done, creating KV ctx
+VCPM_DEBUG: KV ctx created, allocating KV caches
+VCPM_NAN "prompt_base_hidden" [4096]: NaN=0 Inf=0 valid=4096 min=-11.752111 max=+17.649677 mean=-0.022850 rms=1.847977
+VCPM_NAN "cfm_output_0000" [256]: NaN=0 Inf=0 valid=256 min=-2.773040 max=+2.651548 mean=+0.036713 rms=0.806968
+VCPM_NAN "base_hidden_0002" [2048]: NaN=0 Inf=0 valid=2048 min=-4.772192 max=+2.564732 mean=-0.001544 rms=0.206622
+VCPM_DEBUG gen_run: n_patches=1 latent_dim=64 patch_size=4
+VCPM_DEBUG gen_decode: n_patches=1 patch_size=4 n_timesteps=4 latent_dim=64
+VCPM_DEBUG VAE decode: enter
+VCPM_DEBUG VAE decode: step0
+VCPM_DEBUG VAE decode: w0=000001DD55734DF0 b0=000001DD55734C80
+VCPM_DEBUG VAE decode: model0 done
+VCPM_DEBUG VAE decode: step1
+VCPM_DEBUG VAE decode: step2
+VCPM_DEBUG VAE decode: sr_bin=000001DD55740BB0 data=000001DD4FA9A8D0
+VAE V2: sr_cond_idx=3 (sr=48000, 3 boundaries)
+VCPM_DEBUG VAE decode: block bi=2 idx=0
+VCPM_DEBUG decoder_block: enter block_idx=2 h=000001DD9ADDF5D0
+VCPM_DEBUG VAE block: pre_alpha=000001DD55735240
+VCPM_DEBUG VAE block: up_w=000001DD55735520
+VCPM_DEBUG VAE block: up_b=000001DD557353B0
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001DD9ADE7740
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE decode: block bi=3 idx=1
+VCPM_DEBUG decoder_block: enter block_idx=3 h=000001DD9C420F70
+VCPM_DEBUG VAE block: pre_alpha=000001DD55737070
+VCPM_DEBUG VAE block: up_w=000001DD55737350
+VCPM_DEBUG VAE block: up_b=000001DD557371E0
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001DD9C4410E0
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE decode: block bi=4 idx=2
+VCPM_DEBUG decoder_block: enter block_idx=4 h=000001DD9E49DFA0
+VCPM_DEBUG VAE block: pre_alpha=000001DD55738EA0
+VCPM_DEBUG VAE block: up_w=000001DD55739180
+VCPM_DEBUG VAE block: up_b=000001DD55739010
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001DD9E4FE110
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE decode: block bi=5 idx=3
+VCPM_DEBUG decoder_block: enter block_idx=5 h=000001DDA2F017D0
+VCPM_DEBUG VAE block: pre_alpha=000001DD5573ACD0
+VCPM_DEBUG VAE block: up_w=000001DD5573AFB0
+VCPM_DEBUG VAE block: up_b=000001DD5573AE40
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001DDA2FF1940
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE decode: block bi=6 idx=4
+VCPM_DEBUG decoder_block: enter block_idx=6 h=000001DDA7C28200
+VCPM_DEBUG VAE block: pre_alpha=000001DD5573CB00
+VCPM_DEBUG VAE block: up_w=000001DD5573CDE0
+VCPM_DEBUG VAE block: up_b=000001DD5573CC70
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001DDA7D18370
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE decode: block bi=7 idx=5
+VCPM_DEBUG decoder_block: enter block_idx=7 h=000001DDAC924B30
+VCPM_DEBUG VAE block: pre_alpha=000001DD5573E930
+VCPM_DEBUG VAE block: up_w=000001DD5573EC10
+VCPM_DEBUG VAE block: up_b=000001DD5573EAA0
+VCPM_DEBUG VAE block: before alpha_to_f32
+VCPM_DEBUG VAE block: a_f32=000001DDACA14CA0
+VCPM_DEBUG VAE block: snake done
+VCPM_DEBUG VAE block: before upconv
+VCPM_DEBUG VAE block: after upconv
+VCPM_DEBUG VAE: after decode, audio_t=000001DDB216D780
+VCPM_DEBUG VAE: about to compute
+VCPM_DEBUG VAE work_size=67125312 bytes (64.0 MB)
+E:\voxcpm-cpp\build\_deps\ggml-src\src\ggml-cpu\ggml-cpu.c:1322: GGML_ASSERT(src1->type == GGML_TYPE_F32) failed

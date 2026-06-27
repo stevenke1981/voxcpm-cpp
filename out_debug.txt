@@ -1,0 +1,3 @@
+Generating: text="Hi"
+  cfg=2.0 steps=2 backend=cpu threads=16
+Wrote 23040 samples to out.wav (0.5 sec, 48000 Hz, 1 ch)

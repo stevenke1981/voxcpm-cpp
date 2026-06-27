@@ -10,6 +10,7 @@
 #include "audio_vae.h"
 #include "audio_vae_v2.h"
 #include "log.h"
+#include "debug_dump.h"
 
 #include "ggml.h"
 #include "ggml-cpu.h"
@@ -159,9 +160,11 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
     }
 
     *n_patches_out = n_patches;
-    fprintf(stderr, "VCPM_DEBUG gen_run: n_patches=%d latent_dim=%d patch_size=%d\n",
-            n_patches, latent_dim,
-            state->model ? state->model->config.patch_size : -1);
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG gen_run: n_patches=%d latent_dim=%d patch_size=%d\n",
+                n_patches, latent_dim,
+                state->model ? state->model->config.patch_size : -1);
+    }
 
     /* DUMP: final latent for comparison with Python reference */
     if (n_patches > 0 && latent_out && vcpm_debug_shapes_env()) {
@@ -201,20 +204,22 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
     int patch_size = state->model ? state->model->config.patch_size : 1;
     if (patch_size < 1) patch_size = 1;
     int n_timesteps = n_patches * patch_size;
-    fprintf(stderr, "VCPM_DEBUG gen_decode: n_patches=%d patch_size=%d n_timesteps=%d latent_dim=%d\n",
-            n_patches, patch_size, n_timesteps, latent_dim);
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG gen_decode: n_patches=%d patch_size=%d n_timesteps=%d latent_dim=%d\n",
+                n_patches, patch_size, n_timesteps, latent_dim);
+    }
 
     /* Estimate VAE decoder ggml context memory.
      * The decoder builds 6 upconv blocks + 3 residual units each, creating many
      * large intermediate tensors. Peak memory scales with n_timesteps:
-     *   ~18 MB per timestep (from empirical measurement at T=512 needing ~8.9 GB),
-     *   plus ~1.5 GB fixed overhead for graph plan work buffers.
-     * Cap at 16 GB, minimum 3 GB. */
-    size_t vae_mem = (size_t)n_timesteps * 64ULL * 1024 * 1024 + 2048ULL * 1024 * 1024;
+     *   ~64 MB per timestep (empirical: T=256 needs ~18 GB),
+     *   plus ~4 GB fixed overhead for graph plan work buffers.
+     * Cap at 28 GB, minimum 4 GB. */
+    size_t vae_mem = (size_t)n_timesteps * 128ULL * 1024 * 1024 + 2048ULL * 1024 * 1024;
     if (vae_mem < 4ULL * 1024 * 1024 * 1024)
         vae_mem = 4ULL * 1024 * 1024 * 1024;
-    if (vae_mem > 16ULL * 1024 * 1024 * 1024)
-        vae_mem = 16ULL * 1024 * 1024 * 1024;
+    if (vae_mem > 28ULL * 1024 * 1024 * 1024)
+        vae_mem = 28ULL * 1024 * 1024 * 1024;
     struct ggml_init_params vae_params = {
         .mem_size   = vae_mem,
         .mem_buffer = NULL,
@@ -235,7 +240,7 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
     }
 
     struct ggml_tensor * latent_t = ggml_new_tensor_2d(vae_ctx, GGML_TYPE_F32,
-                                                         n_timesteps, latent_dim);
+                                                          n_timesteps, latent_dim);
     if (!latent_t) {
         ggml_free(vae_ctx);
         return VCPM_ERR_OOM;
@@ -247,15 +252,23 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
                 int patch_idx = t / patch_size;
                 int pos_in_patch = t % patch_size;
                 dst[d * n_timesteps + t] = latent[patch_idx * latent_dim * patch_size
-                                                   + pos_in_patch * latent_dim + d];
+                                                    + pos_in_patch * latent_dim + d];
             }
         }
     }
     ggml_set_name(latent_t, "vae_input");
+    /* NaN check on VAE input latent */
+    if (vcpm_debug_shapes_env()) {
+        size_t total_latent = (size_t)n_timesteps * (size_t)latent_dim;
+        vcpm_check_nan((const float *)latent_t->data, total_latent, "vae_input");
+    }
 
     struct ggml_tensor * audio_t = vcpm_vae_v2_decode(vae_ctx, vae_graph, latent_t,
-                                                        state->model,
-                                                        &state->vae_v2_cfg);
+                                                         state->model,
+                                                         &state->vae_v2_cfg);
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG VAE: after decode, audio_t=%p\n", (void*)audio_t);
+    }
     if (!audio_t) {
         fprintf(stderr, "VAE V2 decoder graph build failed\n");
         ggml_free(vae_ctx);
@@ -264,19 +277,59 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
     }
 
     ggml_build_forward_expand(vae_graph, audio_t);
-    struct ggml_cplan vae_plan = ggml_graph_plan(vae_graph, 1, NULL);
-    fprintf(stderr, "VCPM_DEBUG VAE work_size=%zu bytes (%.1f MB)\n",
-            vae_plan.work_size, vae_plan.work_size / (1024.0 * 1024.0));
-    void * vae_work = malloc(vae_plan.work_size);
-    if (!vae_work) {
-        fprintf(stderr, "VAE: work buffer alloc failed (%zu bytes)\n", vae_plan.work_size);
-        ggml_free(vae_ctx);
-        *n_samples_out = 0;
-        return VCPM_ERR_OOM;
+    if (vcpm_debug_env()) fprintf(stderr, "VCPM_DEBUG VAE: about to compute\n");
+    /* Always use CPU for VAE decode: ggml_im2col + ggml_mul_mat with F32
+     * weights produce all-zero or NaN results on CUDA due to depthwise conv
+     * shape routing issues. The VAE graph is ~0.03% of total compute cost,
+     * so CPU fallback has negligible latency impact. */
+    {
+        struct ggml_cplan vae_plan = ggml_graph_plan(vae_graph, 1, NULL);
+        size_t vae_work_sz = vae_plan.work_size;
+        if (vcpm_debug_env()) {
+            fprintf(stderr, "VCPM_DEBUG VAE work_size=%zu bytes (%.1f MB)\n",
+                    vae_work_sz, vae_work_sz / (1024.0 * 1024.0));
+        }
+        void * vae_work = malloc(vae_work_sz);
+        if (!vae_work) {
+            fprintf(stderr, "VAE: work buffer alloc failed (%zu bytes)\n", vae_work_sz);
+            ggml_free(vae_ctx);
+            *n_samples_out = 0;
+            return VCPM_ERR_OOM;
+        }
+        vae_plan.work_data = (uint8_t *)vae_work;
+        ggml_graph_compute(vae_graph, &vae_plan);
+        free(vae_work);
     }
-    vae_plan.work_data = (uint8_t *)vae_work;
-    ggml_graph_compute(vae_graph, &vae_plan);
-    free(vae_work);
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG VAE: compute done, audio_t->data=%p\n", (void*)audio_t->data);
+    }
+
+    /* DEBUG: dump snapshot tensor stats to find where NaN first appears */
+    if (vcpm_debug_shapes_env()) {
+        int snap_cnt = vcpm_vae_v2_get_snapshot_count();
+        fprintf(stderr, "VCPM_DEBUG VAE: snapshots=%d\n", snap_cnt);
+        for (int i = 0; i < snap_cnt && i < 16; i++) {
+            struct ggml_tensor * t = vcpm_vae_v2_get_snapshot(i);
+            if (!t || !t->data) { fprintf(stderr, "  [snap %d] NULL\n", i); continue; }
+            size_t n = ggml_nelements(t);
+            float * d = (float *)t->data;
+            int nan_c = 0, inf_c = 0, val_c = 0;
+            double sum = 0, sumsq = 0;
+            float mn = 1e30f, mx = -1e30f;
+            int limit = (int)(n < 10000 ? n : 10000);
+            for (int j = 0; j < limit; j++) {
+                float v = d[j];
+                if (isnan(v)) { nan_c++; continue; }
+                if (isinf(v)) { inf_c++; continue; }
+                val_c++; sum += v; sumsq += (double)v*v;
+                if (v < mn) mn = v; if (v > mx) mx = v;
+            }
+            fprintf(stderr, "  [snap %2d] ne=[%lld] n=%zu NaN=%d Inf=%d valid=%d min=%.4f max=%.4f rms=%.4f\n",
+                    i, (long long)(n > 0 ? n : 0), n, nan_c, inf_c, val_c,
+                    val_c ? mn : 0.0f, val_c ? mx : 0.0f,
+                    val_c ? (float)sqrt(sumsq/val_c) : 0.0f);
+        }
+    }
 
     int n_samples = (int)audio_t->ne[0];
     if (n_samples > max_samples) n_samples = max_samples;
@@ -308,27 +361,29 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
         if (valid > 0) { fmean = (float)(sum / valid); }
         float rms = (valid > 0) ? (float)sqrt(sum_sq / valid) : 0.0f;
 
-        fprintf(stderr, "VCPM_DEBUG AUDIO: n_samples=%d sample_rate=%d duration=%.3f sec\n",
-                n_samples, output_sr, duration);
-        fprintf(stderr, "VCPM_DEBUG AUDIO: min=%.8f max=%.8f mean=%.8f rms=%.8f\n",
-                fmin, fmax, fmean, rms);
-        fprintf(stderr, "VCPM_DEBUG AUDIO: NaN=%d Inf=%d valid=%d/%d\n",
+        fprintf(stderr, "VCPM_AUDIO: n_samples=%d sample_rate=%d duration=%.3f sec"
+                        " min=%.4f max=%.4f mean=%.6f rms=%.6f"
+                        " NaN=%d Inf=%d valid=%d/%d\n",
+                n_samples, output_sr, duration,
+                fmin, fmax, fmean, rms,
                 nan_count, inf_count, valid, n_samples);
 
-        fprintf(stderr, "VCPM_DEBUG AUDIO: first 32 samples:");
-        int ndump = n_samples > 32 ? 32 : n_samples;
-        for (int i = 0; i < ndump; i++)
-            fprintf(stderr, " %+.6f", audio_out[i]);
-        fprintf(stderr, "\n");
+        if (vcpm_debug_env()) {
+            fprintf(stderr, "VCPM_DEBUG AUDIO: first 32 samples:");
+            int ndump = n_samples > 32 ? 32 : n_samples;
+            for (int i = 0; i < ndump; i++)
+                fprintf(stderr, " %+.6f", audio_out[i]);
+            fprintf(stderr, "\n");
 
-        FILE * raw_f = fopen("debug_pcm_f32.raw", "wb");
-        if (raw_f) {
-            size_t written = fwrite(audio_out, sizeof(float), (size_t)n_samples, raw_f);
-            fclose(raw_f);
-            fprintf(stderr, "VCPM_DEBUG AUDIO: dumped %zu f32 samples to debug_pcm_f32.raw\n",
-                    written);
-        } else {
-            fprintf(stderr, "VCPM_DEBUG AUDIO: failed to write debug_pcm_f32.raw\n");
+            FILE * raw_f = fopen("debug_pcm_f32.raw", "wb");
+            if (raw_f) {
+                size_t written = fwrite(audio_out, sizeof(float), (size_t)n_samples, raw_f);
+                fclose(raw_f);
+                fprintf(stderr, "VCPM_DEBUG AUDIO: dumped %zu f32 samples to debug_pcm_f32.raw\n",
+                        written);
+            } else {
+                fprintf(stderr, "VCPM_DEBUG AUDIO: failed to write debug_pcm_f32.raw\n");
+            }
         }
     }
 

@@ -213,9 +213,154 @@ vcpm_model * vcpm_model_load(const char * path, char * err_buf, size_t err_buf_s
     return model;
 }
 
+/* ---- F32 weight copies (avoids ggml_cast on CUDA) ---- */
+
+static int tensor_needs_f32(const char * name, enum ggml_type type) {
+    /* All VAE tensors need CPU-accessible F32 data because the VAE graph
+     * is always computed on CPU (ggml_graph_compute) even when the main
+     * backend is CUDA. This avoids access violations when reading GPU-backed
+     * tensor data from CPU code. */
+    if (name && strstr(name, "audio_vae.") != NULL &&
+        (strstr(name, ".weight") != NULL || strstr(name, ".bias") != NULL ||
+         strstr(name, ".alpha") != NULL)) return 1;
+    if (type == GGML_TYPE_F32) return 0;
+    /* Resolve weight tensors that are read via pointer cast or ggml_cast */
+    if (strstr(name, "norm") != NULL) return 1;
+    if (strstr(name, "bias") != NULL) return 1;
+    if (strstr(name, ".scale") != NULL) return 1;
+    if (strstr(name, ".offset") != NULL) return 1;
+    if (strstr(name, "special_token") != NULL) return 1;
+    /* Stop predictor weights — read directly via CPU pointer cast in gen_stop.c */
+    if (strstr(name, "stop_proj.weight") != NULL) return 1;
+    if (strstr(name, "stop_head.weight") != NULL) return 1;
+    /* All VAE weight tensors — must be F32 for CUDA compatibility:
+     * - conv_transpose_1d requires F32 on CUDA
+     * - F32 im2col + F32 Q8_0→F32 converter path is well-tested
+     * - snake_activation reads .alpha via ggml operations */
+    if (strstr(name, "audio_vae.") != NULL &&
+        (strstr(name, ".weight") != NULL || strstr(name, ".bias") != NULL ||
+         strstr(name, ".alpha") != NULL)) return 1;
+    return 0;
+}
+
+int vcpm_model_ensure_f32(vcpm_model * model) {
+    if (!model || !model->ggml_ctx) return -1;
+    if (model->f32_ctx) return 0;  /* already created */
+
+    /* Calculate total F32 memory needed */
+    size_t f32_mem = 0;
+    int n_needed = 0;
+    for (struct ggml_tensor * t = ggml_get_first_tensor(model->ggml_ctx);
+         t != NULL; t = ggml_get_next_tensor(model->ggml_ctx, t)) {
+        if (tensor_needs_f32(t->name, t->type)) {
+            n_needed++;
+            /* F32 copy size = nelements * sizeof(float) */
+            size_t n_elems = 1;
+            for (int d = 0; d < ggml_n_dims(t); d++)
+                n_elems *= (size_t)t->ne[d];
+            f32_mem += n_elems * sizeof(float);
+        }
+    }
+    if (n_needed == 0) return 0;
+
+    /* Add ggml overhead: ~100 bytes per tensor + 1 MB safety margin */
+    f32_mem += (size_t)n_needed * 128 + 1024 * 1024;
+
+    struct ggml_init_params params = {
+        .mem_size   = f32_mem,
+        .mem_buffer = NULL,
+        .no_alloc   = false,
+    };
+    struct ggml_context * f32_ctx = ggml_init(params);
+    if (!f32_ctx) return -1;
+
+    int n_created = 0;
+    for (struct ggml_tensor * t = ggml_get_first_tensor(model->ggml_ctx);
+         t != NULL; t = ggml_get_next_tensor(model->ggml_ctx, t)) {
+        if (!tensor_needs_f32(t->name, t->type)) continue;
+
+        size_t n_elems = (size_t)ggml_nelements(t);
+        int nd = ggml_n_dims(t);
+        struct ggml_tensor * f32_t;
+        if (nd <= 1) {
+            f32_t = ggml_new_tensor_1d(f32_ctx, GGML_TYPE_F32, n_elems);
+        } else if (nd == 2) {
+            f32_t = ggml_new_tensor_2d(f32_ctx, GGML_TYPE_F32,
+                                       t->ne[0], t->ne[1]);
+        } else {
+            f32_t = ggml_new_tensor_3d(f32_ctx, GGML_TYPE_F32,
+                                       t->ne[0], t->ne[1], t->ne[2]);
+        }
+        if (!f32_t) { ggml_free(f32_ctx); return -1; }
+        ggml_set_name(f32_t, t->name);
+
+        /* Dequantize from source tensor to F32 buffer */
+        float * buf = (float *)calloc(n_elems, sizeof(float));
+        if (!buf) { ggml_free(f32_ctx); return -1; }
+
+        if (t->type == GGML_TYPE_F32) {
+            /* Direct copy for VAE tensors that are already F32,
+             * ensuring they have CPU-accessible data after GPU offload. */
+            memcpy(buf, t->data, n_elems * sizeof(float));
+        } else if (t->type == GGML_TYPE_F16) {
+            const ggml_fp16_t * src = (const ggml_fp16_t *)t->data;
+            for (size_t j = 0; j < n_elems; j++)
+                buf[j] = ggml_fp16_to_fp32(src[j]);
+        } else if (t->type == GGML_TYPE_Q8_0) {
+            const uint8_t * src8 = (const uint8_t *)t->data;
+            size_t blk_sz  = 34;  /* ggml_type_size(GGML_TYPE_Q8_0) */
+            int blk_elems  = 32;  /* ggml_blck_size(GGML_TYPE_Q8_0) */
+            size_t n_blks  = (n_elems + (size_t)blk_elems - 1) / (size_t)blk_elems;
+            for (size_t j = 0; j < n_elems; j++) {
+                size_t bi = j / (size_t)blk_elems;
+                int bo = (int)(j % (size_t)blk_elems);
+                if (bi >= n_blks) { buf[j] = 0.0f; continue; }
+                ggml_fp16_t d_half;
+                memcpy(&d_half, src8 + bi * blk_sz, 2);
+                float d = ggml_fp16_to_fp32(d_half);
+                const int8_t * qs = (const int8_t *)(src8 + bi * blk_sz + 2);
+                buf[j] = (float)qs[bo] * d;
+            }
+        } else {
+            /* Unknown type — skip (e.g. I32 embedding) */
+            free(buf);
+            continue;
+        }
+
+        memcpy(f32_t->data, buf, n_elems * sizeof(float));
+        free(buf);
+        n_created++;
+    }
+
+    if (n_created == 0) {
+        ggml_free(f32_ctx);
+        return 0;
+    }
+
+    model->f32_ctx = f32_ctx;
+    fprintf(stderr, "vcpm: created %d F32 weight copies (%zu KB)\n",
+            n_created, params.mem_size / 1024);
+    return 0;
+}
+
+struct ggml_tensor * vcpm_model_get_tensor_f32(const struct vcpm_model * model,
+                                                const char * name) {
+    if (!model || !name) return NULL;
+    /* Prefer F32 copy */
+    if (model->f32_ctx) {
+        struct ggml_tensor * t = ggml_get_tensor(model->f32_ctx, name);
+        if (t) return t;
+    }
+    /* Fall back to original */
+    return ggml_get_tensor(model->ggml_ctx, name);
+}
+
+/* ---- Free ---- */
+
 void vcpm_model_free(vcpm_model * model) {
     if (!model) return;
     /* ggml_ctx was created by gguf_init, so free it first */
+    if (model->f32_ctx) ggml_free(model->f32_ctx);
     if (model->ggml_ctx) ggml_free(model->ggml_ctx);
     if (model->gguf_ctx) gguf_free(model->gguf_ctx);
     free(model);
@@ -459,54 +604,37 @@ int vcpm_model_tensor_name(char * buf, size_t buf_size,
     return snprintf(buf, buf_size, "%s.%d.%s", prefix, layer, suffix);
 }
 
-int vcpm_model_offload(vcpm_model * model, struct ggml_backend * backend) {
-    if (!model || !backend || !model->ggml_ctx) return -1;
+/* Offload a single ggml context to a backend.  Returns the backend buffer or NULL. */
+static struct ggml_backend_buffer * offload_context(struct ggml_context * ctx,
+                                                     struct ggml_backend * backend) {
+    if (!ctx || !backend) return NULL;
 
-    struct ggml_context * ctx = model->ggml_ctx;
-
-    /* Count tensors in the context */
+    /* Count tensors */
     int n = 0;
-    for (struct ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
-        n++;
-    }
-    if (n == 0) return 0;
+    for (struct ggml_tensor * t = ggml_get_first_tensor(ctx);
+         t != NULL; t = ggml_get_next_tensor(ctx, t)) n++;
+    if (n == 0) return NULL;
 
-    fprintf(stderr, "vcpm: offloading %d tensors to backend\n", n);
-
-    /* Allocate temporary arrays for CPU data pointers and tensor pointers */
     void ** cpu_data = (void **)malloc((size_t)n * sizeof(void *));
     struct ggml_tensor ** tensors = (struct ggml_tensor **)malloc((size_t)n * sizeof(struct ggml_tensor *));
-    if (!cpu_data || !tensors) {
-        free(cpu_data);
-        free(tensors);
-        return -1;
-    }
+    if (!cpu_data || !tensors) { free(cpu_data); free(tensors); return NULL; }
 
-    /* Save all CPU data pointers */
     int i = 0;
-    for (struct ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+    for (struct ggml_tensor * t = ggml_get_first_tensor(ctx);
+         t != NULL; t = ggml_get_next_tensor(ctx, t)) {
         tensors[i] = t;
         cpu_data[i] = t->data;
         i++;
     }
 
-    /*
-     * Clear data/buffer pointers so ggml_backend_alloc_ctx_tensors()
-     * will allocate them on the backend.  The GGML_ASSERT inside that
-     * function checks ggml_get_no_alloc(ctx) == true, so we must set
-     * no_alloc before the call.
-     */
     for (i = 0; i < n; i++) {
         tensors[i]->data   = NULL;
         tensors[i]->buffer = NULL;
     }
     ggml_set_no_alloc(ctx, true);
 
-    /* Allocate all tensors on the target backend */
     struct ggml_backend_buffer * buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
     if (!buf) {
-        fprintf(stderr, "vcpm: failed to allocate tensors on backend\n");
-        /* Restore CPU data pointers so the model remains usable */
         for (i = 0; i < n; i++) {
             tensors[i]->data   = cpu_data[i];
             tensors[i]->buffer = NULL;
@@ -514,23 +642,51 @@ int vcpm_model_offload(vcpm_model * model, struct ggml_backend * backend) {
         ggml_set_no_alloc(ctx, false);
         free(cpu_data);
         free(tensors);
-        return -1;
+        return NULL;
     }
 
-    /* Copy weight data from CPU staging area to backend device memory */
     for (i = 0; i < n; i++) {
         ggml_backend_tensor_set(tensors[i], cpu_data[i], 0, ggml_nbytes(tensors[i]));
     }
 
-    /* The CPU staging buffers are still owned by the ggml context and will
-       be freed when the context is freed.  tensor->data now points into
-       the backend buffer. */
-
-    size_t total_bytes = ggml_backend_buffer_get_size(buf);
-    fprintf(stderr, "vcpm: offloaded %d tensors (%.2f MB) to backend\n",
-            n, (double)total_bytes / (1024.0 * 1024.0));
-
     free(cpu_data);
     free(tensors);
+    return buf;
+}
+
+int vcpm_model_offload(vcpm_model * model, struct ggml_backend * backend) {
+    if (!model || !backend || !model->ggml_ctx) return -1;
+
+    /* Offload main context (quantized weights) */
+    struct ggml_backend_buffer * buf = offload_context(model->ggml_ctx, backend);
+    if (!buf) {
+        fprintf(stderr, "vcpm: failed to offload main tensors\n");
+        return -1;
+    }
+    size_t main_bytes = ggml_backend_buffer_get_size(buf);
+    {   int cnt = 0;
+        for (struct ggml_tensor * t = ggml_get_first_tensor(model->ggml_ctx);
+             t != NULL; t = ggml_get_next_tensor(model->ggml_ctx, t)) cnt++;
+        fprintf(stderr, "vcpm: offloaded %d tensors (%.2f MB) to backend\n",
+                cnt, (double)main_bytes / (1024.0 * 1024.0));
+    }
+
+    /* F32 copy context stays on CPU.
+     * When used in a VAE graph, vcpm_backend_compute will copy the CPU data
+     * to GPU for compute and restore it afterward. Keeping F32 copies on CPU
+     * avoids cross-context gallocr issues with pre-allocated GPU tensors. */
+    if (model->f32_ctx) {
+        int cnt = 0;
+        for (struct ggml_tensor * t = ggml_get_first_tensor(model->f32_ctx);
+             t != NULL; t = ggml_get_next_tensor(model->f32_ctx, t)) cnt++;
+        size_t f32_bytes = (size_t)cnt * 128; /* rough estimate */
+        size_t f32_total = 0;
+        for (struct ggml_tensor * t = ggml_get_first_tensor(model->f32_ctx);
+             t != NULL; t = ggml_get_next_tensor(model->f32_ctx, t))
+            f32_total += ggml_nbytes(t);
+        fprintf(stderr, "vcpm: kept %d F32 copies (%.2f KB) on CPU for VAE\n",
+                cnt, (double)f32_total / 1024.0);
+    }
+
     return 0;
 }

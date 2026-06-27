@@ -25,6 +25,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+
+#include "debug_dump.h"
 
 /* Forward declarations for optional backends (compile-time) */
 #ifdef GGML_USE_METAL
@@ -130,6 +133,18 @@ int vcpm_backend_init(vcpm_backend * be, int backend_type, int n_threads) {
     return 0;
 }
 
+/* Free CPU copies allocated for output tensor read-back */
+static void free_cpu_copies(vcpm_backend * be) {
+    struct vcpm_cpu_copy * p = be->cpu_copies;
+    while (p) {
+        struct vcpm_cpu_copy * next = p->next;
+        free(p->data);
+        free(p);
+        p = next;
+    }
+    be->cpu_copies = NULL;
+}
+
 void vcpm_backend_free(vcpm_backend * be) {
     if (!be) return;
 
@@ -152,6 +167,9 @@ void vcpm_backend_free(vcpm_backend * be) {
         ggml_backend_free(be->backend);
         be->backend = NULL;
     }
+
+    /* Free CPU copies of GPU output tensors */
+    free_cpu_copies(be);
 
     be->initialized = 0;
 }
@@ -195,6 +213,13 @@ int vcpm_backend_alloc_ctx(vcpm_backend * be, struct ggml_context * ctx, int is_
 int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
     if (!be || !be->backend || !graph) return -1;
 
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG compute: enter, backend=%p\n", (void*)be->backend);
+    }
+
+    /* Do NOT free old CPU copies yet — they still back t->data pointers.
+     * They'll be freed AFTER their data is copied to GPU (below). */
+
     /* Allocate graph with gallocr */
     /* Create a gallocr if we don't have one */
     if (!be->galloc) {
@@ -202,24 +227,179 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
         if (!buft) return -1;
         be->galloc = ggml_gallocr_new(buft);
         if (!be->galloc) return -1;
+        if (vcpm_debug_env()) {
+            fprintf(stderr, "VCPM_DEBUG compute: gallocr created\n");
+        }
     }
 
-    /* Reserve and allocate graph */
-    if (!ggml_gallocr_reserve(be->galloc, graph)) {
-        /* If reserve fails, it means the graph is too large for current buffers.
-         * ggml_gallocr_alloc_graph will try to reallocate automatically. */
+    /* Save and clear ALL CPU leaf-tensor data so gallocr allocates GPU memory.
+     * After compute, data is copied back to the original CPU pointers. */
+    #define VCPM_MAX_LEAVES 16384
+    static struct ggml_tensor * cpu_tensors[VCPM_MAX_LEAVES];   /* tensor ptr */
+    static void *              cpu_ptrs[VCPM_MAX_LEAVES];       /* original CPU data ptr */
+    static size_t              cpu_nbytes[VCPM_MAX_LEAVES];      /* byte count */
+    int n_cpu = 0;
+
+    /* Helper to add a tensor to the save list */
+    #define VCPM_ADD_CPU_TENSOR(t) do { \
+        if (n_cpu >= VCPM_MAX_LEAVES) break; \
+        cpu_tensors[n_cpu] = (t); \
+        cpu_ptrs[n_cpu]    = (t)->data; \
+        cpu_nbytes[n_cpu]  = ggml_nbytes(t); \
+        n_cpu++; \
+        (t)->data   = NULL; \
+        (t)->buffer = NULL; \
+    } while(0)
+
+    /* Collect all unique tensors referenced by the graph (nodes + their sources) */
+    for (int i = 0; i < ggml_graph_n_nodes(graph) && n_cpu < VCPM_MAX_LEAVES; i++) {
+        struct ggml_tensor * t = ggml_graph_node(graph, i);
+        if (!t) continue;
+        if (t->data && !t->buffer) {
+            int dup = 0;
+            for (int j = 0; j < n_cpu; j++)
+                if (cpu_tensors[j] == t) { dup = 1; break; }
+            if (!dup) VCPM_ADD_CPU_TENSOR(t);
+        }
+        for (int si = 0; si < GGML_MAX_SRC && t->src[si]; si++) {
+            struct ggml_tensor * s = t->src[si];
+            if (!s->data || s->buffer) continue;
+            int dup = 0;
+            for (int j = 0; j < n_cpu; j++)
+                if (cpu_tensors[j] == s) { dup = 1; break; }
+            if (!dup) VCPM_ADD_CPU_TENSOR(s);
+        }
     }
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG compute: collected %d CPU leaf tensors\n", n_cpu);
+    }
+
+    /* Reserve and allocate graph on GPU */
+    ggml_gallocr_reserve(be->galloc, graph);
 
     if (!ggml_gallocr_alloc_graph(be->galloc, graph)) {
+        fprintf(stderr, "VCPM_DEBUG compute: gallocr_alloc_graph FAILED\n");
+        for (int j = 0; j < n_cpu; j++) cpu_tensors[j] = NULL;
         return -1;
     }
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG compute: gallocr allocated graph\n");
+    }
 
-    /* Compute the graph */
+    /* Copy CPU input data to newly-allocated GPU tensors. */
+    for (int j = 0; j < n_cpu; j++) {
+        struct ggml_tensor * t = cpu_tensors[j];
+        if (t && cpu_ptrs[j]) {
+            ggml_backend_buffer_t eff_buf = t->view_src ? t->view_src->buffer : t->buffer;
+            if (eff_buf) {
+                ggml_backend_tensor_set(t, cpu_ptrs[j], 0, cpu_nbytes[j]);
+            } else {
+                fprintf(stderr, "VCPM_DEBUG compute: tensor %d has no effective buffer after alloc (name='%s')\n",
+                        j, t->name ? t->name : "?");
+            }
+        }
+    }
+
+    /* Compute the graph on GPU */
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG compute: starting graph compute (%d nodes, %d leaves collected)\n",
+                ggml_graph_n_nodes(graph), n_cpu);
+    }
     enum ggml_status st = ggml_backend_graph_compute(be->backend, graph);
-    if (st != GGML_STATUS_SUCCESS) {
-        return -1;
+    int ok = (st == GGML_STATUS_SUCCESS);
+    if (!ok) {
+        /* Check for CUDA OOM or errors */
+        fprintf(stderr, "VCPM_DEBUG compute: graph compute FAILED (status=%d) — possible OOM or access violation\n", (int)st);
+    } else if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG compute: graph compute OK (status=%d)\n", (int)st);
+    }
+    /* Force CUDA sync and check for errors (only works with CUDA headers included) */
+#if defined(GGML_USE_CUDA) && defined(CUDA_VERSION)
+    if (ok) {
+        cudaError_t cu_err_2 = cudaDeviceSynchronize();
+        if (cu_err_2 != cudaSuccess) {
+            fprintf(stderr, "VCPM_DEBUG compute: cudaDeviceSynchronize FAILED: %s\n", cudaGetErrorString(cu_err_2));
+            ok = 0;
+        }
+    }
+#endif
+
+    /* Read back ALL graph tensors from GPU to CPU using fresh CPU copies.
+     * We iterate the entire graph and allocate a copy for every tensor
+     * that has a GPU buffer. Leaf tensors (from ggml context) get their
+     * original data pointer restored. Output tensors get new CPU copies
+     * tracked in be->cpu_copies (automatically freed on next compute). */
+
+    /* First pass: handle leaf tensors — restore original ggml-context pointer */
+    for (int j = 0; j < n_cpu; j++) {
+        struct ggml_tensor * t = cpu_tensors[j];
+        if (!t) continue;
+        ggml_backend_buffer_t eff_buf = t->view_src ? t->view_src->buffer : t->buffer;
+        if (eff_buf && cpu_ptrs[j]) {
+            if (ok) {
+                ggml_backend_tensor_get(t, cpu_ptrs[j], 0, cpu_nbytes[j]);
+            }
+        }
+        /* Restore the original CPU data pointer (ggml context memory) */
+        t->data   = cpu_ptrs[j];
+        t->buffer = NULL;
     }
 
+    /* Extract OLD CPU copies list before appending new ones */
+    struct vcpm_cpu_copy * old_copies = be->cpu_copies;
+    be->cpu_copies = NULL;
+
+    /* Second pass: handle non-leaf (output) tensors — allocate fresh CPU copies */
+    for (int i = 0; i < ggml_graph_n_nodes(graph); i++) {
+        struct ggml_tensor * t = ggml_graph_node(graph, i);
+        if (!t) continue;
+        ggml_backend_buffer_t eff_buf = t->view_src ? t->view_src->buffer : t->buffer;
+        if (!eff_buf) continue;
+        /* Skip leaf tensors (already handled above) */
+        int is_leaf = 0;
+        for (int j = 0; j < n_cpu; j++) {
+            if (cpu_tensors[j] == t) { is_leaf = 1; break; }
+        }
+        if (is_leaf) continue;
+        /* Allocate CPU buffer and read back from GPU */
+        size_t nb = ggml_nbytes(t);
+        void * cpu_copy = malloc(nb);
+        if (!cpu_copy) continue;
+        if (ok) {
+            ggml_backend_tensor_get(t, cpu_copy, 0, nb);
+        } else {
+            memset(cpu_copy, 0, nb);
+        }
+        t->data   = cpu_copy;
+        t->buffer = NULL;
+        /* Track for later freeing */
+        struct vcpm_cpu_copy * node = (struct vcpm_cpu_copy *)malloc(sizeof(*node));
+        if (node) {
+            node->data = cpu_copy;
+            node->next = be->cpu_copies;
+            be->cpu_copies = node;
+        }
+    }
+
+    /* Free OLD CPU copies from PREVIOUS compute call.
+     * Their data was consumed by the CPU→GPU copy at the top of this function
+     * (the saved cpu_ptrs[j] pointed into these old copies for tensors that
+     * were output reads in the prior compute). */
+    {
+        struct vcpm_cpu_copy * p = old_copies;
+        while (p) {
+            struct vcpm_cpu_copy * next = p->next;
+            free(p->data);
+            free(p);
+            p = next;
+        }
+    }
+
+    if (!ok) return -1;
+
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG compute: done OK\n");
+    }
     return 0;
 }
 
@@ -244,25 +424,16 @@ int vcpm_backend_compute_graph(vcpm_backend * be, struct ggml_context * ctx,
 #endif
 
     if (is_gpu) {
-        /* GPU path: allocate context tensors on device, compute, then free.
+        /*
+         * GPU path: weight tensors are pre-copied to GPU by
+         * vcpm_model_offload().  Scratch/sub/update context tensors are
+         * CPU-allocated (no_alloc=false) and will be auto-migrated by
+         * the gallocr / backend as needed.
          *
-         * Weight tensors should have been pre-copied to GPU by a prior call
-         * to vcpm_model_offload() after model loading.  The gallocr in
-         * vcpm_backend_compute() handles intermediate graph tensors.
-         *
-         * The buffer allocated here holds the context's explicitly-created
-         * tensors (graph inputs/outputs).  It is freed after compute to
-         * avoid leaking GPU memory on every call.
-         *
-         * BUGFIX: previously (void)buf leaked the buffer — the caller's
-         * ggml_free(ctx) does NOT free backend buffers.
+         * Do NOT call ggml_backend_alloc_ctx_tensors() on CPU contexts —
+         * it requires no_alloc=true and breaks the scratch allocation.
          */
-        struct ggml_backend_buffer * buf = ggml_backend_alloc_ctx_tensors(ctx, be->backend);
-        int ret = vcpm_backend_compute(be, graph);
-        if (buf) {
-            ggml_backend_buffer_free(buf);
-        }
-        return ret;
+        return vcpm_backend_compute(be, graph);
     }
 #else
     (void)n_threads;

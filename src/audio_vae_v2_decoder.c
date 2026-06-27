@@ -19,26 +19,37 @@
 #include "ggml.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include "debug_dump.h"
 
 /* ---- Decoder block (1 upconv + 3 residual units) ---- */
 
 static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
-                                           struct ggml_cgraph * graph,
-                                           struct ggml_tensor * h,
-                                           const struct vcpm_model * model,
-                                           int block_idx,
-                                           int stride) {
+                                            struct ggml_cgraph * graph,
+                                            struct ggml_tensor * h,
+                                            const struct vcpm_model * model,
+                                            int block_idx,
+                                            int stride) {
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG decoder_block: enter block_idx=%d h=%p\n", block_idx, (void*)h);
+    }
     char name[256];
 
     /* block.0.alpha — Snake activation parameter (pre-upconv) */
     snprintf(name, sizeof(name), "audio_vae.decoder.model.%d.block.0.alpha",
              block_idx);
     struct ggml_tensor * pre_alpha = vcpm_vae_tensor_by_name(ctx, model, name);
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG VAE block: pre_alpha=%p\n", (void*)pre_alpha);
+    }
 
     /* block.1.weight.weight — upsampling conv_transpose (k=2*stride, in→out/2) */
     snprintf(name, sizeof(name), "audio_vae.decoder.model.%d.block.1.weight.weight",
              block_idx);
     struct ggml_tensor * up_w = vcpm_vae_tensor_by_name(ctx, model, name);
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG VAE block: up_w=%p\n", (void*)up_w);
+    }
     if (!up_w) {
         fprintf(stderr, "VAE V2: missing block.%d upsample weight\n", block_idx);
         return NULL;
@@ -46,17 +57,35 @@ static struct ggml_tensor * decoder_block(struct ggml_context * ctx,
 
     snprintf(name, sizeof(name), "audio_vae.decoder.model.%d.block.1.bias", block_idx);
     struct ggml_tensor * up_b = vcpm_vae_tensor_by_name(ctx, model, name);
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG VAE block: up_b=%p\n", (void*)up_b);
+    }
 
     /* Snake activation with block.0.alpha (pre-upconv) */
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG VAE block: before alpha_to_f32\n");
+    }
     if (pre_alpha) {
         struct ggml_tensor * a_f32 = vcpm_vae_alpha_to_f32(ctx, pre_alpha);
+        if (vcpm_debug_env()) {
+            fprintf(stderr, "VCPM_DEBUG VAE block: a_f32=%p\n", (void*)a_f32);
+        }
         if (a_f32) {
             h = vcpm_vae_snake_activation(ctx, h, a_f32);
+            if (vcpm_debug_env()) {
+                fprintf(stderr, "VCPM_DEBUG VAE block: snake done\n");
+            }
         }
     }
 
     /* Transposed conv upsampling */
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG VAE block: before upconv\n");
+    }
     h = vcpm_vae_upconv_transpose1d(ctx, graph, up_w, up_b, h, stride);
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG VAE block: after upconv\n");
+    }
     if (!h) {
         fprintf(stderr, "VAE V2: upconv failed in block.%d\n", block_idx);
         return NULL;
@@ -125,6 +154,7 @@ struct ggml_tensor * vcpm_vae_v2_decode(
     const vcpm_audio_vae_v2_config * cfg) {
 
     if (!ctx || !graph || !latent || !model || !cfg) return NULL;
+    if (vcpm_debug_env()) fprintf(stderr, "VCPM_DEBUG VAE decode: enter\n");
 
     vcpm_vae_v2_reset_debug();
     struct ggml_tensor * h = latent;
@@ -135,6 +165,9 @@ struct ggml_tensor * vcpm_vae_v2_decode(
     struct ggml_tensor * w0 = vcpm_vae_tensor_by_name(ctx, model, name);
     snprintf(name, sizeof(name), "audio_vae.decoder.model.0.bias");
     struct ggml_tensor * b0 = vcpm_vae_tensor_by_name(ctx, model, name);
+    if (vcpm_debug_env()) {
+        fprintf(stderr, "VCPM_DEBUG VAE decode: w0=%p b0=%p\n", (void*)w0, (void*)b0);
+    }
 
     if (w0) {
         h = vcpm_vae_conv1d_layer(ctx, graph, w0, b0, h, 1, 3, 1, model);
@@ -177,6 +210,9 @@ struct ggml_tensor * vcpm_vae_v2_decode(
 
     for (int bi = 2; bi <= 7; bi++) {
         int idx = bi - 2;
+        if (vcpm_debug_env()) {
+            fprintf(stderr, "VCPM_DEBUG VAE decode: block bi=%d idx=%d\n", bi, idx);
+        }
 
         if (sr_cond_idx >= 0) {
             char sname[256], bname[256];

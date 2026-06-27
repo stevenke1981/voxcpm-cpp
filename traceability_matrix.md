@@ -75,6 +75,16 @@ Maps acceptance criteria from `spec.md` and `test.md` to implementation status.
 | T15-R16 | build_report.md | build system hardening: CMakePresets.json, Install rules, test labels | ✅ | CMakePresets.json, CMakeLists.txt test labels |
 | T15-R3 | build_report.md | split generate.c (1731→5 focused modules) | ✅ | gen_init.c, gen_prompt.c, gen_step.c, gen_stop.c, gen_run.c — 6/7 unit tests pass |
 | T15-R16b | build_report.md | Install rules, CPack, ccache, clang-tidy, clang-format | ✅ | CMakeLists.txt: install/CPack/ccache. New .clang-tidy, .clang-format files |
+| | | | | |
+| **2026-06-27** | **Q8_0 NaN root cause found: embed_tokens weight format mismatch** | G7, todos.md §14 | `base_lm.embed_tokens.weight` stored as Q8_0 (34-byte blocks) but C reads as F16 via pointer cast → garbage → all-NaN | |
+| | **Minimal fix: dequantize embed_tokens + norms/biases → F16** | G7, todos.md §11b | `tools/fix_q8_model2.py` with `dequantize_q8_to_f16()` helper; model shrinks from 2.6 GB → 2.7 GB | |
+| | **CPU verification: zero NaN, valid audio** | G7, todos.md §11b | `prompt_base_hidden` NaN=0 valid=4096; audio NaN=0 Inf=0 valid=23040/23040 min=-0.71 max=0.72 rms=0.066 | |
+| | **CUDA still crashes: access violation on RTX 3060 Ti 8 GB** | G7, todos.md §12 | Both full-dequant (4.0 GB) and minimal-fix (2.7 GB) crash during first compute graph; likely `ggml_cast` Q8_0→F32 unhandled on CUDA or VRAM exhaustion | |
+| **2026-06-27** | **VAE conv1d weight type mismatch: forced CPU fallback** | todos.md §10, T10 | ggml_im2col+mul_mat on CUDA produces all-zero depthwise conv output. VAE forced to CPU via `ggml_graph_compute` regardless of main backend | |
+| | **VAE F32 bias tensors crash on CPU fallback** | T10, G6 | `tensor_needs_f32` now returns 1 for all VAE tensors (bias/weight/alpha) regardless of original type. Added `GGML_TYPE_F32`→F32 direct copy in ensure_f32 | |
+| | **CUDA backend rewrites: proper CPU↔GPU tensor migration** | todos.md §12 | `vcpm_backend_compute` rewritten: save CPU leaf pointers, clear for gallocr, copy to GPU, compute, read back entire graph, restore original pointers. Removed broken `ggml_backend_alloc_ctx_tensors` call | |
+| | **Switched gen_step.c compute to vcpm_backend_compute_graph** | G7 | CFM/DiT/DLM update paths now use `vcpm_backend_compute_graph` (GPU-aware) instead of raw `ggml_graph_compute_with_ctx` | |
+| | **CFM trajectory fixtures generated: ar0001–ar0004 with 10-step diffusion** | G5, todos.md §11 | ~1500 .npy files with per-step LocDiT (cond+uncond), CFM velocity, traj_state, cfg_st_star for 4 autoregressive steps | |
 
 ## Legend
 

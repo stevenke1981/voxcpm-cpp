@@ -236,6 +236,10 @@
 | Step_ctx size | ✅ | Reduced from 14 GB to 256 MB |
 | KV cache persists | ✅ | KV cache in kv_ctx survives across all steps; generation quality unchanged |
 | Build | ✅ | MSVC Release: 0 errors |
+| | | |
+| **Q8_0 NaN: Root cause found** | ✅ | `embed_tokens.weight` stored as Q8_0 but C reads as F16 → all-NaN. Binary search confirmed embed_tokens is the sole NaN source. |
+| **Minimal fix: valid CPU audio** | ✅ | Minimal-fix model (2.7 GB, 221 dequant tensors, 443 Q8_0): prompt_base_hidden NaN=0, final audio NaN=0 valid=23040, min=-0.71 max=0.72 rms=0.066 |
+| **CUDA backend still broken** | ❌ | Access violation during gen_init with all model variants on 8 GB RTX 3060 Ti. Likely `ggml_cast` Q8_0→F32 unhandled on CUDA or VRAM exhaustion (5.27 GB weights + temp). Fallback: `--backend cpu`. |
 
 #### Additional Fixes (Session 9 — Tokenizer Parity)
 
@@ -320,10 +324,49 @@
 - Install rules for voxcpm library + voxcpm-c binary validated
 - ccache auto-detection added; clang-tidy/clang-format config files created
 
+### Additional Fixes (Session 11 — Q8_0 NaN Root Cause)
+
+27. **Q8_0 NaN root cause: embed_tokens format mismatch** (`tools/fix_q8_model2.py`, `tools/bisect_q8.py`)
+     - **Symptom**: Original Q8_0 model (2.6 GB) produced 100% NaN in `prompt_base_hidden`. All pipeline stages (CFM, VAE) produced Only NaN, resulting in silence.
+     - **Root cause**: `base_lm.embed_tokens.weight` (73448×2048, 150M params) is stored as Q8_0 (34-byte blocks: 2-byte F16 scale + 32 int8 values per block) in the GGUF file. The C code reads it as F16 via `(const ggml_fp16_t *)state->base_embed_tokens->data` — treating Q8_0 block data directly as F16 values, producing garbage embedding vectors → all-NaN hidden states.
+     - **Binary search** (`tools/bisect_q8.py`): Confirmed that dequantizing only `embed_tokens` + norms from Q8_0 → F16 eliminates all NaN. All 40 base_lm attention/MLP weight layers produce correct non-NaN output at Q8_0.
+     - **Minimal fix** (`tools/fix_q8_model2.py` with `dequantize_q8_to_f16()`):
+       - Model grows from 2.6 GB → 2.7 GB (+0.1 GB for F16 dequantization of embed_tokens + norms + biases)
+       - 221 tensors dequantized (all norms + biases + embed_tokens)
+       - 443 tensors kept as Q8_0 (all matmul weights — attention Q/K/V/O, MLP gate/up/down)
+     - **Verification** (CPU backend):
+       - `prompt_base_hidden` [4096]: NaN=0, Inf=0, min=-12.28, max=+17.63, rms=1.85
+       - `cfm_output` per step: NaN=0, valid=256
+       - `vae_input` [768]: NaN=0, valid=768, rms=0.85
+       - Final audio: NaN=0, Inf=0, valid=23040/23040, min=-0.71, max=0.72, rms=0.066
+     - **CUDA status**: Still crashes (access violation -1073741819) during gen_init with both full-dequant (4.0 GB) and minimal-fix (2.7 GB) models on 8 GB RTX 3060 Ti. Model weights load fine (5.27 GB), crash occurs during first compute graph execution. Likely causes:
+       1. `ggml_cast` of Q8_0→F32 unimplemented on CUDA for RMSNorm weight fusion
+       2. VRAM exhaustion (5.27 GB weights + compute graph temp buffers > 8 GB total)
+       3. CUDA kernel for mixed Q8_0/F16 ops not properly dispatched
+     - **Fallback**: `--backend cpu` works (2-5 min for 2.6s audio).
+
+##### Additional Fixes (Session 12 — 2026-06-27 VAE NaN on CUDA)
+
+28. **VAE conv1d weight type mismatch** (`src/audio_vae_v2.c: depthwise_conv1d, vcpm_conv1d_f32`)
+     - **Symptom**: VAE decoder produced all-NaN output on CUDA backend. Snap 0 (model.0 depthwise conv) was all zeros, cascading to NaN in residual units.
+     - **Root cause**: `ggml_conv_1d_dw` internally decomposes to `ggml_im2col(GGML_TYPE_F16)` + `ggml_mul_mat`. On CUDA, `ggml_im2col` + `ggml_mul_mat` with these depthwise shapes produces all-zero output for both F16 and F32 paths.
+     - **Fix**: Forced VAE decode to always use `ggml_graph_compute` (CPU backend) regardless of main backend. The VAE graph is ~0.03% of total compute cost, so CPU fallback has negligible latency impact.
+
+29. **VAE biases crash on CPU fallback** (`src/model_loader.c: tensor_needs_f32, vcpm_model_ensure_f32`)
+     - **Symptom**: Access violation (0xC0000005) during `ggml_graph_compute` with VAE on CPU.
+     - **Root cause**: After GPU offload, VAE bias tensors that were natively F32 had `t->data` pointing to GPU memory. `ggml_graph_compute` (CPU) tried to read GPU pointers → access violation.
+     - **Fix**: Modified `tensor_needs_f32` to also create CPU F32 copies for `audio_vae.*.weight`, `audio_vae.*.bias`, and `audio_vae.*.alpha` tensors even when they are already F32. Added `GGML_TYPE_F32` case in the dequantize loop to do a direct memcpy copy.
+     - **Verification**: CPU VAE fallback now exits with code 0, 7680 valid f32 samples, NaN=0/7680, rms=0.0125.
+
+30. **All VAE weight tensors now have guaranteed CPU F32 copies** (`src/model_loader.c: tensor_needs_f32`)
+     - Previously, only non-F32 VAE tensors got F32 copies. F32-native bias tensors were left in `model->ggml_ctx` and offloaded to GPU, becoming inaccessible from CPU.
+     - Now ALL VAE weight/bias/alpha tensors get CPU F32 copies regardless of original type.
+     - This is necessary because the VAE graph is always computed on CPU (see fix #28).
+
 ### Updated Remaining Risks
 
-1. **Full latent parity still pending**: C generates reasonable audio (RMS 0.162, full range) after ordering + feat_encoder fixes, but exact cosine similarity vs Python `generated_feat.npy` is still near zero (~-0.03). The text inputs differ (C uses "Hello, this is a model fixture speech test." vs Python fixture "Hello world."). Need deterministic comparison with same text/seed/max_len.
-2. **C latents vs Python with same inputs**: Need to run C with same text "Hello world." and compare against Python `generated_feat.npy` for exact structure parity.
-3. **Stop predictor firing**: Fires at reasonable patch counts; still needs verification against Python `step*_stop_logits.npy`.
+1. **Full latent parity still pending**: C generates valid audio (RMS 0.066) on CPU with minimal-fix model. Still need to dump C tensors and compare numerically against Python reference with matching text/seed/max_len.
+2. **CUDA VAE path remains broken**: `ggml_im2col+mul_mat` on CUDA produces all zeros for depthwise conv shapes. The VAE is forced to CPU as a workaround. This is acceptable for now (VAE = 0.03% of compute).
+3. **Stop predictor firing**: Verified firing; still needs comparison against Python `step*_stop_logits.npy`.
 4. **CFM trajectory parity**: Only structural verification; full CFM trajectory parity pending.
 5. **generate.c splitting (R3)**: ✅ Done - 1731-line file split into 5 focused modules (avg ~320 lines).

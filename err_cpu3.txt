@@ -1,0 +1,4 @@
+vcpm: overriding rms_norm_eps from GGUF (0.0e+00) to 1e-5 (Python reference)
+vcpm_backend: initialized CPU backend
+vcpm_gen_init: backend=CPU
+E:\voxcpm-cpp\build\_deps\ggml-src\src\ggml.c:3246: GGML_ASSERT(ggml_can_mul_mat(a, b)) failed

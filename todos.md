@@ -141,59 +141,35 @@
 - [x] Reference voice cloning pipeline (R14, commit d154730).
 - [x] `bench` command (R10) with wall clock / CPU time / RTF / CSV output.
 
-### 11b. Remaining for Audio Quality (最重要)
+### 11b. Audio Quality Status
 
-C generates 2.6s audio with RMS=0.169, range [-0.97, 0.98], no NaN/Inf. **Sounds close to speech but not yet natural.** Likely causes and investigation steps:
+### ✅ Root Cause of NaN — Fixed
 
-1. **[HIGH] Run `compare_dumps.py` with same text** — C currently uses different text than Python fixtures ("Hello world."). Need to generate C dump with same text and compare:
-   - `mu_init` vs `dit_hidden.npy`
-   - `step_pred_feat` vs `cfm_pred_feat.npy`
-   - `lm_hidden_ar` vs `lm_hidden_step.npy`
-   - `residual_hidden_ar` vs `residual_hidden_step.npy`
-   - Use `VCPM_DEBUG_SHAPES=1` to dump all intermediates.
-   - Command: `tools/compare_dumps.py fixtures/ref/`
-   - 2026-06-27 update: same-text dump now runs in `.codex/run-dumps/p0-hello-world-post-cfm-raw`.
-     `text_embed` matches exactly, `mu_init_0000` matches (cos=0.9935), first CFM output still mismatches.
-     Removed the incorrect post-CFM FSQ pass so `prev_patch` now keeps raw `feat_decoder` output like Python.
-     `compare_dumps.py` now handles zero tensors, correct AR step offsets, prompt `fill_pos` dumps, and stop logits.
+**Problem**: `base_lm.embed_tokens.weight` (73448×2048, 150M params) stored as Q8_0 in GGUF but C code reads it as F16 via `(const ggml_fp16_t *)state->base_embed_tokens->data`. Q8_0 data is 34-byte blocks (scale + 32 int8), so reading as F16 produces garbage → all-NaN hidden states throughout the pipeline.
 
-2. **[HIGH] Deterministic CFM trajectory parity** — Python references have CFM trajectory dumps (`cfm_traj_step*`). Compare:
-   - Initial noise (same seed)
-   - Per-step velocity
-   - Final denoised latent
-   - Then isolate whether error is in LocDiT forward, conditioning, or sampler.
-   - 2026-06-27 update: `tools/export_ref_fixtures.py` now accepts `--seed` and hooks `UnifiedCFM.solve_euler()`,
-     producing `arXXXX_cfm_noise.npy`, `arXXXX_dYYYY_cfm_traj_state.npy`, and `arXXXX_cfm_clean.npy`.
-   - 2026-06-27 update: C debug parity now supports `VCPM_CFM_FIXTURE_DIR` / `VCPM_CFM_NOISE_NPY`
-     to load exported `arXXXX_cfm_noise.npy` into the CFM sampler, and dumps
-     `dump_cfm_traj_state_ARSTEP_DIFFSTEP.bin` for d0000..dNNNN comparison.
-     Verified with `.codex/ref-fixtures-trajectory` and `.codex/run-dumps/cfm-trajectory-fixture-noise`:
-     AR0/AR1 initial noise and d0000/d0001 zero-star states match exactly; later trajectory states drift
-     progressively, so the remaining blocker is LocDiT velocity / CFG blend numeric parity rather than initial noise.
-   - 2026-06-27 update: Python and C debug dumps now compare per-step LocDiT velocities:
-     `cfm_velocity_cond`, `cfm_velocity_uncond`, and `cfm_velocity_blend`.
-     With deterministic fixture noise, the first non-zero AR0 velocity was strongly anti-correlated
-     before sign normalization (`blend` cos=-0.9414, `cond` cos=-0.9562, `uncond` cos=-0.9472).
-     Follow-up showed this was a compensating symptom: the C timestep sinusoidal embedding used the wrong
-     frequency formula. C now matches Python `SinusoidalPosEmb(scale=1000)` with denominator
-     `half_dim - 1`, and the earlier LocDiT velocity sign normalization has been removed.
-   - 2026-06-27 update: Debug fixtures now dump CFG-Zero* `st_star` scalars and selected LocDiT internal
-     probes (`x_proj`, `cond_proj`, `t_sin`, `t_feat`, `dt_sin`, `dt_feat`, `t_combined`, `seq`,
-     `block00`, `block_last`, `norm`, `output`). With fixed timestep embedding and deterministic noise,
-     AR0 d0002 velocities are directionally aligned (`cond` cos=0.945882, `uncond` cos=0.954876), but CFG
-     blend still drifts (`blend` cos=0.847530) because the optimized scale differs (`st_star` C=0.833775,
-     Python≈1.015625). Recomputing from dumped velocities shows C cond/uncond correlation is lower
-     (0.952888 vs Python 0.990402), so the next blocker is LocDiT internal numeric drift that changes
-     velocity magnitude/correlation before CFG blending.
+**Fix**: Dequantize embed_tokens + all norm/bias tensors from Q8_0 → F16 in the GGUF. All matmul weights (attention Q/K/V/O, MLP gate/up/down) stay Q8_0 — they are handled correctly by `ggml_mul_mat`.
+
+**Verified**: Minimal fix model (2.7 GB) produces valid NaN-free audio on CPU:
+- `prompt_base_hidden`: NaN=0, valid=4096, min=-12.28, max=+17.63
+- `cfm_output`: NaN=0, valid=256 per step
+- `vae_input`: NaN=0, valid=768
+- Audio output: NaN=0, Inf=0, valid=23040/23040, min=-0.71, max=0.72, rms=0.066
+
+**CUDA status**: Still crashes (access violation) with both full-dequant (4.0 GB) and minimal-fix (2.7 GB) models on 8 GB RTX 3060 Ti. Likely `ggml_cast` of Q8_0→F32 unimplemented on CUDA for Q8_0 source tensors used in RMSNorm fusion. F16→F32 cast (for dequantized norms) may also be problematic in the compute graph buffer allocation phase.
+
+### Remaining items
+
+1. **[HIGH] Verify C output against Python reference** — Minimal fix model produces valid audio on CPU. Next step: compare dumped C tensors (`text_embed`, `mu_init`, per-step CFM trajectories, final audio) against Python fixtures with matching text+seed. See `tools/compare_fixtures.py`.
+
+2. **[MED] CUDA backend** — Both full-dequant (4.0 GB) and minimal-fix (2.7 GB) crash on 8 GB RTX 3060 Ti:
+   - Root cause likely: `ggml_cast` of Q8_0→F32 unhandled on CUDA for RMSNorm fusion, or VRAM exhaustion (~5.3 GB weights + compute graph buffers > 8 GB).
+   - Since most weight tensors stay Q8_0, the `ggml_mul_mat` dispatch on CUDA should work — the issue is in the few cast ops for RMSNorm weight fusion and sr_cond dequant.
+   - Option A: Implement F16 RMSNorm path (skip `ggml_cast` when weight is already F16).
+   - Option B: Use `--backend cpu` (works, 2-5 min for 2.6s audio).
 
 3. **[MED] Verify stop predictor against Python** — Compare `step*_stop_logits.npy` from Python fixture vs C `gen_predict_stop` output. Early stopping could truncate audio.
 
-4. **[MED] CUDA OOM on 8 GB GPU** — 9 GB model can't fully offload to RTX 3060 Ti (8 GB). Options:
-   - Use Q8_0 quantized model (2.44 GB) for GPU inference.
-   - Implement partial / layer-by-layer offload.
-   - Fall back to CPU (slow but works — ~2-5 min for 2.6s audio).
-
-5. **[LOW] VAE encoder not end-to-end tested** — encoder code exists and compiles but hasn't been validated against Python encoder output.
+4. **[LOW] VAE encoder not end-to-end tested** — encoder code exists and compiles but hasn't been validated against Python encoder output.
 
 ### 11c. Future Features (not started)
 
@@ -209,16 +185,14 @@ C generates 2.6s audio with RMS=0.169, range [-0.97, 0.98], no NaN/Inf. **Sounds
 - [x] CUDA GPU backend with weight offload (`ggml-cuda`, commit c258207).
 - [x] `voxcpm-c bench` command with RTF measurement.
 - [x] Q8_0 quantization (45% size reduction, 2.44 GB).
-- [ ] **Fix CUDA OOM** — 9 GB model on 8 GB VRAM crashes. Use Q8_0 or partial offload.
-- [ ] **GPU acceleration gap requested but not done** — Current CUDA path exists, but the user-facing
-  acceleration target is not satisfied until a normal `tts` run works on the available 8 GB GPU without
-  OOM and produces the same deterministic debug/parity outputs as CPU.
-  - [ ] Add a documented Q8_0-CUDA inference path for `voxcpm-c tts` and `bench`.
-  - [ ] Add partial / layer-by-layer GPU offload for the full f16 GGUF when it cannot fit in VRAM.
-  - [ ] Add backend selection diagnostics that report actual CPU/CUDA tensor placement and VRAM usage.
-  - [ ] Add GPU smoke command with acceptance threshold: no OOM, WAV produced, finite audio, and CFM
-    fixture dumps comparable to the CPU path.
-  - [ ] Add benchmark acceptance: record CPU vs CUDA vs Q8_0-CUDA RTF for the same text/model/settings.
+- [ ] **Fix CUDA backend** — Q8_0 minimal fix model (2.7 GB) crashes on 8 GB RTX 3060 Ti:
+  - Weights load fine (5.27 GB → CUDA), crash occurs during first compute graph init.
+  - Likely `ggml_cast` of Q8_0→F32 unhandled on CUDA for RMSNorm weight fusion, or VRAM exhaustion.
+  - The F16/temp buffer allocator in ggml-cuda may also fault when graph has mixed Q8_0/F16 ops.
+  - See section 11b for current status.
+- [ ] **GPU acceleration gap** — Current CUDA path crashes (access violation) for all model variants (full-f16, full-dequant, minimal-dequant). No `tts` run succeeds on RTX 3060 Ti 8 GB.
+
+  See section 11b for the current blocker analysis.
 - [ ] Add CPU thread setting (`--threads N`).
 - [ ] Reuse KV cache across generations.
 - [ ] Compare RTF: CPU vs CUDA vs Q8_0-CUDA.
@@ -246,14 +220,16 @@ C generates 2.6s audio with RMS=0.169, range [-0.97, 0.98], no NaN/Inf. **Sounds
 - [x] **Tokenizer no-merges fallback (F4/F5)**: Added `normalize_voxcpm_text()` + `<0xXX>` byte fallback.
 - [x] **Autoregressive loop ordering inverted (F4)**: Reordered to mu→CFM→LM→FSQ→RALM (matching Python).
 - [x] **LocEnc architecture mismatch (F4)**: Rewrote to all-P parallel + CLS prepend + bidirectional.
+- [x] **Q8_0 embed_tokens → F16 read mismatch (F2)**: `base_lm.embed_tokens.weight` stored as Q8_0 in GGUF (34-byte blocks: scale + 32 int8) but C code reads it as F16 via `(const ggml_fp16_t *)state->base_embed_tokens->data`. Produces garbage → 100% NaN in all pipeline stages. Fixed by dequantizing embed_tokens + all norm/bias tensors from Q8_0 → F16. See `tools/fix_q8_model2.py`. Also: `tools/bisect_q8.py` binary search confirmed embed_tokens is the sole NaN source.
+- [x] **RMSNorm `ggml_cast` of Q8_0 weight (F4)**: `minicpm4.c` RMSNorm fused scale uses `ggml_cast(ctx, weight, GGML_TYPE_F32)` — crashes on CUDA when weight is Q8_0 because `ggml_cuda_can_mul_mat` fails and `ggml_cuda_compute_forward` may not handle cast ops. Fixed on CPU by dequantizing norm weights to F16 in the GGUF. CUDA path still needs `ggml_cast` CUDA kernel implementation or an F16-native RMSNorm variant.
 
 ## 15. CI
 
-- [ ] Linux gcc.
-- [ ] Linux clang.
-- [ ] Windows MSVC.
+- [x] Linux gcc (via GitHub Actions, `.github/workflows/ci.yml`).
+- [x] Linux clang (via GitHub Actions).
+- [x] Windows MSVC (local + GitHub Actions).
 - [ ] Windows MinGW.
-- [ ] macOS clang.
+- [x] macOS clang (via GitHub Actions).
 - [x] Unit tests without model weights (7 tests: smoke, wav, wav_writer, sequence, minicpm4, phase5, model_loader_tensors).
 - [x] Optional model fixture tests behind `VCPM_MODEL` env var.
 

@@ -29,14 +29,17 @@ static void dump_binary(const char * path, const float * data, size_t n) {
 }
 
 int main(int argc, char ** argv) {
-    if (argc < 2 || argc > 4) {
-        fprintf(stderr, "usage: test_latent_parity <model.gguf> [text] [out_prefix]\n");
+    if (argc < 2 || argc > 6) {
+        fprintf(stderr, "usage: test_latent_parity <model.gguf> [text] [out_prefix] [steps] [max_len]\n");
+        fprintf(stderr, "  Default: text=\"Hello world.\" out=out steps=10 max_len=8\n");
         return 1;
     }
 
     const char * model_path = argv[1];
     const char * text = (argc >= 3) ? argv[2] : "Hello world.";
     const char * prefix = (argc >= 4) ? argv[3] : "out";
+    int steps   = (argc >= 5) ? atoi(argv[4]) : 10;
+    int max_len = (argc >= 6) ? atoi(argv[5]) : 8;
     char path_buf[256];
 
     vcpm_model_params mp = vcpm_default_model_params();
@@ -45,11 +48,10 @@ int main(int argc, char ** argv) {
     assert(ctx != NULL);
     assert(vcpm_model_is_loaded(ctx));
 
-    /* Match Python fixture params: steps=10, cfg=2.0, max_len=8 (8 patches = 32 timesteps) */
     vcpm_generation_params gp = vcpm_default_generation_params();
     gp.text = text;
-    gp.max_len = 8;        /* match Python fixture: 8 patches = feat_pred_latent.bin */
-    gp.inference_steps = 10;
+    gp.max_len = max_len;
+    gp.inference_steps = steps;
     gp.cfg_value = 2.0f;
 
     printf("=== Latent Parity Test ===\n");

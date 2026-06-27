@@ -1,0 +1,8 @@
+vcpm: overriding rms_norm_eps from GGUF (0.0e+00) to 1e-5 (Python reference)
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 8191 MiB):
+  Device 0: NVIDIA GeForce RTX 3060 Ti, compute capability 8.6, VMM: yes, VRAM: 8191 MiB
+vcpm_backend: initialized CUDA backend (device 0: NVIDIA GeForce RTX 3060 Ti)
+vcpm_gen_init: backend=CUDA
+vcpm: offloading 814 tensors to backend
+vcpm: offloaded 814 tensors (5000.46 MB) to backend
+vcpm_gen_init: weight tensors pre-copied to CUDA

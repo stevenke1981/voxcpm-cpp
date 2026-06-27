@@ -104,8 +104,8 @@ struct ggml_tensor * vcpm_rms_norm(struct ggml_context * ctx,
     minicpm_debug_tensor_shape("minicpm.rms.x", x);
     minicpm_debug_tensor_shape("minicpm.rms.y", y);
     minicpm_debug_tensor_shape("minicpm.rms.weight", weight);
-    /* Multiply by weight */
-    return ggml_mul(ctx, y, weight);
+    /* Multiply by weight (cast to f32 if quantized) */
+    return ggml_mul(ctx, y, ggml_cast(ctx, weight, GGML_TYPE_F32));
 }
 
 /* ---- Embedding ---- */

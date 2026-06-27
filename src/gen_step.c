@@ -24,6 +24,7 @@
 
 #include "ggml.h"
 #include "ggml-cpu.h"
+#include "ggml_backend.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -382,7 +383,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     VCPM_LOG_SHAPE("step.mu", mu);
 
     if (mu) ggml_build_forward_expand(graph, mu);
-    ggml_graph_compute_with_ctx(scratch_ctx, graph, 1);
+    vcpm_backend_compute_graph(&state->backend, scratch_ctx, graph, 1);
 
     float * mu_data = NULL;
     int mu_len = 0;
@@ -560,7 +561,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             VCPM_LOG_SHAPE("step.v_cond", v_cond);
 
             ggml_build_forward_expand(graph, v_cond);
-            ggml_graph_compute_with_ctx(sub_ctx, graph, 1);
+            vcpm_backend_compute_graph(&state->backend, sub_ctx, graph, 1);
             vcpm_locdit_debug_dump("cond", ar_step_counter, step + 1);
 
             /* --- Pass 2: Unconditioned --- */
@@ -596,7 +597,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             VCPM_LOG_SHAPE("step.v_uncond", v_uncond);
 
             ggml_build_forward_expand(graph, v_uncond);
-            ggml_graph_compute_with_ctx(sub_ctx, graph, 1);
+            vcpm_backend_compute_graph(&state->backend, sub_ctx, graph, 1);
             vcpm_locdit_debug_dump("uncond", ar_step_counter, step + 1);
 
             float * cond_data = (float *)(v_cond->data ? v_cond->data : NULL);
@@ -626,7 +627,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             VCPM_LOG_SHAPE("step.velocity", velocity);
 
             ggml_build_forward_expand(graph, velocity);
-            ggml_graph_compute_with_ctx(sub_ctx, graph, 1);
+            vcpm_backend_compute_graph(&state->backend, sub_ctx, graph, 1);
             vcpm_locdit_debug_dump("cond", ar_step_counter, step + 1);
 
             if (velocity->data) {
@@ -651,6 +652,13 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         snprintf(step_label, sizeof(step_label), "step_pred_feat_%04d", ar_step_counter);
         vcpm_dump_tensor(step_label, x_data,
                           latent_dim, patch_size, 0);
+    }
+
+    /* NaN check on CFM output */
+    {
+        char nan_label[64];
+        snprintf(nan_label, sizeof(nan_label), "cfm_output_%04d", ar_step_counter);
+        vcpm_check_nan(x_data, (size_t)total_patch_dim, nan_label);
     }
 
     free(mu_data);
@@ -752,7 +760,14 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
     ggml_set_name(fsq_out, "update_fsq_out");
 
     if (fsq_out) ggml_build_forward_expand(graph, fsq_out);
-    ggml_graph_compute_with_ctx(update_ctx, graph, 1);
+    vcpm_backend_compute_graph(&state->backend, update_ctx, graph, 1);
+
+    /* NaN check on base_hidden right after compute */
+    if (base_hidden && base_hidden->data) {
+        size_t nh = (size_t)base_hidden->ne[0] * (size_t)base_hidden->ne[1];
+        char nl[64]; snprintf(nl, sizeof(nl), "base_hidden_%04d", fill_pos);
+        vcpm_check_nan((const float *)base_hidden->data, nh, nl);
+    }
 
     if (vcpm_debug_shapes_env() && base_hidden && base_hidden->data) {
         char label[64];
@@ -799,7 +814,7 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
         ggml_build_forward_expand(graph, ralm_hidden);
     }
 
-    ggml_graph_compute_with_ctx(update_ctx, graph, 1);
+    vcpm_backend_compute_graph(&state->backend, update_ctx, graph, 1);
 
     if (state->residual_hidden_state && ralm_hidden && ralm_hidden->data) {
         memcpy(state->residual_hidden_state, ralm_hidden->data,
