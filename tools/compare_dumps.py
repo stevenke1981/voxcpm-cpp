@@ -92,7 +92,6 @@ def compare_one(label, c_data, c_shape, py_data, py_shape):
         matched = True
     elif cos_sim > 0.5:
         print(f"  [PARTIAL] (cos={cos_sim:.6f})")
-        matched = True
     else:
         print(f"  [DIFFERENT] (cos={cos_sim:.6f})")
         print(f"\n  First 16 values:")
@@ -105,11 +104,18 @@ def compare_one(label, c_data, c_shape, py_data, py_shape):
 
 def reshape_c_to_py(dump_name, c_data, c_shape, py_data, py_shape):
     """Transpose/reshape C data to match Python layout where needed."""
-    if dump_name.startswith("dump_step_cond_") or dump_name.startswith("dump_step_noise_") or dump_name.startswith("dump_step_pred_feat_"):
+    if (dump_name.startswith("dump_step_cond_") or
+            dump_name.startswith("dump_step_noise_") or
+            dump_name.startswith("dump_step_pred_feat_") or
+            dump_name.startswith("dump_post_cfm_feat_") or
+            dump_name.startswith("dump_cfm_traj_state_")):
         # C: [latent_dim, patch_size] = [64, 4]
         # Py: [1, 4, 64] or [1, patch_size, latent_dim]
         if len(py_shape) == 3 and py_shape[2] == c_shape[0] and py_shape[1] == c_shape[1]:
             py_compare = py_data.transpose(0, 2, 1)  # [1, 4, 64] -> [1, 64, 4]
+            return c_data, py_compare
+        elif len(py_shape) == 3 and py_shape[1] == c_shape[0] and py_shape[2] == c_shape[1]:
+            py_compare = py_data.reshape(c_shape[0], c_shape[1])
             return c_data, py_compare
         elif len(py_shape) == 2 and py_shape[1] == c_shape[0] and py_shape[0] == 1:
             py_compare = py_data.reshape(c_shape[0], c_shape[1])
@@ -192,6 +198,16 @@ def find_fixture_for_step(fixtures_dir, step_num, suffix_patterns):
         if os.path.exists(fpath):
             return fpath
     return None
+
+
+def find_cfm_noise_fixture(fixtures_dir, ar_step):
+    fpath = os.path.join(fixtures_dir, f"ar{ar_step:04d}_cfm_noise.npy")
+    return fpath if os.path.exists(fpath) else None
+
+
+def find_cfm_traj_fixture(fixtures_dir, ar_step, diff_step):
+    fpath = os.path.join(fixtures_dir, f"ar{ar_step:04d}_d{diff_step:04d}_cfm_traj_state.npy")
+    return fpath if os.path.exists(fpath) else None
 
 
 def is_c_latent_dump(dump_name):
@@ -321,6 +337,8 @@ def main():
     # Compare step-specific dumps
     dump_by_step = {}
     for d in all_dumps:
+        if d.startswith("dump_cfm_traj_state_"):
+            continue
         m = re.match(r"dump_(.+)_(\d{4})\.bin", d)
         if m:
             base = m.group(1)
@@ -359,6 +377,19 @@ def main():
                 continue
 
             if suffix_list is None:
+                if base_name == "step_noise":
+                    fixture_path = find_cfm_noise_fixture(args.fixtures_dir, step_num)
+                    if fixture_path:
+                        py_data = load_npy(fixture_path)
+                        dump_name = os.path.basename(dump_path)
+                        fixture_name = os.path.basename(fixture_path)
+                        c_compare, py_compare = reshape_c_to_py(dump_name, c_data, c_shape, py_data, py_data.shape)
+                        matched = compare_one(f"{dump_name} vs {fixture_name}",
+                                              c_compare, c_shape,
+                                              py_compare, py_data.shape)
+                        results.append((dump_name, fixture_name, matched))
+                        continue
+
                 # No Python fixture, just print stats
                 print(f"\n--- {os.path.basename(dump_path)}: No Python fixture ---")
                 c_rms = np.sqrt(np.mean(c_data ** 2))
@@ -389,6 +420,40 @@ def main():
                                   c_compare, c_shape,
                                   py_compare, py_data.shape)
             results.append((dump_name, fixture_name, matched))
+
+    # Compare CFM trajectory dumps with Python arXXXX_dYYYY_cfm_traj_state.npy.
+    traj_dumps = []
+    for d in all_dumps:
+        m = re.match(r"dump_cfm_traj_state_(\d{4})_(\d{4})\.bin", d)
+        if m:
+            traj_dumps.append((int(m.group(1)), int(m.group(2)), d))
+
+    if traj_dumps:
+        print(f"\n{'='*60}")
+        print("CFM TRAJECTORY COMPARISONS")
+        print(f"{'='*60}")
+        print(f"Found {len(traj_dumps)} CFM trajectory dumps")
+
+    for ar_step, diff_step, dump_name in sorted(traj_dumps):
+        dump_path = os.path.join(args.dump_dir, dump_name)
+        fixture_path = find_cfm_traj_fixture(args.fixtures_dir, ar_step, diff_step)
+        if fixture_path is None:
+            print(f"\n--- {dump_name}: No matching ar{ar_step:04d}_d{diff_step:04d}_cfm_traj_state.npy fixture ---")
+            continue
+
+        try:
+            c_data, c_shape = load_bin(dump_path)
+        except Exception as e:
+            print(f"\n--- {dump_name}: ERROR loading: {e} ---")
+            continue
+
+        py_data = load_npy(fixture_path)
+        fixture_name = os.path.basename(fixture_path)
+        c_compare, py_compare = reshape_c_to_py(dump_name, c_data, c_shape, py_data, py_data.shape)
+        matched = compare_one(f"{dump_name} vs {fixture_name}",
+                              c_compare, c_shape,
+                              py_compare, py_data.shape)
+        results.append((dump_name, fixture_name, matched))
 
     # Compare c_latent_dump.bin
     latent_dump_path = os.path.join(args.dump_dir, "c_latent_dump.bin")

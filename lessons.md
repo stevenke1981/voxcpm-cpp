@@ -67,3 +67,9 @@
 **Trigger:** Same-text C/Python latent comparison showed AR conditioning stayed off after first-step CFM, and Python reference feeds `feat_decoder` output directly into `feat_encoder`.
 **Rule:** Do not apply FSQ to CFM acoustic features before storing `prev_patch`; FSQ belongs to the base LM hidden-state path, not the generated `pred_feat` path.
 **Source:** VoxCPM C/C++ post-CFM feature parity fix
+
+---
+## Lesson #19 — 2026-06-27
+**Trigger:** Deterministic CFM fixture noise matched Python exactly, but trajectory drift began after the first non-zero estimator update.
+**Rule:** When CFM final latents diverge, first force the same initial noise and dump every diffusion state; if d0000/d0001 match but later states drift, debug LocDiT conditioned/unconditioned velocity and CFG blend before changing sampler scheduling again.
+**Source:** VoxCPM C/C++ deterministic CFM trajectory parity

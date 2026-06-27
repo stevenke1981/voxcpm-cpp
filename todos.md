@@ -164,7 +164,13 @@ C generates 2.6s audio with RMS=0.169, range [-0.97, 0.98], no NaN/Inf. **Sounds
    - Then isolate whether error is in LocDiT forward, conditioning, or sampler.
    - 2026-06-27 update: `tools/export_ref_fixtures.py` now accepts `--seed` and hooks `UnifiedCFM.solve_euler()`,
      producing `arXXXX_cfm_noise.npy`, `arXXXX_dYYYY_cfm_traj_state.npy`, and `arXXXX_cfm_clean.npy`.
-     Next slice: feed the exported initial noise into C or implement a compatible deterministic CFM noise path.
+   - 2026-06-27 update: C debug parity now supports `VCPM_CFM_FIXTURE_DIR` / `VCPM_CFM_NOISE_NPY`
+     to load exported `arXXXX_cfm_noise.npy` into the CFM sampler, and dumps
+     `dump_cfm_traj_state_ARSTEP_DIFFSTEP.bin` for d0000..dNNNN comparison.
+     Verified with `.codex/ref-fixtures-trajectory` and `.codex/run-dumps/cfm-trajectory-fixture-noise`:
+     AR0/AR1 initial noise and d0000/d0001 zero-star states match exactly; later trajectory states drift
+     progressively, so the remaining blocker is LocDiT velocity / CFG blend numeric parity rather than initial noise.
+     Next slice: dump and compare per-step conditioned/unconditioned velocity before Euler integration.
 
 3. **[MED] Verify stop predictor against Python** — Compare `step*_stop_logits.npy` from Python fixture vs C `gen_predict_stop` output. Early stopping could truncate audio.
 

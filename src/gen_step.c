@@ -71,6 +71,122 @@ static void vcpm_cfm_apply_cfg_zero_star(float * uncond,
     }
 }
 
+static int vcpm_cfm_read_npy_f32(const char * path, float * dst, size_t expected_n) {
+    FILE * f = fopen(path, "rb");
+    if (!f) return 0;
+
+    unsigned char magic[6];
+    if (fread(magic, 1, sizeof(magic), f) != sizeof(magic) ||
+        memcmp(magic, "\x93NUMPY", sizeof(magic)) != 0) {
+        fclose(f);
+        return 0;
+    }
+
+    unsigned char ver[2];
+    if (fread(ver, 1, sizeof(ver), f) != sizeof(ver)) {
+        fclose(f);
+        return 0;
+    }
+
+    uint32_t header_len = 0;
+    if (ver[0] == 1) {
+        unsigned char hlen[2];
+        if (fread(hlen, 1, sizeof(hlen), f) != sizeof(hlen)) {
+            fclose(f);
+            return 0;
+        }
+        header_len = (uint32_t)hlen[0] | ((uint32_t)hlen[1] << 8);
+    } else if (ver[0] == 2 || ver[0] == 3) {
+        unsigned char hlen[4];
+        if (fread(hlen, 1, sizeof(hlen), f) != sizeof(hlen)) {
+            fclose(f);
+            return 0;
+        }
+        header_len = (uint32_t)hlen[0] |
+                     ((uint32_t)hlen[1] << 8) |
+                     ((uint32_t)hlen[2] << 16) |
+                     ((uint32_t)hlen[3] << 24);
+    } else {
+        fclose(f);
+        return 0;
+    }
+
+    char * header = (char *)malloc((size_t)header_len + 1);
+    if (!header) {
+        fclose(f);
+        return 0;
+    }
+    if (fread(header, 1, header_len, f) != header_len) {
+        free(header);
+        fclose(f);
+        return 0;
+    }
+    header[header_len] = '\0';
+    if (!strstr(header, "'<f4'") && !strstr(header, "\"<f4\"") &&
+        !strstr(header, "'|f4'") && !strstr(header, "\"|f4\"")) {
+        free(header);
+        fclose(f);
+        return 0;
+    }
+    if (strstr(header, "True")) {
+        free(header);
+        fclose(f);
+        return 0;
+    }
+    free(header);
+
+    size_t read_n = fread(dst, sizeof(float), expected_n, f);
+    int ok = (read_n == expected_n);
+    if (ok) {
+        int extra = fgetc(f);
+        ok = (extra == EOF);
+    }
+    fclose(f);
+    return ok;
+}
+
+static int vcpm_cfm_load_fixture_noise(float * x_data,
+                                        size_t n,
+                                        int ar_step) {
+    const char * direct_path = getenv("VCPM_CFM_NOISE_NPY");
+    if (direct_path && direct_path[0]) {
+        int ok = vcpm_cfm_read_npy_f32(direct_path, x_data, n);
+        if (ok) {
+            fprintf(stderr, "VCPM_DEBUG CFM: loaded fixture noise from %s\n", direct_path);
+        } else {
+            fprintf(stderr, "VCPM_DEBUG CFM: failed to load fixture noise from %s\n", direct_path);
+        }
+        return ok;
+    }
+
+    const char * fixture_dir = getenv("VCPM_CFM_FIXTURE_DIR");
+    if (!fixture_dir || !fixture_dir[0]) return 0;
+
+    char path[512];
+    int written = snprintf(path, sizeof(path), "%s/%s%04d%s",
+                           fixture_dir, "ar", ar_step, "_cfm_noise.npy");
+    if (written <= 0 || written >= (int)sizeof(path)) return 0;
+
+    int ok = vcpm_cfm_read_npy_f32(path, x_data, n);
+    if (ok) {
+        fprintf(stderr, "VCPM_DEBUG CFM: loaded fixture noise from %s\n", path);
+    } else {
+        fprintf(stderr, "VCPM_DEBUG CFM: fixture noise not loaded from %s\n", path);
+    }
+    return ok;
+}
+
+static void vcpm_cfm_dump_traj_state(int ar_step,
+                                      int diff_step,
+                                      const float * x_data,
+                                      int latent_dim,
+                                      int patch_size) {
+    if (!vcpm_debug_shapes_env()) return;
+    char label[80];
+    snprintf(label, sizeof(label), "cfm_traj_state_%04d_%04d", ar_step, diff_step);
+    vcpm_dump_tensor(label, x_data, latent_dim, patch_size, 0);
+}
+
 /* ---- Build feat_encoder(prev_patch) → enc_to_lm_proj audio embedding ---- */
 static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
                                                     struct ggml_context * ctx,
@@ -305,12 +421,14 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             x_data[j] = sqrtf(-2.0f * logf(u1)) * cosf(2.0f * (float)M_PI * u2);
         }
     }
+    vcpm_cfm_load_fixture_noise(x_data, (size_t)total_patch_dim, ar_step_counter);
     if (vcpm_debug_shapes_env()) {
         char step_label[64];
         snprintf(step_label, sizeof(step_label), "step_noise_%04d", ar_step_counter);
         vcpm_dump_tensor(step_label, x_data,
                           latent_dim, patch_size, 0);
     }
+    vcpm_cfm_dump_traj_state(ar_step_counter, 0, x_data, latent_dim, patch_size);
 
     vcpm_locdit_config dit_cfg;
     vcpm_locdit_config_fill(&dit_cfg,
@@ -356,6 +474,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         const float step_size = -(t - next_t);
 
         if (step < zero_star_steps) {
+            vcpm_cfm_dump_traj_state(ar_step_counter, step + 1,
+                                      x_data, latent_dim, patch_size);
             continue;
         }
 
@@ -473,6 +593,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             }
         }
 
+        vcpm_cfm_dump_traj_state(ar_step_counter, step + 1,
+                                  x_data, latent_dim, patch_size);
         ggml_free(sub_ctx);
     }
 
