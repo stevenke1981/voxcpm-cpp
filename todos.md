@@ -140,6 +140,7 @@
 - [x] CLI commands: `tts`, `inspect`, `tokenize`, `bench`, `clone` (with consent gate).
 - [x] Reference voice cloning pipeline (R14, commit d154730).
 - [x] `bench` command (R10) with wall clock / CPU time / RTF / CSV output.
+- [x] Denoiser load contract exposed: C API/CLI now records Python's default ZipEnhancer intent and fails explicitly on `--denoise` until a native backend exists.
 
 ### 11b. Audio Quality Status
 
@@ -168,9 +169,11 @@
    - Isolation status: `test_prompt_cuda_probe` now runs only `gen_forward_text()` and confirms the same failure before RALM/CFM/VAE. CPU prompt RMS is `2.227537`; CUDA prompt RMS is `0.000000` with `8192/8192` zero values.
    - Next action: verify graph output tensor residency/readback after compute, then inspect Q8_0/F16 op dispatch only if the output tensor is actually computed.
 
-3. **[MED] Verify stop predictor against Python** — Compare `step*_stop_logits.npy` from Python fixture vs C `gen_predict_stop` output. Early stopping could truncate audio.
+3. **[MED] Native ZipEnhancer denoiser backend** — Python `load_denoiser=True` uses ModelScope ZipEnhancer for prompt/reference preprocessing. The C runtime now exposes and gates this contract, but actual denoising requires a native backend or explicit external preprocessing.
 
-4. **[LOW] VAE encoder not end-to-end tested** — encoder code exists and compiles but hasn't been validated against Python encoder output.
+4. **[MED] Verify stop predictor against Python** — Compare `step*_stop_logits.npy` from Python fixture vs C `gen_predict_stop` output. Early stopping could truncate audio.
+
+5. **[LOW] VAE encoder not end-to-end tested** — encoder code exists and compiles but hasn't been validated against Python encoder output.
 
 ### 11c. Future Features (not started)
 

@@ -454,3 +454,37 @@ FAIL: CUDA Base LM prompt output is all zero
 ### Updated Diagnosis
 
 The CUDA parity blocker is isolated to the Base LM prompt graph itself. Since this probe does not build RALM/CFM/VAE graphs, those later stages are no longer suspects for the first CUDA zero-output failure. The next implementation step is to determine whether `ggml_backend_tensor_get()` is reading back zero from a valid CUDA output tensor, or whether the CUDA graph produced zero before readback.
+
+## Denoiser Load Contract (2026-06-27)
+
+### Change
+
+The upstream Python pipeline defaults to `load_denoiser=True` and uses
+ModelScope ZipEnhancer (`iic/speech_zipenhancer_ans_multiloss_16k_base`) as an
+external prompt/reference audio preprocessor when `denoise=True` is requested.
+The C runtime previously had no denoiser state at all, so the workflow could
+silently diverge from Python.
+
+The C API now records this load intent in `vcpm_model_params`:
+
+- `load_denoiser=1` by default.
+- `denoiser_model_path=VCPM_DEFAULT_DENOISER_MODEL` by default.
+- `vcpm_generation_params.denoise` gates prompt/reference denoise requests.
+- `inspect` reports denoiser requested/loaded/model/backend status.
+- CLI supports `--denoise`, `--denoiser-model`, and `--no-denoiser`.
+
+### Acceptance Evidence
+
+| Gate | Status | Evidence |
+|------|--------|----------|
+| Python semantics inspected | PASS | `load_denoiser=True` maps to external ZipEnhancer, not GGUF tensors |
+| C API exposes load intent | PASS | `vcpm_model_params.load_denoiser` and `denoiser_model_path` added |
+| Runtime no longer silent | PASS | `denoise=1` with prompt/reference audio returns `VCPM_ERR_NOT_IMPLEMENTED` until a native backend exists |
+| Inspect visibility | PASS | `vcpm_inspect()` prints denoiser requested/loaded/model/backend status |
+| CLI visibility | PASS | `tts`, `stream`, and `clone` parse denoiser options |
+
+### Remaining Risk
+
+Native ZipEnhancer inference is still not implemented in C. For parity runs that
+need denoising, prompt/reference audio must be pre-denoised externally, or a
+C-native/ONNX ZipEnhancer backend must be added next.

@@ -13,6 +13,9 @@ int main(void) {
     assert(mp.max_seq_len == 8192);
     assert(mp.backend == VCPM_BACKEND_AUTO);
     assert(mp.n_threads == 0);
+    assert(mp.load_denoiser == 1);
+    assert(mp.denoiser_model_path != NULL);
+    assert(strcmp(mp.denoiser_model_path, VCPM_DEFAULT_DENOISER_MODEL) == 0);
 
     vcpm_generation_params gp = vcpm_default_generation_params();
     assert(gp.inference_steps == 10);
@@ -20,6 +23,7 @@ int main(void) {
     assert(gp.text == NULL);
     assert(gp.min_len == 2);
     assert(gp.max_len == 4096);
+    assert(gp.denoise == 0);
 
     printf("PASS: default params\n");
 
@@ -70,6 +74,8 @@ int main(void) {
     char buf[4096];
     int n = vcpm_inspect(ctx, buf, sizeof(buf));
     assert(n > 0 && "inspect should produce output even with failed model");
+    assert(strstr(buf, "Denoiser:") != NULL && "inspect should report denoiser status");
+    assert(strstr(buf, VCPM_DEFAULT_DENOISER_MODEL) != NULL && "inspect should report denoiser model");
     printf("PASS: inspect on failed model: %s\n", buf);
 
     vcpm_free(ctx);
@@ -109,6 +115,11 @@ int main(void) {
     st = vcpm_generate(ctx, &gp, &audio);
     assert(st == VCPM_ERR_IO && "malformed reference WAV should return IO error");
     assert(strstr(vcpm_last_error(ctx), "reference audio") != NULL && "error should mention reference audio");
+
+    gp.denoise = 1;
+    st = vcpm_generate(ctx, &gp, &audio);
+    assert(st == VCPM_ERR_NOT_IMPLEMENTED && "denoise should fail explicitly until native ZipEnhancer exists");
+    assert(strstr(vcpm_last_error(ctx), "denoise requested") != NULL && "error should mention denoise");
     remove("test_reference.wav");
     vcpm_free(ctx);
 

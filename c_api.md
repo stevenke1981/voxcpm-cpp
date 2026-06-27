@@ -38,6 +38,8 @@ typedef struct vcpm_model_params {
     int use_mmap;
     int use_mlock;
     int max_seq_len;
+    int load_denoiser;
+    const char * denoiser_model_path;
 } vcpm_model_params;
 
 typedef struct vcpm_generation_params {
@@ -52,6 +54,7 @@ typedef struct vcpm_generation_params {
     int max_len;
     int streaming;
     int consent_confirmed;
+    int denoise;
 } vcpm_generation_params;
 
 typedef struct vcpm_audio {
@@ -102,6 +105,9 @@ Options:
 --max-len INT             default 4096
 --backend auto|cpu|cuda|metal|vulkan
 --threads INT
+--denoise                 request prompt/reference audio denoising before generation
+--denoiser-model ID       ZipEnhancer model path/id; default is iic/speech_zipenhancer_ans_multiloss_16k_base
+--no-denoiser             do not request the external ZipEnhancer denoiser
 --seed INT                optional if sampler becomes stochastic
 ```
 
@@ -118,7 +124,9 @@ Additional options:
 --prompt-audio PATH
 --prompt-text TEXT
 --prompt-text-file PATH
---denoise                 future optional
+--denoise                 request prompt/reference denoise; currently fails explicitly until native ZipEnhancer exists
+--denoiser-model ID       ZipEnhancer model path/id; default is iic/speech_zipenhancer_ans_multiloss_16k_base
+--no-denoiser             do not request ZipEnhancer
 --i-have-consent          required unless library caller bypasses with product policy
 ```
 
@@ -144,7 +152,20 @@ max_length: 8192
 patch_size: ...
 tensors: count, total size, dtype summary
 backend: supported / selected
+denoiser: requested / loaded / ZipEnhancer model id
 ```
+
+## 2.1 Denoiser Parity Note
+
+The upstream Python pipeline defaults to `load_denoiser=True`, which loads
+ModelScope ZipEnhancer (`iic/speech_zipenhancer_ans_multiloss_16k_base`) for
+prompt/reference audio enhancement when `denoise=True` is requested. This is an
+external preprocessing model, not a VoxCPM GGUF tensor.
+
+The C runtime now exposes the same load intent through `vcpm_model_params` and
+reports it in `inspect`. There is not yet a native C ZipEnhancer backend, so
+`vcpm_generation_params.denoise=1` with prompt/reference audio returns
+`VCPM_ERR_NOT_IMPLEMENTED` instead of silently running without denoising.
 
 ## 3. Streaming API
 

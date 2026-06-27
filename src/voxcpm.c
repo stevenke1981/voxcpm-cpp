@@ -17,11 +17,14 @@
 struct vcpm_context {
     char last_error[512];
     char * model_path;
+    char * denoiser_model_path;
     vcpm_model_params params;
     vcpm_model * model;
     vcpm_tokenizer tokenizer;
     int tokenizer_loaded;
     int model_loaded;
+    int denoiser_requested;
+    int denoiser_loaded;
 };
 
 static void vcpm_set_error(vcpm_context * ctx, const char * msg) {
@@ -129,6 +132,8 @@ vcpm_model_params vcpm_default_model_params(void) {
     p.use_mmap = 1;
     p.use_mlock = 0;
     p.max_seq_len = 8192;
+    p.load_denoiser = 1;
+    p.denoiser_model_path = VCPM_DEFAULT_DENOISER_MODEL;
     return p;
 }
 
@@ -139,6 +144,7 @@ vcpm_generation_params vcpm_default_generation_params(void) {
     p.inference_steps = 10;
     p.min_len = 2;
     p.max_len = 4096;
+    p.denoise = 0;
     return p;
 }
 
@@ -156,6 +162,25 @@ vcpm_context * vcpm_load_model(const char * gguf_path, const vcpm_model_params *
     }
 
     /* Load model */
+    const char * denoiser_path = ctx->params.denoiser_model_path;
+    const char * env_denoiser_path = getenv("ZIPENHANCER_MODEL_PATH");
+    if (!denoiser_path || !denoiser_path[0]) denoiser_path = env_denoiser_path;
+    if (!denoiser_path || !denoiser_path[0]) denoiser_path = VCPM_DEFAULT_DENOISER_MODEL;
+    ctx->denoiser_requested = ctx->params.load_denoiser ? 1 : 0;
+    if (ctx->denoiser_requested) {
+        ctx->denoiser_model_path = strdup(denoiser_path);
+        if (!ctx->denoiser_model_path) {
+            free(ctx->model_path);
+            free(ctx);
+            return NULL;
+        }
+        ctx->params.denoiser_model_path = ctx->denoiser_model_path;
+        /* Python load_denoiser=True uses ModelScope ZipEnhancer.
+         * The C runtime records the requested model, but has no native
+         * ZipEnhancer backend yet. Generation gates --denoise explicitly. */
+        ctx->denoiser_loaded = 0;
+    }
+
     char err_buf[512];
     ctx->model = vcpm_model_load(gguf_path, err_buf, sizeof(err_buf));
     if (!ctx->model) {
@@ -190,9 +215,16 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
     memset(out_audio, 0, sizeof(*out_audio));
 
     int is_reference = (params->reference_audio_path && params->reference_audio_path[0]);
+    int is_prompt_audio = (params->prompt_audio_path && params->prompt_audio_path[0]);
     float * ref_latents = NULL;
     int n_ref_latents = 0;
     int ref_latent_dim = 0;
+
+    if (params->denoise && is_prompt_audio && !ctx->denoiser_loaded) {
+        vcpm_set_error(ctx,
+                       "denoise requested, but Python ZipEnhancer denoiser is not implemented in the C runtime; pre-denoise prompt/reference audio or disable --denoise");
+        return VCPM_ERR_NOT_IMPLEMENTED;
+    }
 
     if (is_reference) {
         if (!params->consent_confirmed) {
@@ -202,6 +234,11 @@ vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * par
         if (!vcpm_path_exists(params->reference_audio_path)) {
             vcpm_set_error(ctx, "reference audio file not found");
             return VCPM_ERR_INVALID_ARG;
+        }
+        if (params->denoise && !ctx->denoiser_loaded) {
+            vcpm_set_error(ctx,
+                           "denoise requested, but Python ZipEnhancer denoiser is not implemented in the C runtime; pre-denoise prompt/reference audio or disable --denoise");
+            return VCPM_ERR_NOT_IMPLEMENTED;
         }
 
         /* ---- Read reference WAV ---- */
@@ -575,8 +612,17 @@ int vcpm_inspect(const vcpm_context * ctx, char * buf, size_t buf_size) {
     int off = 0;
 
     if (!ctx->model) {
-        off = buf_append(buf, buf_size, off, "Model not loaded: %s\n",
-                         ctx->last_error[0] ? ctx->last_error : "unknown error");
+        off = buf_append(buf, buf_size, off,
+                         "Model not loaded: %s\n"
+                         "Denoiser:\n"
+                         "  Requested:       %s\n"
+                         "  Loaded:          %s\n"
+                         "  Model:           %s\n"
+                         "  Backend:         external Python ZipEnhancer; no native C backend\n",
+                         ctx->last_error[0] ? ctx->last_error : "unknown error",
+                         ctx->denoiser_requested ? "yes" : "no",
+                         ctx->denoiser_loaded ? "yes" : "no",
+                         ctx->denoiser_model_path ? ctx->denoiser_model_path : "(none)");
         return off;
     }
 
@@ -627,6 +673,13 @@ int vcpm_inspect(const vcpm_context * ctx, char * buf, size_t buf_size) {
         "Supports ref audio: %s\n"
         "Supports streaming: %s\n"
         "\n"
+        "Denoiser:\n"
+        "  Requested:       %s\n"
+        "  Loaded:          %s\n"
+        "  Model:           %s\n"
+        "  Backend:         external Python ZipEnhancer; no native C backend\n"
+        "  Runtime gate:    --denoise returns VCPM_ERR_NOT_IMPLEMENTED until a native backend is added\n"
+        "\n"
         "Tensors: %d total\n",
         ctx->model_path ? ctx->model_path : "?",
         cfg->version,
@@ -659,6 +712,9 @@ int vcpm_inspect(const vcpm_context * ctx, char * buf, size_t buf_size) {
         ctx->tokenizer_loaded ? "yes" : "no",
         cfg->supports_reference_audio ? "yes" : "no",
         cfg->supports_streaming ? "yes" : "no",
+        ctx->denoiser_requested ? "yes" : "no",
+        ctx->denoiser_loaded ? "yes" : "no",
+        ctx->denoiser_model_path ? ctx->denoiser_model_path : "(none)",
         ctx->model->n_tensors);
 
     return off > 0 ? off : -1;
@@ -667,6 +723,7 @@ int vcpm_inspect(const vcpm_context * ctx, char * buf, size_t buf_size) {
 void vcpm_free(vcpm_context * ctx) {
     if (!ctx) return;
     free(ctx->model_path);
+    free(ctx->denoiser_model_path);
     vcpm_tokenizer_free(&ctx->tokenizer);
     if (ctx->model) vcpm_model_free(ctx->model);
     free(ctx);

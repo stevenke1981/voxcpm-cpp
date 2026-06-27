@@ -280,12 +280,15 @@ static int do_tts_common(int argc, char ** argv, int streaming) {
     const char * out_path     = NULL;
     const char * backend_str  = NULL;
     const char * text_file    = NULL;
+    const char * denoiser_model = NULL;
     int    threads    = 0;
     float  cfg        = 2.0f;
     int    steps      = 10;
     int    min_len    = 2;
     int    max_len    = 4096;
     int    use_pcm16  = 0;
+    int    denoise    = 0;
+    int    no_denoiser = 0;
 
     vcpm_arg_def args[] = {
         {"--model",   VCPM_ARG_STRING, &model_path,  "GGUF model file",      1, NULL},
@@ -298,7 +301,10 @@ static int do_tts_common(int argc, char ** argv, int streaming) {
         {"--max-len", VCPM_ARG_INT,    &max_len,      "Max generated patches",0, "4096"},
         {"--backend", VCPM_ARG_STRING, &backend_str,  "cpu/cuda/metal/vulkan",0, NULL},
         {"--threads", VCPM_ARG_INT,    &threads,      "CPU threads",          0, NULL},
-        {"--pcm16",   VCPM_ARG_FLAG,   &use_pcm16,    "16-bit PCM WAV output",0, NULL}
+        {"--pcm16",   VCPM_ARG_FLAG,   &use_pcm16,    "16-bit PCM WAV output",0, NULL},
+        {"--denoise", VCPM_ARG_FLAG,   &denoise,      "Denoise prompt/reference audio",0, NULL},
+        {"--no-denoiser", VCPM_ARG_FLAG, &no_denoiser, "Do not request ZipEnhancer",0, NULL},
+        {"--denoiser-model", VCPM_ARG_STRING, &denoiser_model, "ZipEnhancer model path or id",0, NULL}
     };
     int n_args = sizeof(args) / sizeof(args[0]);
 
@@ -338,6 +344,8 @@ static int do_tts_common(int argc, char ** argv, int streaming) {
 
     vcpm_model_params mp = vcpm_default_model_params();
     apply_model_params(&mp, backend_str, threads);
+    if (no_denoiser) mp.load_denoiser = 0;
+    if (denoiser_model) mp.denoiser_model_path = denoiser_model;
 
     vcpm_context * ctx = vcpm_load_model(model_path, &mp);
     if (!ctx || !vcpm_model_is_loaded(ctx)) {
@@ -354,6 +362,7 @@ static int do_tts_common(int argc, char ** argv, int streaming) {
     gp.min_len = min_len;
     gp.max_len = max_len;
     gp.streaming = streaming ? 1 : 0;
+    gp.denoise = denoise;
 
     printf("Generating: text=\"%s\"\n", text);
     printf("  cfg=%.1f steps=%d backend=%s threads=%d\n",
@@ -434,12 +443,15 @@ static int cmd_clone(int argc, char ** argv) {
     const char * ref_audio       = NULL;
     const char * out_path        = NULL;
     const char * backend_str     = NULL;
+    const char * denoiser_model  = NULL;
     int    threads      = 0;
     int    consent      = 0;
     float  cfg          = 2.0f;
     int    steps        = 10;
     int    max_len      = 4096;
     int    use_pcm16    = 0;
+    int    denoise      = 0;
+    int    no_denoiser  = 0;
 
     vcpm_arg_def args[] = {
         {"--model",           VCPM_ARG_STRING, &model_path,  "GGUF model file",         1, NULL},
@@ -452,7 +464,10 @@ static int cmd_clone(int argc, char ** argv) {
         {"--max-len",         VCPM_ARG_INT,    &max_len,      "Max generated patches",   0, "4096"},
         {"--backend",         VCPM_ARG_STRING, &backend_str,  "cpu/cuda/metal/vulkan",   0, NULL},
         {"--threads",         VCPM_ARG_INT,    &threads,      "CPU threads",             0, NULL},
-        {"--pcm16",           VCPM_ARG_FLAG,   &use_pcm16,    "16-bit PCM WAV output",   0, NULL}
+        {"--pcm16",           VCPM_ARG_FLAG,   &use_pcm16,    "16-bit PCM WAV output",   0, NULL},
+        {"--denoise",         VCPM_ARG_FLAG,   &denoise,      "Denoise reference audio",  0, NULL},
+        {"--no-denoiser",     VCPM_ARG_FLAG,   &no_denoiser,  "Do not request ZipEnhancer",0, NULL},
+        {"--denoiser-model",  VCPM_ARG_STRING, &denoiser_model, "ZipEnhancer model path or id",0, NULL}
     };
     int n_args = sizeof(args) / sizeof(args[0]);
 
@@ -479,6 +494,8 @@ static int cmd_clone(int argc, char ** argv) {
     /* ---- Load model ---- */
     vcpm_model_params mparams = vcpm_default_model_params();
     apply_model_params(&mparams, backend_str, threads);
+    if (no_denoiser) mparams.load_denoiser = 0;
+    if (denoiser_model) mparams.denoiser_model_path = denoiser_model;
 
     vcpm_context * ctx = vcpm_load_model(model_path, &mparams);
     if (!ctx || !vcpm_model_is_loaded(ctx)) {
@@ -495,6 +512,7 @@ static int cmd_clone(int argc, char ** argv) {
     gparams.cfg_value            = cfg;
     gparams.inference_steps      = steps;
     gparams.max_len              = max_len;
+    gparams.denoise              = denoise;
 
     struct vcpm_audio audio;
     vcpm_status st = vcpm_generate(ctx, &gparams, &audio);
@@ -691,6 +709,9 @@ static void usage(void) {
     puts("  --threads INT       CPU threads (default: 0 = auto)");
     puts("  --repeat INT        Benchmark repeat count (default: 3)");
     puts("  --pcm16             Write 16-bit PCM WAV instead of float");
+    puts("  --denoise           Denoise prompt/reference audio before generation");
+    puts("  --denoiser-model ID ZipEnhancer model path/id (default: iic/speech_zipenhancer_ans_multiloss_16k_base)");
+    puts("  --no-denoiser       Do not request the external ZipEnhancer denoiser");
     puts("");
     puts("Safety:");
     puts("  AI-generated speech must be disclosed where appropriate.");

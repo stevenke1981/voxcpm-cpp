@@ -97,3 +97,9 @@
 **Trigger:** CUDA TTS completed and wrote finite WAV, but deterministic CPU/CUDA/Python fixture comparison showed CUDA `base_lm_out` and `mu_init` were all zero while CPU was finite and close to Python.
 **Rule:** Treat CUDA runtime success as only a smoke gate. Before judging audio quality, compare the earliest prompt-eval dumps against CPU and Python; if CUDA produces zero tensors while text embedding and fixture noise match, isolate graph output residency/readback and Base LM CUDA op dispatch before changing CFM, VAE, or sampler code.
 **Source:** VoxCPM C/C++ CUDA Base LM prompt parity check
+
+---
+## Lesson #24 — 2026-06-27
+**Trigger:** Python VoxCPM defaults to `load_denoiser=True`, but the C runtime had no denoiser state and could silently skip ZipEnhancer prompt/reference preprocessing.
+**Rule:** Treat `load_denoiser=True` as an external ModelScope ZipEnhancer contract, not GGUF tensor loading. Until a native backend exists, expose requested/loaded status in inspect and fail `--denoise` explicitly instead of silently continuing.
+**Source:** VoxCPM C/C++ denoiser load contract

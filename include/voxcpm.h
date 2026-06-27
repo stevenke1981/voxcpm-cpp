@@ -8,6 +8,8 @@
 extern "C" {
 #endif
 
+#define VCPM_DEFAULT_DENOISER_MODEL "iic/speech_zipenhancer_ans_multiloss_16k_base"
+
 typedef enum vcpm_status {
     VCPM_OK = 0,
     VCPM_ERR_INVALID_ARG = 1,
@@ -33,6 +35,8 @@ typedef struct vcpm_model_params {
     int use_mmap;
     int use_mlock;
     int max_seq_len;
+    int load_denoiser;
+    const char * denoiser_model_path;
 } vcpm_model_params;
 
 typedef struct vcpm_generation_params {
@@ -47,6 +51,7 @@ typedef struct vcpm_generation_params {
     int max_len;
     int streaming;
     int consent_confirmed;
+    int denoise;
 } vcpm_generation_params;
 
 typedef struct vcpm_audio {
