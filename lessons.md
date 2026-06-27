@@ -91,3 +91,9 @@
 **Trigger:** Q8_0 quantized GGUF model produced 100% NaN in all pipeline stages. Binary search across 40 base_lm layers showed non-NaN when only `embed_tokens` was dequantized.
 **Rule:** When mixing quantized (Q8_0) and unquantized (F16) data in a GGUF, verify that every C-side read path matches the storage format. Tensors read via pointer cast (`(const ggml_fp16_t *)data`) must actually be F16 in the file — Q8_0 block data (34-byte blocks) cannot be reinterpreted as consecutive F16 values. The Q8_0 format is safe only for `ggml_mul_mat` which calls an explicit dequantization kernel.
 **Source:** VoxCPM C/C++ Q8_0 embed_tokens NaN fix
+
+---
+## Lesson #23 — 2026-06-27
+**Trigger:** CUDA TTS completed and wrote finite WAV, but deterministic CPU/CUDA/Python fixture comparison showed CUDA `base_lm_out` and `mu_init` were all zero while CPU was finite and close to Python.
+**Rule:** Treat CUDA runtime success as only a smoke gate. Before judging audio quality, compare the earliest prompt-eval dumps against CPU and Python; if CUDA produces zero tensors while text embedding and fixture noise match, isolate graph output residency/readback and Base LM CUDA op dispatch before changing CFM, VAE, or sampler code.
+**Source:** VoxCPM C/C++ CUDA Base LM prompt parity check

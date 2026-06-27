@@ -1,5 +1,6 @@
 # Build output
 build/
+build-cuda/
 cmake-build-*/
 .codebase-memory/
 *.obj
@@ -36,6 +37,7 @@ model_download/
 
 # Audio output
 *.wav
+runs/
 
 # Binary debug dumps
 c_*.f32

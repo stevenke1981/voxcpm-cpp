@@ -155,17 +155,18 @@
 - `vae_input`: NaN=0, valid=768
 - Audio output: NaN=0, Inf=0, valid=23040/23040, min=-0.71, max=0.72, rms=0.066
 
-**CUDA status**: Still crashes (access violation) with both full-dequant (4.0 GB) and minimal-fix (2.7 GB) models on 8 GB RTX 3060 Ti. Likely `ggml_cast` of Q8_0→F32 unimplemented on CUDA for Q8_0 source tensors used in RMSNorm fusion. F16→F32 cast (for dequantized norms) may also be problematic in the compute graph buffer allocation phase.
+**CUDA status**: CUDA no longer crashes for the Q8_0 minimal-fix model. On RTX 3060 Ti 8 GB, `--backend cuda` initializes ggml CUDA, offloads 814 tensors (5269.44 MB), executes generation, and writes finite WAV. Numeric parity is still failing: with deterministic CFM fixture noise, CUDA `base_lm_out` and `mu_init` dumps are all zero while the CPU control path is non-zero and close to Python. The next fix is the Base LM prompt graph output/readback/offload path, before debugging CFM/VAE audio quality.
 
 ### Remaining items
 
 1. **[HIGH] Verify C output against Python reference** — Minimal fix model produces valid audio on CPU. Next step: compare dumped C tensors (`text_embed`, `mu_init`, per-step CFM trajectories, final audio) against Python fixtures with matching text+seed. See `tools/compare_fixtures.py`.
 
-2. **[MED] CUDA backend** — Both full-dequant (4.0 GB) and minimal-fix (2.7 GB) crash on 8 GB RTX 3060 Ti:
-   - Root cause likely: `ggml_cast` of Q8_0→F32 unhandled on CUDA for RMSNorm fusion, or VRAM exhaustion (~5.3 GB weights + compute graph buffers > 8 GB).
-   - Since most weight tensors stay Q8_0, the `ggml_mul_mat` dispatch on CUDA should work — the issue is in the few cast ops for RMSNorm weight fusion and sr_cond dequant.
-   - Option A: Implement F16 RMSNorm path (skip `ggml_cast` when weight is already F16).
-   - Option B: Use `--backend cpu` (works, 2-5 min for 2.6s audio).
+2. **[HIGH] CUDA Base LM prompt parity** — CUDA now runs end-to-end, but deterministic parity shows the first CUDA-specific failure at prompt eval:
+   - CPU vs Python: `base_lm_out` cosine about `0.9565`, `mu_init` cosine about `0.9934`.
+   - CUDA vs Python: `base_lm_out` and `mu_init` are all zero.
+   - CPU vs CUDA: `text_embed` and fixture noise match exactly, so the mismatch is not tokenization or CFM random state.
+   - Isolation status: `test_prompt_cuda_probe` now runs only `gen_forward_text()` and confirms the same failure before RALM/CFM/VAE. CPU prompt RMS is `2.227537`; CUDA prompt RMS is `0.000000` with `8192/8192` zero values.
+   - Next action: verify graph output tensor residency/readback after compute, then inspect Q8_0/F16 op dispatch only if the output tensor is actually computed.
 
 3. **[MED] Verify stop predictor against Python** — Compare `step*_stop_logits.npy` from Python fixture vs C `gen_predict_stop` output. Early stopping could truncate audio.
 
@@ -185,14 +186,12 @@
 - [x] CUDA GPU backend with weight offload (`ggml-cuda`, commit c258207).
 - [x] `voxcpm-c bench` command with RTF measurement.
 - [x] Q8_0 quantization (45% size reduction, 2.44 GB).
-- [ ] **Fix CUDA backend** — Q8_0 minimal fix model (2.7 GB) crashes on 8 GB RTX 3060 Ti:
-  - Weights load fine (5.27 GB → CUDA), crash occurs during first compute graph init.
-  - Likely `ggml_cast` of Q8_0→F32 unhandled on CUDA for RMSNorm weight fusion, or VRAM exhaustion.
-  - The F16/temp buffer allocator in ggml-cuda may also fault when graph has mixed Q8_0/F16 ops.
-  - See section 11b for current status.
-- [ ] **GPU acceleration gap** — Current CUDA path crashes (access violation) for all model variants (full-f16, full-dequant, minimal-dequant). No `tts` run succeeds on RTX 3060 Ti 8 GB.
-
-  See section 11b for the current blocker analysis.
+- [x] **CUDA backend smoke** — Q8_0 minimal-fix model now runs with `--backend cuda` on RTX 3060 Ti 8 GB, initializes CUDA, offloads weights, and writes finite WAV.
+- [ ] **Fix CUDA Base LM prompt parity** — CUDA `base_lm_out`/`mu_init` dumps are zero while CPU controls are finite and close to Python with the same text and fixture noise.
+  - Isolation probe: `build-cuda\test_prompt_cuda_probe.exe voxcpm2_v2_q8_0_minimal_fix.gguf "Hello world."` reproduces the failure with only Base LM prompt eval.
+  - Verify whether the prompt output tensor is left on device without correct CPU readback, or whether the CUDA graph really computes zeros.
+  - If readback is correct, inspect CUDA support for the exact Q8_0/F16/F32 ops used in Base LM prompt eval.
+  - Do not tune CFM/VAE audio quality until this first CUDA mismatch is resolved.
 - [ ] Add CPU thread setting (`--threads N`).
 - [ ] Reuse KV cache across generations.
 - [ ] Compare RTF: CPU vs CUDA vs Q8_0-CUDA.
@@ -236,11 +235,11 @@
 ## 16. 給 Codex 的優先級建議
 
 ### P0 (這週做)
-1. **跑 `compare_dumps.py`** 用相同 text "Hello world." 比對 C vs Python latent。這是診斷音質的關鍵。
-2. **修 CUDA OOM** — 用 Q8_0 模型跑 GPU，或實作 partial offload。
+1. **修 CUDA Base LM prompt readback/compute** — `test_prompt_cuda_probe` 已確認只跑 Base LM prompt graph 就會 CUDA all-zero；先判斷是 readback 問題還是 graph compute 問題。
+2. **跑逐層 Base LM CUDA fixture** — 固定 text `"Hello world."`，逐層 dump 第一個 non-zero/zero 差異。
 
 ### P1 (做完 P0 後)
-3. **CFM 完整 trajectory parity** — 需要 deterministic 的 noise seed 來逐 step 比對 velocity。
+3. **CFM 完整 trajectory parity** — deterministic noise 已可載入；等 Base LM CUDA prompt parity 修好後，再逐 step 比對 velocity。
 4. **Stop predictor parity** — 比對 C vs Python stop logits。
 
 ### P2

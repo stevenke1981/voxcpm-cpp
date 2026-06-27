@@ -370,3 +370,87 @@
 3. **Stop predictor firing**: Verified firing; still needs comparison against Python `step*_stop_logits.npy`.
 4. **CFM trajectory parity**: Only structural verification; full CFM trajectory parity pending.
 5. **generate.c splitting (R3)**: ✅ Done - 1731-line file split into 5 focused modules (avg ~320 lines).
+
+## CUDA / Python Parity Check (2026-06-27)
+
+### Goal
+
+Verify that CUDA is usable for `voxcpm-c`, then compare the C generation path against Python fixtures using deterministic CFM fixture noise.
+
+### Environment
+
+- GPU: NVIDIA GeForce RTX 3060 Ti, 8 GB VRAM.
+- Driver/runtime: `nvidia-smi` reports driver 595.97 and CUDA runtime 13.2.
+- Toolkit: `nvcc --version` reports CUDA 12.6 V12.6.20.
+- Build system: CMake 4.3.2 + Ninja + MSVC 19.50 from Visual Studio 2026.
+- CUDA configure note: CUDA 12.6 rejects the VS 2026 compiler by default, so the CUDA build uses `-DCMAKE_CUDA_FLAGS=-allow-unsupported-compiler`.
+
+### Commands / Artifacts
+
+- CUDA build tree: `build-cuda`, configured with `-DVCPM_ENABLE_CUDA=ON`.
+- CUDA smoke output: `runs/cuda-parity-20260627-q8-steps10-fixturenoise/cuda_parity.wav`.
+- CPU control output: `runs/cpu-parity-20260627-q8-steps10-fixturenoise/cpu_parity.wav`.
+- Both parity runs used:
+  - model: `voxcpm2_v2_q8_0_minimal_fix.gguf`
+  - text: `Hello world.`
+  - backend: `cpu` vs `cuda`
+  - steps: `10`
+  - min/max length: `1`
+  - `VCPM_DEBUG_SHAPES=1`
+  - `VCPM_CFM_FIXTURE_DIR=E:\voxcpm-cpp\fixtures\ref`
+
+### Acceptance Evidence
+
+| Gate | Status | Evidence |
+|------|--------|----------|
+| CUDA hardware visible | PASS | `nvidia-smi` sees RTX 3060 Ti; `nvcc` reports CUDA 12.6 |
+| CUDA build | PASS | `build-cuda\voxcpm-c.exe`, `test_cfm_parity.exe`, `test_latent_parity.exe`, `test_vae_reference.exe`, and unit test executables build successfully |
+| CUDA runtime init | PASS | `ggml_cuda_init` finds 1 CUDA device; `vcpm_backend` initializes CUDA; generation exits 0 |
+| GPU offload | PASS | CUDA run offloads 814 tensors / 5269.44 MB to backend and executes CUDA graph compute |
+| CUDA WAV generation | PASS | CUDA run writes finite 48 kHz mono WAV (`15404` bytes), NaN=0/Inf=0 |
+| Unit tests | PASS | 7/7 `unit` label CTest tests pass in `build-cuda` |
+| Model tests | PASS with path caveat | `ctest` model entries fail from `build-cuda` because `voxcpm2_v2_full.gguf` is resolved relative to the build dir; manual root invocations of `test_tokenizer_parity.exe voxcpm2_v2_full.gguf` and `test_cfm_parity.exe voxcpm2_v2_full.gguf fixtures\ref` pass |
+| C/Python text embedding parity | PASS | CPU and CUDA `text_embed` both match Python at cosine about `0.999981` |
+| C/Python fixture noise parity | PASS | CPU and CUDA `step_noise` and `traj_d0000` match Python exactly when `VCPM_CFM_FIXTURE_DIR` is set |
+| CUDA Base LM prompt parity | FAIL | CUDA `base_lm_out` and `mu_init` dumps are all zero; CPU controls are non-zero and close to Python (`base_lm_out` cosine about `0.9565`, `mu_init` cosine about `0.9934`) |
+| Full generated latent parity | FAIL | With deterministic noise, CPU and CUDA still diverge from Python after LocDiT/CFM; CUDA first diverges earlier at Base LM prompt output |
+
+### Diagnosis
+
+CUDA is now operational enough to run end-to-end TTS with the Q8_0 minimal-fix GGUF. This supersedes the previous "CUDA crashes during generation" status.
+
+The current blocker is numeric parity, not CUDA availability. With deterministic fixture noise, the first clear CUDA-specific mismatch appears before CFM and VAE: the CUDA `base_lm_out` and derived `mu_init` dumps are zero, while CPU produces finite non-zero tensors that are close to Python. Therefore the next CUDA investigation should focus on the Base LM prompt graph output/readback/offload path, not on WAV writing, random noise, VAE decode, or sampler scheduling.
+
+## Base LM CUDA Prompt Isolation (2026-06-27)
+
+### Change
+
+Added `test_prompt_cuda_probe`, a diagnostic executable that runs only `gen_forward_text()` for the zero-shot prompt tokens (`text + audio_start`) on CPU and CUDA. This excludes RALM, CFM, stop prediction, VAE decode, and WAV writing.
+
+The probe is built by CMake but intentionally not registered as a default CTest because it requires both CUDA and local model weights.
+
+### Verification Command
+
+```text
+build-cuda\test_prompt_cuda_probe.exe voxcpm2_v2_q8_0_minimal_fix.gguf "Hello world."
+```
+
+### Result
+
+| Metric | CPU | CUDA |
+|--------|-----|------|
+| Prompt tokens | 4 | 4 |
+| Shape | `[2048,4]` | `[2048,4]` |
+| RMS | `2.227537` | `0.000000` |
+| Zero count | `0/8192` | `8192/8192` |
+| Finite count | `8192/8192` | `8192/8192` |
+
+CPU vs CUDA cosine is `0.000000`, RMSE is `2.227537`, and the probe exits with:
+
+```text
+FAIL: CUDA Base LM prompt output is all zero
+```
+
+### Updated Diagnosis
+
+The CUDA parity blocker is isolated to the Base LM prompt graph itself. Since this probe does not build RALM/CFM/VAE graphs, those later stages are no longer suspects for the first CUDA zero-output failure. The next implementation step is to determine whether `ggml_backend_tensor_get()` is reading back zero from a valid CUDA output tensor, or whether the CUDA graph produced zero before readback.
