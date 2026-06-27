@@ -263,11 +263,33 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
         }
         for (int si = 0; si < GGML_MAX_SRC && t->src[si]; si++) {
             struct ggml_tensor * s = t->src[si];
-            if (!s->data || s->buffer) continue;
-            int dup = 0;
-            for (int j = 0; j < n_cpu; j++)
-                if (cpu_tensors[j] == s) { dup = 1; break; }
-            if (!dup) VCPM_ADD_CPU_TENSOR(s);
+            if (!s) continue;
+            /* Follow view_src chain to the root tensor, collect it as a leaf.
+             *
+             * KV cache tensors (k_cache / v_cache from kv_ctx) are only
+             * reachable through ggml_view_3d() — they are not direct graph
+             * sources. Without collecting them, the gallocr allocates GPU
+             * memory for the view source and modifies its ->data pointer.
+             * On subsequent compute calls, the stale ->data and ->buffer
+             * pointers cause the tensor to be skipped during leaf collection,
+             * and its CPU data is never copied to/from GPU — producing
+             * all-zero output.
+             */
+            struct ggml_tensor * root = s;
+            while (root->view_src) root = root->view_src;
+            if (root->data && !root->buffer) {
+                int dup = 0;
+                for (int j = 0; j < n_cpu; j++)
+                    if (cpu_tensors[j] == root) { dup = 1; break; }
+                if (!dup) VCPM_ADD_CPU_TENSOR(root);
+            }
+            /* Also collect the view itself if it has direct data */
+            if (s != root && s->data && !s->buffer) {
+                int dup = 0;
+                for (int j = 0; j < n_cpu; j++)
+                    if (cpu_tensors[j] == s) { dup = 1; break; }
+                if (!dup) VCPM_ADD_CPU_TENSOR(s);
+            }
         }
     }
     if (vcpm_debug_env()) {
@@ -392,6 +414,22 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
             free(p->data);
             free(p);
             p = next;
+        }
+    }
+
+    /* Clear GPU buffer references on KV cache tensors so they are treated as
+     * CPU-backed leaf tensors on the next compute call.
+     *
+     * The gallocr allocates GPU memory for view source tensors (k_cache/v_cache
+     * from kv_ctx) and sets their ->buffer field. Without this cleanup, the
+     * buffer pointer persists across compute calls. On the next call, new views
+     * inherit the stale buffer, bypass leaf collection (->buffer != NULL),
+     * and their CPU data is never copied to/from GPU — producing all-zero output.
+     */
+    if (be->kv_cache_ctx) {
+        for (struct ggml_tensor * t = ggml_get_first_tensor(be->kv_cache_ctx);
+             t != NULL; t = ggml_get_next_tensor(be->kv_cache_ctx, t)) {
+            t->buffer = NULL;
         }
     }
 

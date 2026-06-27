@@ -27,6 +27,7 @@ typedef struct vcpm_backend {
     int                         n_threads;
     int                         initialized;
     struct vcpm_cpu_copy *      cpu_copies; /* linked list of malloc'd CPU buffers */
+    struct ggml_context *       kv_cache_ctx; /* long-lived KV cache context (buffer cleared after compute) */
 } vcpm_backend;
 
 /* Initialize backend for given type */

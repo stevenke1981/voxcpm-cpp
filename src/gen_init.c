@@ -412,6 +412,7 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     };
     s->kv_ctx = ggml_init(kv_params);
     if (!s->kv_ctx) { free(s); return NULL; }
+    s->backend.kv_cache_ctx = s->kv_ctx;
 
     size_t step_mem_actual = 256ULL * 1024 * 1024;
     s->step_mem_size = step_mem_actual;
