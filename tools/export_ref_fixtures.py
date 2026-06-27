@@ -337,6 +337,7 @@ def _patch_cfm_sampler(cfm_module):
             for step in range(1, len(t_span)):
                 if use_cfg_zero_star and step <= zero_init_steps:
                     dphi_dt = torch.zeros_like(x)
+                    _dump_tensor(f"ar{ar_step:04d}_d{step:04d}_cfm_velocity_blend", dphi_dt)
                 else:
                     x_in = torch.zeros([2 * b, self.in_channels, x.size(2)],
                                        device=x.device, dtype=x.dtype)
@@ -355,6 +356,8 @@ def _patch_cfm_sampler(cfm_module):
 
                     dphi_dt = self.estimator(x_in, mu_in, t_in, cond_in, dt_in)
                     dphi_dt, cfg_dphi_dt = torch.split(dphi_dt, [x.size(0), x.size(0)], dim=0)
+                    _dump_tensor(f"ar{ar_step:04d}_d{step:04d}_cfm_velocity_cond", dphi_dt)
+                    _dump_tensor(f"ar{ar_step:04d}_d{step:04d}_cfm_velocity_uncond", cfg_dphi_dt)
 
                     if use_cfg_zero_star:
                         positive_flat = dphi_dt.view(b, -1)
@@ -365,6 +368,7 @@ def _patch_cfm_sampler(cfm_module):
                         st_star = 1.0
 
                     dphi_dt = cfg_dphi_dt * st_star + cfg_value * (dphi_dt - cfg_dphi_dt * st_star)
+                    _dump_tensor(f"ar{ar_step:04d}_d{step:04d}_cfm_velocity_blend", dphi_dt)
 
                 x = x - dt * dphi_dt
                 t = t - dt

@@ -187,6 +187,27 @@ static void vcpm_cfm_dump_traj_state(int ar_step,
     vcpm_dump_tensor(label, x_data, latent_dim, patch_size, 0);
 }
 
+static void vcpm_cfm_dump_velocity(const char * kind,
+                                    int ar_step,
+                                    int diff_step,
+                                    const float * velocity,
+                                    int latent_dim,
+                                    int patch_size) {
+    if (!vcpm_debug_shapes_env()) return;
+    if (!kind || !velocity) return;
+    char label[96];
+    snprintf(label, sizeof(label), "cfm_velocity_%s_%04d_%04d",
+             kind, ar_step, diff_step);
+    vcpm_dump_tensor(label, velocity, latent_dim, patch_size, 0);
+}
+
+static void vcpm_cfm_negate(float * data, int n) {
+    if (!data || n <= 0) return;
+    for (int i = 0; i < n; ++i) {
+        data[i] = -data[i];
+    }
+}
+
 /* ---- Build feat_encoder(prev_patch) → enc_to_lm_proj audio embedding ---- */
 static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
                                                     struct ggml_context * ctx,
@@ -474,6 +495,14 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
         const float step_size = -(t - next_t);
 
         if (step < zero_star_steps) {
+            if (vcpm_debug_shapes_env()) {
+                float * zero_vel = (float *)calloc((size_t)total_patch_dim, sizeof(float));
+                if (zero_vel) {
+                    vcpm_cfm_dump_velocity("blend", ar_step_counter, step + 1,
+                                           zero_vel, latent_dim, patch_size);
+                    free(zero_vel);
+                }
+            }
             vcpm_cfm_dump_traj_state(ar_step_counter, step + 1,
                                       x_data, latent_dim, patch_size);
             continue;
@@ -567,9 +596,17 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             float * cond_data = (float *)(v_cond->data ? v_cond->data : NULL);
             float * uncond_data = (float *)(v_uncond->data ? v_uncond->data : NULL);
             if (cond_data && uncond_data) {
+                vcpm_cfm_negate(cond_data, total_patch_dim);
+                vcpm_cfm_negate(uncond_data, total_patch_dim);
+                vcpm_cfm_dump_velocity("cond", ar_step_counter, step + 1,
+                                       cond_data, latent_dim, patch_size);
+                vcpm_cfm_dump_velocity("uncond", ar_step_counter, step + 1,
+                                       uncond_data, latent_dim, patch_size);
                 vcpm_cfm_apply_cfg_zero_star(uncond_data, cond_data,
                                              total_patch_dim, cfg_value);
                 float * vel = uncond_data;
+                vcpm_cfm_dump_velocity("blend", ar_step_counter, step + 1,
+                                       vel, latent_dim, patch_size);
                 for (int j = 0; j < total_patch_dim; j++) {
                     x_data[j] = x_data[j] + step_size * vel[j];
                 }
@@ -587,6 +624,11 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
 
             if (velocity->data) {
                 float * vel = (float *)velocity->data;
+                vcpm_cfm_negate(vel, total_patch_dim);
+                vcpm_cfm_dump_velocity("cond", ar_step_counter, step + 1,
+                                       vel, latent_dim, patch_size);
+                vcpm_cfm_dump_velocity("blend", ar_step_counter, step + 1,
+                                       vel, latent_dim, patch_size);
                 for (int j = 0; j < total_patch_dim; j++) {
                     x_data[j] = x_data[j] + step_size * vel[j];
                 }

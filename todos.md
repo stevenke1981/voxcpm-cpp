@@ -170,7 +170,14 @@ C generates 2.6s audio with RMS=0.169, range [-0.97, 0.98], no NaN/Inf. **Sounds
      Verified with `.codex/ref-fixtures-trajectory` and `.codex/run-dumps/cfm-trajectory-fixture-noise`:
      AR0/AR1 initial noise and d0000/d0001 zero-star states match exactly; later trajectory states drift
      progressively, so the remaining blocker is LocDiT velocity / CFG blend numeric parity rather than initial noise.
-     Next slice: dump and compare per-step conditioned/unconditioned velocity before Euler integration.
+   - 2026-06-27 update: Python and C debug dumps now compare per-step LocDiT velocities:
+     `cfm_velocity_cond`, `cfm_velocity_uncond`, and `cfm_velocity_blend`.
+     With deterministic fixture noise, the first non-zero AR0 velocity was strongly anti-correlated
+     before sign normalization (`blend` cos=-0.9414, `cond` cos=-0.9562, `uncond` cos=-0.9472).
+     The C sampler now normalizes LocDiT velocity sign before CFG-Zero* blending/integration; AR0 d0002
+     flips to positive high similarity (`blend` cos=0.9414, `cond` cos=0.9562, `uncond` cos=0.9472).
+     Final CFM output is still not parity (`step_pred_feat_0000` cos≈0.8444), so the next blocker is
+     LocDiT velocity magnitude/internal numeric drift and CFG blend details after sign alignment.
 
 3. **[MED] Verify stop predictor against Python** — Compare `step*_stop_logits.npy` from Python fixture vs C `gen_predict_stop` output. Early stopping could truncate audio.
 

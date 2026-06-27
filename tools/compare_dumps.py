@@ -108,6 +108,7 @@ def reshape_c_to_py(dump_name, c_data, c_shape, py_data, py_shape):
             dump_name.startswith("dump_step_noise_") or
             dump_name.startswith("dump_step_pred_feat_") or
             dump_name.startswith("dump_post_cfm_feat_") or
+            dump_name.startswith("dump_cfm_velocity_") or
             dump_name.startswith("dump_cfm_traj_state_")):
         # C: [latent_dim, patch_size] = [64, 4]
         # Py: [1, 4, 64] or [1, patch_size, latent_dim]
@@ -207,6 +208,11 @@ def find_cfm_noise_fixture(fixtures_dir, ar_step):
 
 def find_cfm_traj_fixture(fixtures_dir, ar_step, diff_step):
     fpath = os.path.join(fixtures_dir, f"ar{ar_step:04d}_d{diff_step:04d}_cfm_traj_state.npy")
+    return fpath if os.path.exists(fpath) else None
+
+
+def find_cfm_velocity_fixture(fixtures_dir, kind, ar_step, diff_step):
+    fpath = os.path.join(fixtures_dir, f"ar{ar_step:04d}_d{diff_step:04d}_cfm_velocity_{kind}.npy")
     return fpath if os.path.exists(fpath) else None
 
 
@@ -337,7 +343,7 @@ def main():
     # Compare step-specific dumps
     dump_by_step = {}
     for d in all_dumps:
-        if d.startswith("dump_cfm_traj_state_"):
+        if d.startswith("dump_cfm_traj_state_") or d.startswith("dump_cfm_velocity_"):
             continue
         m = re.match(r"dump_(.+)_(\d{4})\.bin", d)
         if m:
@@ -439,6 +445,40 @@ def main():
         fixture_path = find_cfm_traj_fixture(args.fixtures_dir, ar_step, diff_step)
         if fixture_path is None:
             print(f"\n--- {dump_name}: No matching ar{ar_step:04d}_d{diff_step:04d}_cfm_traj_state.npy fixture ---")
+            continue
+
+        try:
+            c_data, c_shape = load_bin(dump_path)
+        except Exception as e:
+            print(f"\n--- {dump_name}: ERROR loading: {e} ---")
+            continue
+
+        py_data = load_npy(fixture_path)
+        fixture_name = os.path.basename(fixture_path)
+        c_compare, py_compare = reshape_c_to_py(dump_name, c_data, c_shape, py_data, py_data.shape)
+        matched = compare_one(f"{dump_name} vs {fixture_name}",
+                              c_compare, c_shape,
+                              py_compare, py_data.shape)
+        results.append((dump_name, fixture_name, matched))
+
+    # Compare CFM velocity dumps with Python arXXXX_dYYYY_cfm_velocity_KIND.npy.
+    velocity_dumps = []
+    for d in all_dumps:
+        m = re.match(r"dump_cfm_velocity_(cond|uncond|blend)_(\d{4})_(\d{4})\.bin", d)
+        if m:
+            velocity_dumps.append((m.group(1), int(m.group(2)), int(m.group(3)), d))
+
+    if velocity_dumps:
+        print(f"\n{'='*60}")
+        print("CFM VELOCITY COMPARISONS")
+        print(f"{'='*60}")
+        print(f"Found {len(velocity_dumps)} CFM velocity dumps")
+
+    for kind, ar_step, diff_step, dump_name in sorted(velocity_dumps):
+        dump_path = os.path.join(args.dump_dir, dump_name)
+        fixture_path = find_cfm_velocity_fixture(args.fixtures_dir, kind, ar_step, diff_step)
+        if fixture_path is None:
+            print(f"\n--- {dump_name}: No matching ar{ar_step:04d}_d{diff_step:04d}_cfm_velocity_{kind}.npy fixture ---")
             continue
 
         try:

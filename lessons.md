@@ -73,3 +73,9 @@
 **Trigger:** Deterministic CFM fixture noise matched Python exactly, but trajectory drift began after the first non-zero estimator update.
 **Rule:** When CFM final latents diverge, first force the same initial noise and dump every diffusion state; if d0000/d0001 match but later states drift, debug LocDiT conditioned/unconditioned velocity and CFG blend before changing sampler scheduling again.
 **Source:** VoxCPM C/C++ deterministic CFM trajectory parity
+
+---
+## Lesson #20 — 2026-06-27
+**Trigger:** LocDiT conditioned/unconditioned/blended velocity comparisons were strongly anti-correlated with Python after deterministic noise and zero-star states already matched.
+**Rule:** Before changing the CFM sampler again, compare conditioned, unconditioned, and blended velocity tensors; if all non-zero velocity dumps have strong negative cosine while zero-star/noise match exactly, normalize the LocDiT velocity sign convention first.
+**Source:** VoxCPM C/C++ LocDiT velocity sign parity
