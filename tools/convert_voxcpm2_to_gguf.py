@@ -220,6 +220,8 @@ def write_gguf_metadata(writer: gguf.GGUFWriter, cfg: dict):
     writer.add_int32("voxcpm.feat_dim", value_from_config(cfg, "feat_dim"))
     writer.add_int32("voxcpm.latent_dim", value_from_config(cfg,
                       "scalar_quantization_latent_dim", "vae_latent_dim"))
+    writer.add_float32("voxcpm.fsq_quant_scale", float(value_from_config(
+                       cfg, "scalar_quantization_scale", default=9)))
     writer.add_int32("voxcpm.max_length", value_from_config(cfg, "max_length", "lm_max_position_embeddings"))
     writer.add_int32("voxcpm.sample_rate", value_from_config(cfg,
                       "vae_out_sample_rate", "vae_sample_rate"))
@@ -249,6 +251,7 @@ def write_gguf_metadata(writer: gguf.GGUFWriter, cfg: dict):
     writer.add_int32("voxcpm.rope_theta", value_from_config(cfg, "lm_rope_theta"))
     writer.add_int32("voxcpm.max_seq_len", value_from_config(cfg,
                       "lm_max_position_embeddings", "max_length"))
+    writer.add_bool("voxcpm.use_mup", bool(cfg.get("lm_use_mup", False)))
     writer.add_float32("voxcpm.scale_depth",
                        float(cfg.get("lm_scale_depth", 0.0)))
 

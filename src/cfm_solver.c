@@ -22,6 +22,52 @@
 
 /* ---- Memory helpers ---- */
 
+void vcpm_cfm_dim_major_to_patch_major(float * dst,
+                                        const float * src,
+                                        int feature_dim,
+                                        int patch_size) {
+    if (!dst || !src || feature_dim <= 0 || patch_size <= 0) return;
+    for (int p = 0; p < patch_size; ++p) {
+        for (int d = 0; d < feature_dim; ++d) {
+            dst[p * feature_dim + d] = src[d * patch_size + p];
+        }
+    }
+}
+
+void vcpm_cfm_patch_major_to_dim_major(float * dst,
+                                        const float * src,
+                                        int feature_dim,
+                                        int patch_size) {
+    if (!dst || !src || feature_dim <= 0 || patch_size <= 0) return;
+    for (int d = 0; d < feature_dim; ++d) {
+        for (int p = 0; p < patch_size; ++p) {
+            dst[d * patch_size + p] = src[p * feature_dim + d];
+        }
+    }
+}
+
+float vcpm_cfm_cfg_zero_star(float * negative,
+                              const float * positive,
+                              int n,
+                              float cfg_value) {
+    if (!negative || !positive || n <= 0) return 1.0f;
+
+    double dot = 0.0;
+    double squared_norm = 0.0;
+    for (int i = 0; i < n; ++i) {
+        dot += (double)positive[i] * (double)negative[i];
+        squared_norm += (double)negative[i] * (double)negative[i];
+    }
+
+    const float st_star = (float)(dot / (squared_norm + 1.0e-8));
+    for (int i = 0; i < n; ++i) {
+        const float negative_scaled = negative[i] * st_star;
+        negative[i] = negative_scaled +
+                      cfg_value * (positive[i] - negative_scaled);
+    }
+    return st_star;
+}
+
 /* Copy tensor data from src to dst (same shape, both allocated) */
 static void tensor_copy(struct ggml_tensor * dst, const struct ggml_tensor * src) {
     size_t nbytes = ggml_nbytes(src);

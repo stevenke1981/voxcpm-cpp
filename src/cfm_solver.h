@@ -42,6 +42,33 @@ static inline vcpm_cfm_solver_config vcpm_cfm_solver_config_default(void) {
 }
 
 /*
+ * Convert a flat [feature_dim, patch_size] (dimension-major) CFM buffer
+ * to ggml's contiguous [feature_dim, patch_size] storage (patch-major).
+ */
+void vcpm_cfm_dim_major_to_patch_major(
+    float * dst,
+    const float * src,
+    int feature_dim,
+    int patch_size);
+
+/* Inverse of vcpm_cfm_dim_major_to_patch_major(). */
+void vcpm_cfm_patch_major_to_dim_major(
+    float * dst,
+    const float * src,
+    int feature_dim,
+    int patch_size);
+
+/*
+ * Apply upstream CFG-Zero* optimized scaling in place to the negative
+ * velocity and return st_star.
+ */
+float vcpm_cfm_cfg_zero_star(
+    float * negative,
+    const float * positive,
+    int n,
+    float cfg_value);
+
+/*
  * Velocity function pointer.
  * Implemented by the caller to compute v_theta(x_t, t, cond).
  *

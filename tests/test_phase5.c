@@ -121,6 +121,34 @@ static void test_fsq_identity(void) {
     ggml_free(ctx);
 }
 
+static void test_fsq_voxcpm2_quantize(void) {
+    struct ggml_init_params params = {
+        .mem_size   = 1024 * 1024,
+        .mem_buffer = NULL,
+        .no_alloc   = false,
+    };
+    struct ggml_context * ctx = ggml_init(params);
+    TEST_ASSERT(ctx != NULL, "fsq_voxcpm2 ggml_init");
+
+    struct ggml_tensor * x = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4);
+    float data[] = { 0.0f, 0.2f, -0.2f, 3.0f };
+    memcpy(x->data, data, sizeof(data));
+
+    struct ggml_tensor * out = vcpm_fsq_quantize(ctx, x, 9.0f);
+    struct ggml_cgraph * graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(graph, out);
+    int ret = ggml_graph_compute_with_ctx(ctx, graph, 1);
+    TEST_ASSERT(ret == 0, "fsq_voxcpm2 compute");
+
+    const float expected[] = { 0.0f, 2.0f / 9.0f, -2.0f / 9.0f, 1.0f };
+    for (int i = 0; i < 4; i++) {
+        ASSERT_NEAR(ggml_get_f32_1d(out, i), expected[i], 1e-5f,
+                    "fsq_voxcpm2 output");
+    }
+
+    ggml_free(ctx);
+}
+
 static void test_fsq_scale_only(void) {
     struct ggml_init_params params = {
         .mem_size   = 1024 * 1024,
@@ -269,6 +297,7 @@ int main(void) {
 
     printf("\n--- FSQ ---\n");
     test_fsq_identity();
+    test_fsq_voxcpm2_quantize();
     test_fsq_scale_only();
     test_fsq_scale_offset();
     test_fsq_graph_shape();

@@ -18,7 +18,7 @@ struct ggml_tensor;
  * Architecture:
  *   in_proj (Linear 64→1024, f16, +bias) → optional special_token add →
  *   N × bidirectional transformer blocks (same GQA pattern as MiniCPM4,
- *   but no_rope=1 since no positional info needed for single-patch encoding) →
+ *   with inherited MiniCPM4 RoPE and bidirectional attention) →
  *   RMSNorm → output [1024]
  *
  * GGUF tensor naming:

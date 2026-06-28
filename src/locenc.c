@@ -1,7 +1,7 @@
 /* LocEnc — Local Acoustic Feature Encoder (feat_encoder).
  *
  * Encodes a patch of 64-dim latent positions through a 12-layer bidirectional
- * transformer (hidden=1024, GQA, no RoPE) and outputs a 1024-dim
+ * transformer (hidden=1024, GQA, RoPE) and outputs a 1024-dim
  * hidden state used as the LM embedding for audio positions.
  *
  * Architecture matches Python VoxCPMLocEnc:
@@ -81,8 +81,9 @@ struct ggml_tensor * vcpm_locenc_forward(struct ggml_context * ctx,
     }
     ggml_set_name(h, "fe_pre_transformer");
 
-    /* ---- Step 3: Transformer layers (no_rope=1, no_causal=1 bidirectional) ----
+    /* ---- Step 3: Transformer layers (RoPE enabled, bidirectional) ----
      * Python uses is_causal=False (bidirectional).
+     * Its encoder config inherits lm_config.no_rope=false.
      * Each layer processes all seq_len tokens in parallel through
      * self-attention + SwiGLU MLP. */
     for (int i = 0; i < cfg->n_layers; i++) {
@@ -103,9 +104,9 @@ struct ggml_tensor * vcpm_locenc_forward(struct ggml_context * ctx,
                                  &w->layer_weights[i], &cache_unit,
                                  cfg->n_heads, cfg->n_kv_heads,
                                  cfg->head_dim,
-                                 0,        /* pos = 0 (unused with no_rope=1) */
-                                 0,        /* rope_theta = 0 (unused) */
-                                 1,        /* no_rope = 1 — no positional encoding */
+                                 0,        /* positions start at zero */
+                                 10000,    /* upstream MiniCPM4 rope_theta */
+                                 0,        /* no_rope = 0 */
                                  1,        /* no_causal = 1 — BIDIRECTIONAL attention */
                                  1.0f,     /* scale = 1.0 (no DeepNorm for feat_encoder) */
                                  cfg->rms_norm_eps);

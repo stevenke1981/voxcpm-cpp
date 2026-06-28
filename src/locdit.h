@@ -115,7 +115,7 @@ struct ggml_tensor * vcpm_time_mlp_forward(struct ggml_context * ctx,
  *   6. Concatenate: [mu(2, hidden), t(1, hidden), cond(P, hidden), x(P, hidden)]
  *      → total seq_len = 3 + 2*P, hidden_size
  *   7. Transpose → [hidden_size, seq_len]
- *   8. N × DiT blocks (no_rope=1, non-causal)
+ *   8. N × DiT blocks (RoPE enabled, non-causal)
  *   9. Slice x-portion: last P tokens of seq
  *   10. RMSNorm + output_proj → [feat_dim, P]
  *

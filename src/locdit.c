@@ -111,6 +111,15 @@ static void locdit_debug_tensor_shape(const char * label, const struct ggml_tens
             label, t->ne[0], t->ne[1], t->ne[2], t->ne[3], ggml_type_name(t->type));
 }
 
+static float locdit_bf16_value(float value) {
+    return ggml_bf16_to_fp32(ggml_fp32_to_bf16(value));
+}
+
+static struct ggml_tensor * locdit_bf16_round(struct ggml_context * ctx,
+                                               struct ggml_tensor * x) {
+    return ggml_cast(ctx, ggml_cast(ctx, x, GGML_TYPE_BF16), GGML_TYPE_F32);
+}
+
 void vcpm_locdit_config_fill(vcpm_locdit_config * cfg,
                               int hidden_size, int n_layers,
                               int n_heads, int n_kv_heads,
@@ -140,9 +149,11 @@ struct ggml_tensor * vcpm_time_mlp_forward(struct ggml_context * ctx,
      * t_feat: [dim, 1]  (dim = 1024, sinusoidal embedding) */
     struct ggml_tensor * h = ggml_mul_mat(ctx, w1, t_feat);
     if (b1) h = ggml_add(ctx, h, ggml_cast(ctx, b1, GGML_TYPE_F32));
-    h = ggml_silu(ctx, h);
+    h = locdit_bf16_round(ctx, h);
+    h = locdit_bf16_round(ctx, ggml_silu(ctx, h));
     h = ggml_mul_mat(ctx, w2, h);
     if (b2) h = ggml_add(ctx, h, ggml_cast(ctx, b2, GGML_TYPE_F32));
+    h = locdit_bf16_round(ctx, h);
     ggml_set_name(h, "time_mlp_out");
     return h;
 }
@@ -158,16 +169,19 @@ static struct ggml_tensor * dit_sinusoidal_t_embed(struct ggml_context * ctx,
     float log_max_period = logf(10000.0f);
     float denom = (half_dim > 1) ? (float)(half_dim - 1) : 1.0f;
     for (int i = 0; i < half_dim; i++) {
-        freq_data[i] = 1000.0f * expf(-(float)i * log_max_period / denom);
+        float exponent = locdit_bf16_value(
+            locdit_bf16_value((float)i) * (-log_max_period / denom));
+        freq_data[i] = locdit_bf16_value(expf(exponent));
     }
     ggml_set_name(freqs, "dit_sin_freqs");
     locdit_debug_tensor_shape("locdit.sin.freqs", freqs);
     locdit_debug_tensor_shape("locdit.sin.t", t);
-    struct ggml_tensor * angles = ggml_mul(ctx, freqs, t);
+    struct ggml_tensor * scaled_t = locdit_bf16_round(ctx, ggml_scale(ctx, t, 1000.0f));
+    struct ggml_tensor * angles = locdit_bf16_round(ctx, ggml_mul(ctx, freqs, scaled_t));
     ggml_set_name(angles, "dit_sin_angles");
     locdit_debug_tensor_shape("locdit.sin.angles", angles);
-    struct ggml_tensor * sin_emb = ggml_sin(ctx, angles);
-    struct ggml_tensor * cos_emb = ggml_cos(ctx, angles);
+    struct ggml_tensor * sin_emb = locdit_bf16_round(ctx, ggml_sin(ctx, angles));
+    struct ggml_tensor * cos_emb = locdit_bf16_round(ctx, ggml_cos(ctx, angles));
     struct ggml_tensor * emb = ggml_concat(ctx, sin_emb, cos_emb, 0);
     ggml_set_name(emb, "dit_sin_embed");
     return emb;
@@ -218,6 +232,7 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
     if (w->input_proj_bias) {
         h_x = dit_add_bias_2d(ctx, h_x, w->input_proj_bias);
     }
+    h_x = locdit_bf16_round(ctx, h_x);
     ggml_set_name(h_x, "dit_x_proj");
     locdit_debug_capture("x_proj", h_x);
     locdit_debug_tensor_shape("locdit.x_proj", h_x);
@@ -231,6 +246,7 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
     if (w->cond_proj_bias) {
         h_c = dit_add_bias_2d(ctx, h_c, w->cond_proj_bias);
     }
+    h_c = locdit_bf16_round(ctx, h_c);
     ggml_set_name(h_c, "dit_cond_proj");
     locdit_debug_capture("cond_proj", h_c);
     locdit_debug_tensor_shape("locdit.cond_proj", h_c);
@@ -260,7 +276,7 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
     ggml_set_name(dt_feat, "dit_dt_feat");
     locdit_debug_capture("dt_feat", dt_feat);
 
-    struct ggml_tensor * t_combined = ggml_add(ctx, t_feat, dt_feat);
+    struct ggml_tensor * t_combined = locdit_bf16_round(ctx, ggml_add(ctx, t_feat, dt_feat));
     ggml_set_name(t_combined, "dit_t_combined");
     locdit_debug_capture("t_combined", t_combined);
     /* Transpose to [1, hidden] for concatenation */
@@ -298,7 +314,10 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
     struct ggml_tensor * h = ggml_cont(ctx, ggml_transpose(ctx, seq));
     int total_seq = (int)h->ne[1];
 
-    /* ---- Step 6: N x DiT blocks (no_rope=1, no_causal=1) ---- */
+    /* ---- Step 6: N x DiT blocks (RoPE enabled, non-causal) ----
+     * Upstream copies lm_config for the LocDiT decoder and only changes the
+     * dimensions/vocabulary. It does not set no_rope, so positional encoding
+     * remains enabled. */
     for (int i = 0; i < cfg->n_layers; i++) {
         vcpm_minicpm4_layer_weights lw;
         memset(&lw, 0, sizeof(lw));
@@ -332,9 +351,9 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
         h = vcpm_minicpm4_block(ctx, graph, h, &lw, &cache_unit,
                                  cfg->n_heads, cfg->n_kv_heads,
                                  cfg->head_dim,
-                                 0,        /* pos = 0 (unused with no_rope=1) */
-                                 0,        /* rope_theta = 0 (unused) */
-                                 1,        /* no_rope = 1 */
+                                 0,        /* positions start at zero */
+                                 10000,    /* upstream MiniCPM4 rope_theta */
+                                 0,        /* no_rope = 0 */
                                  1,        /* no_causal = 1 — bidirectional */
                                  1.0f,     /* scale = 1.0 (no DeepNorm for DiT) */
                                  cfg->rms_norm_eps);
@@ -373,6 +392,7 @@ struct ggml_tensor * vcpm_locdit_forward(struct ggml_context * ctx,
     if (w->output_proj_bias) {
         out = dit_add_bias_2d(ctx, out, w->output_proj_bias);
     }
+    out = locdit_bf16_round(ctx, out);
     ggml_set_name(out, "dit_output");
     locdit_debug_capture("output", out);
     locdit_debug_tensor_shape("locdit.output", out);

@@ -31,6 +31,40 @@ static void minicpm_debug_tensor_shape(const char * label, const struct ggml_ten
             label, t->ne[0], t->ne[1], t->ne[2], t->ne[3], ggml_type_name(t->type));
 }
 
+/*
+ * Upstream VoxCPM2 executes MiniCPM4/LocDiT with bfloat16 activations.
+ * ggml promotes the results of F16/BF16-weight matmuls to F32, so explicitly
+ * round at the same module boundaries before continuing the graph.
+ */
+static struct ggml_tensor * minicpm_bf16_round(struct ggml_context * ctx,
+                                                struct ggml_tensor * x) {
+    return ggml_cast(ctx, ggml_cast(ctx, x, GGML_TYPE_BF16), GGML_TYPE_F32);
+}
+
+/*
+ * MiniCPM4 LongRoPE short factors from the VoxCPM2 lm_config. All VoxCPM2
+ * transformer copies (base LM, local encoder, LocDiT) inherit this config.
+ * ggml consumes one factor per rotary pair and applies theta / factor.
+ */
+static const float g_voxcpm2_rope_short_factors[64] = {
+    0.9977997200f, 1.0146582960f, 1.0349680405f, 1.0594292461f,
+    1.0888815017f, 1.1243301355f, 1.1669771036f, 1.2182568067f,
+    1.2798772354f, 1.3538666752f, 1.4426259040f, 1.5489853360f,
+    1.6762658237f, 1.8283407612f, 2.0096956086f, 2.2254789275f,
+    2.4815363797f, 2.7844159346f, 3.1413289096f, 3.5600478448f,
+    4.0487193801f, 4.6155695421f, 5.2684819497f, 6.0144385919f,
+    6.8588300492f, 7.8046682500f, 8.8517684937f, 9.9960050583f,
+    11.2287664413f, 12.5367574692f, 13.9022579193f, 15.3038854599f,
+    16.7178382874f, 18.1194648743f, 19.4849643707f, 20.7929573059f,
+    22.0257186890f, 23.1699542999f, 24.2170543671f, 25.1628932953f,
+    26.0072841644f, 26.7532405853f, 27.4061527252f, 27.9730033875f,
+    28.4616756439f, 28.8803939819f, 29.2373065948f, 29.5401859283f,
+    29.7962436676f, 30.0120277405f, 30.1933822632f, 30.3454570770f,
+    30.4727382660f, 30.5790977478f, 30.6678562164f, 30.7418460846f,
+    30.8034667969f, 30.8547458649f, 30.8973922729f, 30.9328403473f,
+    30.9622936249f, 30.9867553711f, 31.0070648193f, 31.0239238739f,
+};
+
 /* ---- Config ---- */
 
 void vcpm_minicpm4_config_from_model(vcpm_minicpm4_config * cfg,
@@ -101,11 +135,13 @@ struct ggml_tensor * vcpm_rms_norm(struct ggml_context * ctx,
                                     float eps) {
     /* ggml_rms_norm: y = x / sqrt(mean(x^2) + eps) */
     struct ggml_tensor * y = ggml_rms_norm(ctx, x, eps);
+    y = minicpm_bf16_round(ctx, y);
     minicpm_debug_tensor_shape("minicpm.rms.x", x);
     minicpm_debug_tensor_shape("minicpm.rms.y", y);
     minicpm_debug_tensor_shape("minicpm.rms.weight", weight);
     /* Multiply by weight (cast to f32 if quantized) */
-    return ggml_mul(ctx, y, ggml_cast(ctx, weight, GGML_TYPE_F32));
+    y = ggml_mul(ctx, y, ggml_cast(ctx, weight, GGML_TYPE_F32));
+    return minicpm_bf16_round(ctx, y);
 }
 
 /* ---- Embedding ---- */
@@ -120,8 +156,9 @@ struct ggml_tensor * vcpm_embed(struct ggml_context * ctx,
 /* ---- RoPE ---- */
 
 void vcpm_rope(struct ggml_context * ctx, struct ggml_cgraph * graph,
-               struct ggml_tensor * q, struct ggml_tensor * k,
+               struct ggml_tensor ** q, struct ggml_tensor ** k,
                int32_t pos, int32_t n_tokens, int32_t head_dim, int32_t rope_theta) {
+    if (!q || !*q || !k || !*k) return;
     /* Create position IDs array: [pos, pos+1, ..., pos+n_tokens-1] */
     struct ggml_tensor * pos_tensor = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_tokens);
     if (pos_tensor && pos_tensor->data) {
@@ -135,6 +172,13 @@ void vcpm_rope(struct ggml_context * ctx, struct ggml_cgraph * graph,
     /* freq_base = rope_theta */
     /* freq_scale = 1.0f (no scaling) */
     float freq_scale = 1.0f;
+    struct ggml_tensor * freq_factors = NULL;
+    if (head_dim == 128) {
+        freq_factors = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 64);
+        memcpy(freq_factors->data, g_voxcpm2_rope_short_factors,
+               sizeof(g_voxcpm2_rope_short_factors));
+        ggml_set_name(freq_factors, "voxcpm2_rope_short_factors");
+    }
 
     /* For ggml_rope_ext, the input tensor should have shape [head_dim, n_head, n_tokens] */
     /* But our q,k are currently [n_tokens, hidden_size] => we need to reshape */
@@ -144,20 +188,22 @@ void vcpm_rope(struct ggml_context * ctx, struct ggml_cgraph * graph,
     GGML_UNUSED(ctx);
     GGML_UNUSED(graph);
 
-    /* Apply RoPE in-place */
+    /* ggml's "_inplace" form returns a new graph node that aliases the input
+     * storage. Keep that returned node in the caller's dependency chain;
+     * discarding it silently leaves Q/K unrotated. */
     /* ggml_rope_ext_inplace(q, pos, freq_factors, n_dims, mode, n_ctx_orig,
      *                       freq_base, freq_scale, ext_factor, attn_factor,
      *                       beta_fast, beta_slow) */
     /* mode = GGML_ROPE_TYPE_NEOX for Neox-style RoPE */
-    ggml_rope_ext_inplace(ctx, q, pos_tensor, NULL,
-                          head_dim, GGML_ROPE_TYPE_NEOX,
-                          0, (float)rope_theta, freq_scale,
-                          0.0f, 1.0f, 0.0f, 0.0f);
+    *q = ggml_rope_ext_inplace(ctx, *q, pos_tensor, freq_factors,
+                               head_dim, GGML_ROPE_TYPE_NEOX,
+                               0, (float)rope_theta, freq_scale,
+                               0.0f, 1.0f, 0.0f, 0.0f);
 
-    ggml_rope_ext_inplace(ctx, k, pos_tensor, NULL,
-                          head_dim, GGML_ROPE_TYPE_NEOX,
-                          0, (float)rope_theta, freq_scale,
-                          0.0f, 1.0f, 0.0f, 0.0f);
+    *k = ggml_rope_ext_inplace(ctx, *k, pos_tensor, freq_factors,
+                               head_dim, GGML_ROPE_TYPE_NEOX,
+                               0, (float)rope_theta, freq_scale,
+                               0.0f, 1.0f, 0.0f, 0.0f);
 }
 
 /* ---- Attention (GQA-correct) ---- */
@@ -206,12 +252,15 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
 
     /* Project Q, K, V */
     struct ggml_tensor * q = ggml_cont(ctx, ggml_mul_mat(ctx, q_w, x));
+    q = minicpm_bf16_round(ctx, q);
     ggml_set_name(q, "q");
 
     struct ggml_tensor * k = ggml_cont(ctx, ggml_mul_mat(ctx, k_w, x));
+    k = minicpm_bf16_round(ctx, k);
     ggml_set_name(k, "k");
 
     struct ggml_tensor * v = ggml_cont(ctx, ggml_mul_mat(ctx, v_w, x));
+    v = minicpm_bf16_round(ctx, v);
     ggml_set_name(v, "v");
 
     /* Reshape: [head_dim, n_{heads/kv_heads}, n_tokens] */
@@ -226,7 +275,8 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
 
     /* Apply RoPE to Q and K */
     if (!no_rope) {
-        vcpm_rope(ctx, graph, q_reshaped, k_reshaped, pos, (int32_t)n_tokens, head_dim, rope_theta);
+        vcpm_rope(ctx, graph, &q_reshaped, &k_reshaped,
+                  pos, (int32_t)n_tokens, head_dim, rope_theta);
     }
 
     /* Update KV cache */
@@ -347,6 +397,7 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
 
         /* Output projection: O_proj @ [head_dim * n_heads, 1] -> [hidden_size, 1] */
         struct ggml_tensor * out_t = ggml_mul_mat(ctx, o_w, group_out);
+        out_t = minicpm_bf16_round(ctx, out_t);
         char name[32];
         snprintf(name, sizeof(name), "out_t_%" PRId64, ti);
         ggml_set_name(out_t, name);
@@ -372,19 +423,24 @@ struct ggml_tensor * vcpm_mlp(struct ggml_context * ctx,
 
     /* SwiGLU: output = down_proj @ (silu(gate_proj @ x) * (up_proj @ x)) */
     struct ggml_tensor * gate = ggml_mul_mat(ctx, gate_w, x);
+    gate = minicpm_bf16_round(ctx, gate);
     ggml_set_name(gate, "mlp_gate");
     gate = ggml_silu(ctx, gate);
+    gate = minicpm_bf16_round(ctx, gate);
     ggml_set_name(gate, "mlp_gate_silu");
 
     struct ggml_tensor * up = ggml_mul_mat(ctx, up_w, x);
+    up = minicpm_bf16_round(ctx, up);
     ggml_set_name(up, "mlp_up");
 
     minicpm_debug_tensor_shape("minicpm.mlp.gate", gate);
     minicpm_debug_tensor_shape("minicpm.mlp.up", up);
     struct ggml_tensor * product = ggml_mul(ctx, gate, up);
+    product = minicpm_bf16_round(ctx, product);
     ggml_set_name(product, "mlp_product");
 
     struct ggml_tensor * out = ggml_mul_mat(ctx, down_w, product);
+    out = minicpm_bf16_round(ctx, out);
     ggml_set_name(out, "mlp_output");
 
     return out;
@@ -430,6 +486,7 @@ struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
         scaled_attn = attn_out;
     }
     struct ggml_tensor * x_after_attn = ggml_add(ctx, x, scaled_attn);
+    x_after_attn = minicpm_bf16_round(ctx, x_after_attn);
     ggml_set_name(x_after_attn, "block_after_attn");
 
     /* Post-attention RMSNorm */
@@ -452,6 +509,7 @@ struct ggml_tensor * vcpm_minicpm4_block(struct ggml_context * ctx,
         scaled_mlp = mlp_out;
     }
     struct ggml_tensor * out = ggml_add(ctx, x_after_attn, scaled_mlp);
+    out = minicpm_bf16_round(ctx, out);
     ggml_set_name(out, "block_output");
 
     return out;

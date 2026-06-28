@@ -21,6 +21,7 @@ typedef struct vcpm_model_config {
     int patch_size;
     int feat_dim;
     int latent_dim;
+    float fsq_quant_scale;
     int max_length;
     int sample_rate;
     int encode_sample_rate;
@@ -41,6 +42,7 @@ typedef struct vcpm_model_config {
     float rms_norm_eps;
     int rope_theta;
     int max_seq_len;
+    int use_mup;
     float scale_depth;       /* DeepNorm scale for base LM (e.g. 1.4), default 1.0 */
 
     /* Residual LM config */

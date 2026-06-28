@@ -190,11 +190,14 @@ if(VCPM_BUILD_TESTS)
     set_tests_properties(model_loader_tensors PROPERTIES LABELS "unit")
 
     # ---- Integration tests (require GGUF model file) ----
+    set(VCPM_MODEL_FIXTURE "$ENV{VCPM_MODEL}")
     add_executable(test_tokenizer_parity tests/test_tokenizer_parity.c)
     target_include_directories(test_tokenizer_parity PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_tokenizer_parity PRIVATE voxcpm)
-    add_test(NAME tokenizer_parity COMMAND test_tokenizer_parity voxcpm2_v2_full.gguf)
-    set_tests_properties(tokenizer_parity PROPERTIES LABELS "model")
+    if(VCPM_MODEL_FIXTURE)
+        add_test(NAME tokenizer_parity COMMAND test_tokenizer_parity "${VCPM_MODEL_FIXTURE}")
+        set_tests_properties(tokenizer_parity PROPERTIES LABELS "model")
+    endif()
 
     # CFM/DiT parity test (requires GGUF model + Python fixtures)
     add_executable(test_cfm_parity tests/test_cfm_parity.c)
@@ -202,8 +205,11 @@ if(VCPM_BUILD_TESTS)
         ${VCPM_TEST_PRIVATE_INCLUDES}
         ${ggml_SOURCE_DIR}/include)
     target_link_libraries(test_cfm_parity PRIVATE voxcpm)
-    add_test(NAME cfm_parity COMMAND test_cfm_parity voxcpm2_v2_full.gguf fixtures/ref)
-    set_tests_properties(cfm_parity PROPERTIES LABELS "model")
+    if(VCPM_MODEL_FIXTURE)
+        add_test(NAME cfm_parity COMMAND test_cfm_parity
+                 "${VCPM_MODEL_FIXTURE}" "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ref")
+        set_tests_properties(cfm_parity PROPERTIES LABELS "model")
+    endif()
 
     add_executable(test_vae_dump tests/test_vae_dump.c)
     target_include_directories(test_vae_dump PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES} ${ggml_SOURCE_DIR}/include)
@@ -249,7 +255,6 @@ if(VCPM_BUILD_TESTS)
     target_compile_definitions(debug_attention_dump PRIVATE
         FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_link_libraries(debug_attention_dump PRIVATE voxcpm)
-    set(VCPM_MODEL_FIXTURE "$ENV{VCPM_MODEL}")
     if(VCPM_MODEL_FIXTURE)
         add_test(NAME vae_only COMMAND test_vae_only "${VCPM_MODEL_FIXTURE}")
         set_tests_properties(vae_only PROPERTIES LABELS model)

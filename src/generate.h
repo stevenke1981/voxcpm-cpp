@@ -138,13 +138,14 @@ typedef struct vcpm_generate_state {
     vcpm_gen_cache_unit * base_kv_cache;  /* [n_base_layers] */
     vcpm_gen_cache_unit * ralm_kv_cache;  /* [res_n_layers] */
     int seq_len;                          /* current populated sequence length */
+    int ar_step_counter;                  /* reset for each vcpm_gen_run */
 
     /* Previous latent patch for autoregressive conditioning.
      * Stores ALL patch_size latent vectors from the last generated patch.
      * Used as cond input to LocDiT and feat_encoder in the next step.
      * Initialized to zeros for first audio position.
      * Updated after each gen_step call. */
-    float * prev_patch;                   /* [feat_dim * patch_size] allocated in gen_init */
+    float * prev_patch;                   /* contiguous [patch_size][feat_dim], allocated in gen_init */
 
     /* Current autoregressive hidden states (for mu computation).
      * Following Python ordering: mu is computed FROM these states,

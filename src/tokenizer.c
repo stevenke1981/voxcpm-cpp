@@ -249,6 +249,43 @@ static int split_initial_symbols(const vcpm_tokenizer * tok, const char * normal
 static int append_expanded_token(const vcpm_tokenizer * tok, int token_id,
                                  int32_t * ids, int * n_tokens, int max_len) {
     if (token_id < 0 || token_id >= tok->vocab_size || !tok->tokens[token_id]) return -1;
+
+    /* Match mask_multichar_chinese_tokens() in upstream VoxCPM2. Pure-CJK
+     * tokens containing two or more characters are expanded to individual
+     * character token IDs, with a leading SentencePiece marker removed. */
+    const char * token = tok->tokens[token_id];
+    static const char marker[] = "\xE2\x96\x81";
+    if (strncmp(token, marker, 3) == 0) token += 3;
+
+    const char * p = token;
+    int n_chars = 0;
+    int all_cjk = 1;
+    while (*p) {
+        int len = utf8_char_len((unsigned char)*p);
+        if ((int)strlen(p) < len ||
+            !is_cjk_codepoint(utf8_codepoint(p, len))) {
+            all_cjk = 0;
+            break;
+        }
+        n_chars++;
+        p += len;
+    }
+
+    if (all_cjk && n_chars >= 2) {
+        p = token;
+        while (*p && *n_tokens < max_len) {
+            int len = utf8_char_len((unsigned char)*p);
+            char * ch = strndup_local(p, (size_t)len);
+            if (!ch) return -1;
+            int char_id = token_id_by_str(tok, ch);
+            free(ch);
+            if (char_id < 0) return -1;
+            ids[(*n_tokens)++] = char_id;
+            p += len;
+        }
+        return 0;
+    }
+
     if (*n_tokens >= max_len) return 0;
     ids[(*n_tokens)++] = token_id;
     return 0;

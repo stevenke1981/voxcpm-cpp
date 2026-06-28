@@ -49,6 +49,7 @@ typedef struct vcpm_generation_params {
     int inference_steps;
     int min_len;
     int max_len;
+    uint64_t seed;
     int streaming;
     int consent_confirmed;
     int denoise;

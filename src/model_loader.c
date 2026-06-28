@@ -57,6 +57,7 @@ vcpm_model_config vcpm_model_config_default(void) {
     c.patch_size            = 12;
     c.feat_dim              = 64;
     c.latent_dim            = 16;
+    c.fsq_quant_scale       = 9.0f;
     c.max_length            = 8192;
     c.sample_rate           = 48000;
     c.encode_sample_rate    = 16000;
@@ -73,6 +74,7 @@ vcpm_model_config vcpm_model_config_default(void) {
     c.rms_norm_eps          = 1.0e-6f;
     c.rope_theta            = 1000000;
     c.max_seq_len           = 8192;
+    c.use_mup               = 0;
     c.scale_depth           = 0.0f;   /* 0 = no scaling (backward compat) */
     c.res_hidden_size       = 2048;
     c.res_num_layers        = 8;
@@ -147,6 +149,7 @@ vcpm_model * vcpm_model_load(const char * path, char * err_buf, size_t err_buf_s
     cfg.patch_size            = get_key_i32(gguf_ctx, "voxcpm.patch_size", cfg.patch_size);
     cfg.feat_dim              = get_key_i32(gguf_ctx, "voxcpm.feat_dim", cfg.feat_dim);
     cfg.latent_dim            = get_key_i32(gguf_ctx, "voxcpm.latent_dim", cfg.latent_dim);
+    cfg.fsq_quant_scale       = get_key_f32(gguf_ctx, "voxcpm.fsq_quant_scale", cfg.fsq_quant_scale);
     cfg.max_length            = get_key_i32(gguf_ctx, "voxcpm.max_length", cfg.max_length);
     cfg.sample_rate           = get_key_i32(gguf_ctx, "voxcpm.sample_rate", cfg.sample_rate);
     cfg.encode_sample_rate    = get_key_i32(gguf_ctx, "voxcpm.encode_sample_rate", cfg.encode_sample_rate);
@@ -167,6 +170,7 @@ vcpm_model * vcpm_model_load(const char * path, char * err_buf, size_t err_buf_s
     cfg.rms_norm_eps        = get_key_f32(gguf_ctx, "voxcpm.rms_norm_eps", cfg.rms_norm_eps);
     cfg.rope_theta          = get_key_i32(gguf_ctx, "voxcpm.rope_theta", cfg.rope_theta);
     cfg.max_seq_len         = get_key_i32(gguf_ctx, "voxcpm.max_seq_len", cfg.max_seq_len);
+    cfg.use_mup             = get_key_bool(gguf_ctx, "voxcpm.use_mup", cfg.use_mup);
     cfg.scale_depth         = get_key_f32(gguf_ctx, "voxcpm.scale_depth", cfg.scale_depth);
 
     /* Residual LM */
@@ -207,6 +211,10 @@ vcpm_model * vcpm_model_load(const char * path, char * err_buf, size_t err_buf_s
         fprintf(stderr, "vcpm: overriding rms_norm_eps from GGUF (%.1e) to 1e-5 (Python reference)\n",
                 (double)cfg.rms_norm_eps);
         cfg.rms_norm_eps = 1.0e-5f;   /* Python config.json: rms_norm_eps=1e-05 */
+    }
+    if (!cfg.use_mup) {
+        cfg.scale_depth = 0.0f;
+        cfg.res_scale_depth = 0.0f;
     }
 
     model->config = cfg;

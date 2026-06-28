@@ -48,6 +48,7 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
     int patch_size = state->model ? state->model->config.patch_size : 1;
     if (patch_size < 1) patch_size = 1;
     int n_patches = 0;
+    state->ar_step_counter = 0;
 
     int first_audio_pos = -1;
     for (int i = 0; i < seq_len; i++) {

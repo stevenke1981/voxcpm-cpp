@@ -1,5 +1,49 @@
 # Diagnosis: High-Frequency Noise in VoxCPM2 WAV Output
 
+## 2026-06-29 Update — End-to-End Speech Restored
+
+The remaining “WAV exists but is not intelligible speech” failure was upstream of
+AudioVAE. CBM-guided comparison against the Python fixtures isolated defects at
+four stages:
+
+1. **CFM tensor layout and CFG-Zero\***: Python fixtures are `[D,P]`, while ggml
+   contiguous storage for a `[D,P]` tensor is `[P,D]`. Runtime state is now
+   consistently patch-major, fixture/debug boundaries transpose explicitly, and
+   CFG-Zero\* uses the upstream optimized projection instead of standard CFG.
+2. **MiniCPM4 positional semantics**: LocDiT and LocEnc inherit
+   `lm_config.no_rope=false`, but C forced both to `no_rope=1`. In addition,
+   `ggml_rope_ext_inplace()` returns a graph node; discarding that return value
+   meant RoPE was not executed. RoPE is now connected to Q/K and uses the
+   VoxCPM2 LongRoPE short factors.
+3. **Residual and FSQ semantics**: `use_mup=false` means Python uses residual
+   scale 1.0, not `scale_depth/sqrt(n_layers)`. VoxCPM2 FSQ is
+   `Linear -> tanh -> round(x*9)/9 -> Linear`; the prior C path skipped tanh and
+   quantization because it expected nonexistent `fsq.scale` tensors.
+4. **Windows Chinese input**: narrow `main(char **)` interpreted the Big5
+   command-line bytes as UTF-8. Windows now enters through `wmain`, converts
+   argv to UTF-8, and expands pure multi-character Chinese BPE tokens exactly
+   like upstream `mask_multichar_chinese_tokens()`.
+
+Verification:
+
+- LocDiT d0002 conditional velocity cosine: `0.951812 -> 0.999682`.
+- Fixed-noise five-patch latent cosine against Python: `0.997537`.
+- Base LM prompt/step cosine: `0.999950` / `0.999344`.
+- FSQ and Residual LM step cosine: `0.998427` / `0.999139`.
+- `hello_zh.wav`: 48 kHz mono, 53,760 samples (1.12 s), finite, RMS `0.046515`.
+- Local Whisper ASR transcript: `你好,這是測試`.
+
+Reproduction:
+
+```powershell
+.\build\Release\voxcpm-c.exe tts `
+  --model .\voxcpm2_f16.gguf `
+  --text '你好，這是測試。' `
+  --out .\hello_zh.wav `
+  --backend cpu --cfg 2 --steps 10 `
+  --min-len 5 --max-len 12 --seed 42 --pcm16
+```
+
 ## 2026-06-26 Update — Root Cause Confirmed and Fixed
 
 The high-frequency noise was not caused by the WAV writer or AudioVAE decoder.

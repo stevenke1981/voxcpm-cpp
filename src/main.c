@@ -15,6 +15,11 @@
 #include <stdint.h>
 #include <time.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <wchar.h>
+#endif
+
 /* ================================================================
  *  Argument type definitions
  * ================================================================ */
@@ -283,9 +288,10 @@ static int do_tts_common(int argc, char ** argv, int streaming) {
     const char * denoiser_model = NULL;
     int    threads    = 0;
     float  cfg        = 2.0f;
-    int    steps      = 30;
+    int    steps      = 10;
     int    min_len    = 2;
     int    max_len    = 4096;
+    int    seed       = 42;
     int    use_pcm16  = 0;
     int    denoise    = 0;
     int    no_denoiser = 0;
@@ -299,6 +305,7 @@ static int do_tts_common(int argc, char ** argv, int streaming) {
         {"--steps",   VCPM_ARG_INT,    &steps,        "Diffusion steps",      0, "10"},
         {"--min-len", VCPM_ARG_INT,    &min_len,      "Min generated patches",0, "2"},
         {"--max-len", VCPM_ARG_INT,    &max_len,      "Max generated patches",0, "4096"},
+        {"--seed",    VCPM_ARG_INT,    &seed,         "Random seed",          0, "42"},
         {"--backend", VCPM_ARG_STRING, &backend_str,  "cpu/cuda/metal/vulkan",0, NULL},
         {"--threads", VCPM_ARG_INT,    &threads,      "CPU threads",          0, NULL},
         {"--pcm16",   VCPM_ARG_FLAG,   &use_pcm16,    "16-bit PCM WAV output",0, NULL},
@@ -361,6 +368,7 @@ static int do_tts_common(int argc, char ** argv, int streaming) {
     gp.inference_steps = steps;
     gp.min_len = min_len;
     gp.max_len = max_len;
+    gp.seed = (uint64_t)(uint32_t)seed;
     gp.streaming = streaming ? 1 : 0;
     gp.denoise = denoise;
 
@@ -705,6 +713,7 @@ static void usage(void) {
     puts("  --steps INT         Diffusion steps (default: 10)");
     puts("  --min-len INT       Min generated patches (default: 2)");
     puts("  --max-len INT       Max generated patches (default: 4096)");
+    puts("  --seed INT          Random seed (default: 42)");
     puts("  --backend TYPE      auto/cpu/cuda/metal/vulkan (default: auto)");
     puts("  --threads INT       CPU threads (default: 0 = auto)");
     puts("  --repeat INT        Benchmark repeat count (default: 3)");
@@ -719,7 +728,7 @@ static void usage(void) {
     puts("  Cloning commands require --i-have-consent when implemented.");
 }
 
-int main(int argc, char ** argv) {
+static int voxcpm_cli_main(int argc, char ** argv) {
     if (argc < 2) {
         usage();
         return 1;
@@ -754,3 +763,43 @@ int main(int argc, char ** argv) {
     usage();
     return 1;
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t ** wide_argv) {
+    char ** utf8_argv = (char **)calloc((size_t)argc + 1, sizeof(char *));
+    if (!utf8_argv) {
+        fprintf(stderr, "error: failed to allocate UTF-8 argument vector\n");
+        return 1;
+    }
+
+    for (int i = 0; i < argc; ++i) {
+        int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                                       wide_argv[i], -1, NULL, 0, NULL, NULL);
+        if (size <= 0) {
+            fprintf(stderr, "error: command-line argument %d is not valid Unicode\n", i);
+            for (int j = 0; j < i; ++j) free(utf8_argv[j]);
+            free(utf8_argv);
+            return 1;
+        }
+        utf8_argv[i] = (char *)malloc((size_t)size);
+        if (!utf8_argv[i] ||
+            WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                                wide_argv[i], -1, utf8_argv[i], size,
+                                NULL, NULL) <= 0) {
+            fprintf(stderr, "error: failed to convert command-line argument %d to UTF-8\n", i);
+            for (int j = 0; j <= i; ++j) free(utf8_argv[j]);
+            free(utf8_argv);
+            return 1;
+        }
+    }
+
+    int result = voxcpm_cli_main(argc, utf8_argv);
+    for (int i = 0; i < argc; ++i) free(utf8_argv[i]);
+    free(utf8_argv);
+    return result;
+}
+#else
+int main(int argc, char ** argv) {
+    return voxcpm_cli_main(argc, argv);
+}
+#endif

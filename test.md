@@ -255,7 +255,11 @@ Current status:
 
 - G0/G1/model fixture/G7 basic WAV sanity/G9 one-shot smoke are verified locally with the full f16 GGUF.
 - Release CTest assertions are enabled even for `Release` builds; test files explicitly undefine `NDEBUG` before including `assert.h`.
-- G2-G6 still require upstream Python fixture parity, not just C unit smoke.
+- G2-G6 now have upstream fixture evidence for the repaired zero-shot path:
+  LocDiT velocity cosine `0.999682`, five-patch latent cosine `0.997537`,
+  Base LM step `0.999344`, FSQ step `0.998427`, and Residual LM step `0.999139`.
+- The end-to-end Chinese gate uses `--seed 42`; local ASR transcribes
+  `hello_zh.wav` as `你好,這是測試`.
 - G8 is not complete; clone is safety-gated and returns explicit not-implemented.
 
 ## 9. Debugging Failed Audio

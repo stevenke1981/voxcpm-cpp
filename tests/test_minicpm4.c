@@ -163,7 +163,9 @@ static void test_rms_norm(void) {
         char msg[64];
         snprintf(msg, sizeof(msg), "rmsnorm output[%d] = %.4f (expected %.4f)",
                  i, (double)val, (double)expected[i]);
-        TEST_ASSERT(approx(val, expected[i], 1e-4f), msg);
+        /* Runtime activations intentionally round through BF16 to match
+         * upstream VoxCPM2 inference. */
+        TEST_ASSERT(approx(val, expected[i], 2e-3f), msg);
     }
 
     ggml_free(ctx);

@@ -13,6 +13,21 @@
 #include "fsq.h"
 #include "ggml.h"
 
+struct ggml_tensor * vcpm_fsq_quantize(struct ggml_context * ctx,
+                                        struct ggml_tensor * x,
+                                        float quant_scale) {
+    if (!ctx || !x || quant_scale <= 0.0f) return x;
+
+    struct ggml_tensor * bounded = ggml_tanh(ctx, x);
+    ggml_set_name(bounded, "fsq_tanh");
+
+    struct ggml_tensor * scaled = ggml_scale(ctx, bounded, quant_scale);
+    struct ggml_tensor * rounded = ggml_round(ctx, scaled);
+    struct ggml_tensor * quantized = ggml_scale(ctx, rounded, 1.0f / quant_scale);
+    ggml_set_name(quantized, "fsq_quantized");
+    return quantized;
+}
+
 struct ggml_tensor * vcpm_fsq_forward(struct ggml_context * ctx,
                                        struct ggml_cgraph * graph,
                                        struct ggml_tensor * x,

@@ -18,6 +18,7 @@
 #include "locenc.h"
 #include "fsq.h"
 #include "locdit.h"
+#include "cfm_solver.h"
 #include "projections.h"
 #include "log.h"
 #include "debug_dump.h"
@@ -36,6 +37,10 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+static float vcpm_bf16_scalar(float value) {
+    return ggml_bf16_to_fp32(ggml_fp32_to_bf16(value));
+}
 #ifndef M_PI_2
 #define M_PI_2 1.57079632679489661923
 #endif
@@ -52,21 +57,6 @@ static int vcpm_cfm_zero_star_steps(int n_steps) {
     if (n_steps <= 1) return 0;
     int zero_steps = (int)(((float)n_steps + 1.0f) * 0.04f);
     return zero_steps > 1 ? zero_steps : 1;
-}
-
-static float vcpm_cfm_apply_cfg_zero_star(float * uncond,
-                                           const float * cond,
-                                           int n,
-                                           float cfg_value) {
-    /* Standard CFG: blend = uncond + cfg_value * (cond - uncond)
-     * Equivalent to Python formula with st_star=1.0:
-     *   blend = uncond * 1.0 + cfg_value * (cond - uncond * 1.0)
-     * Returns 1.0 as st_star stub. */
-    (void)n;
-    for (int i = 0; i < n; ++i) {
-        uncond[i] = uncond[i] + cfg_value * (cond[i] - uncond[i]);
-    }
-    return 1.0f;
 }
 
 static int vcpm_cfm_read_npy_f32(const char * path, float * dst, size_t expected_n) {
@@ -144,34 +134,48 @@ static int vcpm_cfm_read_npy_f32(const char * path, float * dst, size_t expected
 }
 
 static int vcpm_cfm_load_fixture_noise(float * x_data,
-                                        size_t n,
+                                        int latent_dim,
+                                        int patch_size,
                                         int ar_step) {
+    const size_t n = (size_t)latent_dim * (size_t)patch_size;
     const char * direct_path = getenv("VCPM_CFM_NOISE_NPY");
-    if (direct_path && direct_path[0]) {
-        int ok = vcpm_cfm_read_npy_f32(direct_path, x_data, n);
-        if (ok) {
-            fprintf(stderr, "VCPM_DEBUG CFM: loaded fixture noise from %s\n", direct_path);
-        } else {
-            fprintf(stderr, "VCPM_DEBUG CFM: failed to load fixture noise from %s\n", direct_path);
-        }
-        return ok;
-    }
-
     const char * fixture_dir = getenv("VCPM_CFM_FIXTURE_DIR");
-    if (!fixture_dir || !fixture_dir[0]) return 0;
-
     char path[512];
-    int written = snprintf(path, sizeof(path), "%s/%s%04d%s",
-                           fixture_dir, "ar", ar_step, "_cfm_noise.npy");
-    if (written <= 0 || written >= (int)sizeof(path)) return 0;
-
-    int ok = vcpm_cfm_read_npy_f32(path, x_data, n);
-    if (ok) {
-        fprintf(stderr, "VCPM_DEBUG CFM: loaded fixture noise from %s\n", path);
-    } else {
-        fprintf(stderr, "VCPM_DEBUG CFM: fixture noise not loaded from %s\n", path);
+    const char * source_path = direct_path;
+    if (!source_path || !source_path[0]) {
+        if (!fixture_dir || !fixture_dir[0]) return 0;
+        int written = snprintf(path, sizeof(path), "%s/%s%04d%s",
+                               fixture_dir, "ar", ar_step, "_cfm_noise.npy");
+        if (written <= 0 || written >= (int)sizeof(path)) return 0;
+        source_path = path;
     }
+
+    float * dim_major = (float *)malloc(n * sizeof(float));
+    if (!dim_major) return 0;
+    int ok = vcpm_cfm_read_npy_f32(source_path, dim_major, n);
+    if (ok) {
+        vcpm_cfm_dim_major_to_patch_major(
+            x_data, dim_major, latent_dim, patch_size);
+        fprintf(stderr, "VCPM_DEBUG CFM: loaded fixture noise from %s\n", source_path);
+    } else {
+        fprintf(stderr, "VCPM_DEBUG CFM: failed to load fixture noise from %s\n",
+                source_path);
+    }
+    free(dim_major);
     return ok;
+}
+
+static void vcpm_cfm_dump_patch_major(const char * label,
+                                       const float * data,
+                                       int latent_dim,
+                                       int patch_size) {
+    const size_t n = (size_t)latent_dim * (size_t)patch_size;
+    float * dim_major = (float *)malloc(n * sizeof(float));
+    if (!dim_major) return;
+    vcpm_cfm_patch_major_to_dim_major(
+        dim_major, data, latent_dim, patch_size);
+    vcpm_dump_tensor(label, dim_major, latent_dim, patch_size, 0);
+    free(dim_major);
 }
 
 static void vcpm_cfm_dump_traj_state(int ar_step,
@@ -182,7 +186,7 @@ static void vcpm_cfm_dump_traj_state(int ar_step,
     if (!vcpm_debug_shapes_env()) return;
     char label[80];
     snprintf(label, sizeof(label), "cfm_traj_state_%04d_%04d", ar_step, diff_step);
-    vcpm_dump_tensor(label, x_data, latent_dim, patch_size, 0);
+    vcpm_cfm_dump_patch_major(label, x_data, latent_dim, patch_size);
 }
 
 static void vcpm_cfm_dump_velocity(const char * kind,
@@ -196,7 +200,7 @@ static void vcpm_cfm_dump_velocity(const char * kind,
     char label[96];
     snprintf(label, sizeof(label), "cfm_velocity_%s_%04d_%04d",
              kind, ar_step, diff_step);
-    vcpm_dump_tensor(label, velocity, latent_dim, patch_size, 0);
+    vcpm_cfm_dump_patch_major(label, velocity, latent_dim, patch_size);
 }
 
 static void vcpm_cfm_dump_cfg_st_star(int ar_step, int diff_step, float scale) {
@@ -236,24 +240,15 @@ static struct ggml_tensor * gen_build_audio_embed(vcpm_generate_state * state,
     le_w.norm_weight     = state->fe_norm;
     le_w.layer_weights   = state->fe_layer_weights;
 
-    int total_fe_dim = state->enc_feat_dim * patch_size_for_fe;
     struct ggml_tensor * latent_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32,
                                                          state->enc_feat_dim,
                                                          patch_size_for_fe);
     if (latent_t && latent_t->data && state->prev_patch) {
-        /* prev_patch is stored as [feat_dim][patch] = [64][4] layout:
-         *   indices 0..3: dim0_p0, dim0_p1, dim0_p2, dim0_p3
-         *   indices 4..7: dim1_p0, dim1_p1, dim1_p2, dim1_p3
-         * FeatEncoder input tensor is [feat_dim, patch_size] in ggml column-major:
-         *   column 0 (patch 0): dim0_p0, dim1_p0, ..., dim63_p0
-         *   column 1 (patch 1): dim0_p1, dim1_p1, ..., dim63_p1
-         * So we must transpose from prev_patch's dim-major to column-major patch layout. */
-        float * dst = (float *)latent_t->data;
-        for (int p = 0; p < patch_size_for_fe; p++) {
-            for (int d = 0; d < state->enc_feat_dim; d++) {
-                dst[p * state->enc_feat_dim + d] = state->prev_patch[d * patch_size_for_fe + p];
-            }
-        }
+        /* prev_patch and ggml [feat_dim, patch_size] storage are both
+         * contiguous [patch][feature]. */
+        memcpy(latent_t->data, state->prev_patch,
+               (size_t)state->enc_feat_dim *
+               (size_t)patch_size_for_fe * sizeof(float));
     }
     ggml_set_name(latent_t, "fe_input_all_patches");
 
@@ -287,13 +282,10 @@ static struct ggml_tensor * gen_fsq_hidden(vcpm_generate_state * state,
     }
     ggml_set_name(fsq_h, "fsq_proj");
 
-    if (state->fsq_scale) {
-        vcpm_fsq_weights fw;
-        memset(&fw, 0, sizeof(fw));
-        fw.scale      = state->fsq_scale;
-        fw.offset     = state->fsq_offset;
-        fsq_h = vcpm_fsq_forward(ctx, graph, fsq_h, &fw);
-    }
+    float quant_scale = state->model
+        ? state->model->config.fsq_quant_scale
+        : 9.0f;
+    fsq_h = vcpm_fsq_quantize(ctx, fsq_h, quant_scale);
 
     struct ggml_tensor * fsq_out = ggml_mul_mat(ctx, state->fsq_out_proj_weight, fsq_h);
     if (state->fsq_out_proj_bias) {
@@ -311,8 +303,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                            const vcpm_generation_params * gen_params,
                            float * output_patch) {
     if (!state || !token_ids || !output_patch) return VCPM_ERR_INVALID_ARG;
-    static int ar_step_counter = -1;
-    ar_step_counter++;
+    int ar_step_counter = state->ar_step_counter++;
     struct ggml_cgraph * graph = state->step_graph;
     ggml_graph_clear(graph);
 
@@ -414,15 +405,17 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     float * x_data = (float *)malloc((size_t)total_patch_dim * sizeof(float));
     if (!x_data) { free(mu_data); free(prev_data); return VCPM_ERR_OOM; }
     if (vcpm_debug_shapes_env() && prev_data) {
-        /* prev_data is prev_patch: shape [latent_dim * patch_size] flat
-           Python step0000_cfm_cond.npy: [1, 64, 4] — need as [1, latent_dim, patch_size] */
+        /* Keep fixture dumps in Python's [D,P] order even though runtime
+         * buffers use contiguous [P,D]. */
         char step_label[64];
         snprintf(step_label, sizeof(step_label), "step_cond_%04d", ar_step_counter);
-        vcpm_dump_tensor(step_label, prev_data,
-                          latent_dim, patch_size, 0);
+        vcpm_cfm_dump_patch_major(
+            step_label, prev_data, latent_dim, patch_size);
     }
     {
-        uint64_t rng_state = (uint64_t)(latent_dim + fill_pos + 1) ^ 0x9E3779B97F4A7C15ULL;
+        uint64_t seed = gen_params ? gen_params->seed : 42;
+        uint64_t rng_state = seed ^
+            ((uint64_t)(ar_step_counter + 1) * 0xD2B74407B1CE6E93ULL);
         for (int j = 0; j < total_patch_dim; j++) {
             rng_state += 0x9E3779B97F4A7C15ULL;
             uint64_t z = rng_state;
@@ -438,15 +431,17 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
             z = z ^ (z >> 31);
             float u2 = (float)(z >> 11) * (1.0f / 9007199254740992.0f);
             u2 = fmaxf(1e-6f, fminf(u2, 1.0f - 1e-6f));
-            x_data[j] = sqrtf(-2.0f * logf(u1)) * cosf(2.0f * (float)M_PI * u2);
+            x_data[j] = vcpm_bf16_scalar(
+                sqrtf(-2.0f * logf(u1)) * cosf(2.0f * (float)M_PI * u2));
         }
     }
-    vcpm_cfm_load_fixture_noise(x_data, (size_t)total_patch_dim, ar_step_counter);
+    vcpm_cfm_load_fixture_noise(
+        x_data, latent_dim, patch_size, ar_step_counter);
     if (vcpm_debug_shapes_env()) {
         char step_label[64];
         snprintf(step_label, sizeof(step_label), "step_noise_%04d", ar_step_counter);
-        vcpm_dump_tensor(step_label, x_data,
-                          latent_dim, patch_size, 0);
+        vcpm_cfm_dump_patch_major(
+            step_label, x_data, latent_dim, patch_size);
     }
     vcpm_cfm_dump_traj_state(ar_step_counter, 0, x_data, latent_dim, patch_size);
 
@@ -628,14 +623,15 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                                            cond_data, latent_dim, patch_size);
                     vcpm_cfm_dump_velocity("uncond", ar_step_counter, step + 1,
                                            uncond_data, latent_dim, patch_size);
-                    float st_star = vcpm_cfm_apply_cfg_zero_star(uncond_data, cond_data,
-                                                                   total_patch_dim, cfg_value);
+                    float st_star = vcpm_cfm_cfg_zero_star(
+                        uncond_data, cond_data, total_patch_dim, cfg_value);
                     vcpm_cfm_dump_cfg_st_star(ar_step_counter, step + 1, st_star);
                     float * vel = uncond_data;
                     vcpm_cfm_dump_velocity("blend", ar_step_counter, step + 1,
                                             vel, latent_dim, patch_size);
                     for (int j = 0; j < total_patch_dim; j++) {
-                        x_data[j] = x_data[j] + step_size * vel[j];
+                        x_data[j] = vcpm_bf16_scalar(
+                            x_data[j] + step_size * vel[j]);
                     }
                 }
             } else {
@@ -648,7 +644,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                     vcpm_cfm_dump_velocity("blend", ar_step_counter, step + 1,
                                            vel, latent_dim, patch_size);
                     for (int j = 0; j < total_patch_dim; j++) {
-                        x_data[j] = x_data[j] + step_size * vel[j];
+                        x_data[j] = vcpm_bf16_scalar(
+                            x_data[j] + step_size * vel[j]);
                     }
                 }
             }
@@ -663,8 +660,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     if (vcpm_debug_shapes_env()) {
         char step_label[64];
         snprintf(step_label, sizeof(step_label), "step_pred_feat_%04d", ar_step_counter);
-        vcpm_dump_tensor(step_label, x_data,
-                          latent_dim, patch_size, 0);
+        vcpm_cfm_dump_patch_major(
+            step_label, x_data, latent_dim, patch_size);
     }
 
     /* NaN check on CFM output */
@@ -688,7 +685,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     if (vcpm_debug_shapes_env()) {
         char out_label[64];
         snprintf(out_label, sizeof(out_label), "post_cfm_feat_%04d", ar_step_counter);
-        vcpm_dump_tensor(out_label, output_src, latent_dim, patch_size, 0);
+        vcpm_cfm_dump_patch_major(
+            out_label, output_src, latent_dim, patch_size);
     }
     memcpy(output_patch, output_src, (size_t)total_patch_dim * sizeof(float));
     memcpy(state->prev_patch, output_src, (size_t)total_patch_dim * sizeof(float));

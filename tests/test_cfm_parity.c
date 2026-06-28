@@ -35,6 +35,9 @@
 #include "ggml.h"
 #include "ggml-cpu.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -145,11 +148,17 @@ int main(int argc, char ** argv) {
     assert(cond_data && "Missing cfm_cond fixture");
     printf("  cond: %d floats\n", n_cond);
 
-    snprintf(path, sizeof(path), "%s/step0000_cfm_pred_feat.npy", fixture_dir);
-    int n_pred = 0;
-    float * pred_data = read_npy_f32(path, &n_pred, NULL, 1);
-    assert(pred_data && "Missing cfm_pred_feat fixture");
-    printf("  expected pred: %d floats\n", n_pred);
+    snprintf(path, sizeof(path), "%s/ar0000_cfm_noise.npy", fixture_dir);
+    int n_noise = 0;
+    float * noise_data = read_npy_f32(path, &n_noise, NULL, 1);
+    assert(noise_data && "Missing CFM noise fixture");
+    printf("  noise: %d floats\n", n_noise);
+
+    snprintf(path, sizeof(path), "%s/ar0000_d0002_cfm_velocity_cond.npy", fixture_dir);
+    int n_velocity_ref = 0;
+    float * velocity_ref = read_npy_f32(path, &n_velocity_ref, NULL, 1);
+    assert(velocity_ref && "Missing conditional velocity fixture");
+    printf("  expected velocity: %d floats\n", n_velocity_ref);
 
     /* ---- Build DiT config & weights (from existing generate.c helpers) ---- */
     /* For this test, we resolve weights manually */
@@ -160,46 +169,56 @@ int main(int argc, char ** argv) {
     printf("\n=== Fixture verification (structural) ===\n");
     printf("  mu dim check: n_mu=%d (expected 2048)\n", n_mu);
     printf("  cond dim check: n_cond=%d (expected 256 = 64*4)\n", n_cond);
-    printf("  pred dim check: n_pred=%d (expected 256 = 4*64)\n", n_pred);
+    printf("  noise dim check: n_noise=%d (expected 256 = 64*4)\n", n_noise);
+    printf("  velocity dim check: n_velocity_ref=%d (expected 256 = 64*4)\n",
+           n_velocity_ref);
 
     /* Verify structural consistency */
     assert(n_mu == 2048 && "mu must be 2048-dim");
     assert(n_cond == 256 && "cond must be 64*4 = 256 floats");
-    assert(n_pred == 256 && "pred must be 4*64 = 256 floats");
+    assert(n_noise == 256 && "noise must be 64*4 = 256 floats");
+    assert(n_velocity_ref == 256 && "velocity must be 64*4 = 256 floats");
     printf("  All fixture shapes match expected.\n");
 
     /* Check for finite values */
-    int mu_finite = 1, cond_finite = 1, pred_finite = 1;
+    int mu_finite = 1, cond_finite = 1, velocity_finite = 1;
     for (int i = 0; i < n_mu; i++) if (!isfinite(mu_data[i])) { mu_finite = 0; break; }
     for (int i = 0; i < n_cond; i++) if (!isfinite(cond_data[i])) { cond_finite = 0; break; }
-    for (int i = 0; i < n_pred; i++) if (!isfinite(pred_data[i])) { pred_finite = 0; break; }
+    for (int i = 0; i < n_velocity_ref; i++) {
+        if (!isfinite(velocity_ref[i])) { velocity_finite = 0; break; }
+    }
     printf("  mu finite: %s\n", mu_finite ? "yes" : "NO");
     printf("  cond finite: %s\n", cond_finite ? "yes" : "NO");
-    printf("  pred finite: %s\n", pred_finite ? "yes" : "NO");
+    printf("  velocity finite: %s\n", velocity_finite ? "yes" : "NO");
     assert(mu_finite && "mu must contain only finite values");
     assert(cond_finite && "cond must contain only finite values");
-    assert(pred_finite && "pred must contain only finite values");
+    assert(velocity_finite && "velocity must contain only finite values");
 
     /* ---- Compute metrics on reference data ---- */
-    float mu_rms = 0.0f, cond_rms = 0.0f, pred_rms = 0.0f;
+    float mu_rms = 0.0f, cond_rms = 0.0f, velocity_rms = 0.0f;
     for (int i = 0; i < n_mu; i++) mu_rms += mu_data[i] * mu_data[i];
     for (int i = 0; i < n_cond; i++) cond_rms += cond_data[i] * cond_data[i];
-    for (int i = 0; i < n_pred; i++) pred_rms += pred_data[i] * pred_data[i];
+    for (int i = 0; i < n_velocity_ref; i++) {
+        velocity_rms += velocity_ref[i] * velocity_ref[i];
+    }
     mu_rms = sqrtf(mu_rms / n_mu);
     cond_rms = sqrtf(cond_rms / n_cond);
-    pred_rms = sqrtf(pred_rms / n_pred);
+    velocity_rms = sqrtf(velocity_rms / n_velocity_ref);
     printf("  mu RMS: %.4f\n", mu_rms);
     printf("  cond RMS: %.4f\n", cond_rms);
-    printf("  pred RMS: %.4f\n", pred_rms);
+    printf("  velocity RMS: %.4f\n", velocity_rms);
     printf("  cond is all-zero (first step): %s\n",
            cond_rms < 1e-6f ? "yes" : "NO (not zero — not step 0?)");
 
-    printf("\n--- Full CFM/DiT forward requires runtime graph ---\n");
-    printf("The C test infrastructure is set up. To run full velocity parity:\n");
-    printf("  1. Build with: cmake --build build_msvc --config Release\n");
-    printf("  2. Run: tests/Release/test_cfm_parity.exe voxcpm2_v2_full.gguf fixtures/ref\n");
-    printf("  3. For velocity-only comparison, add internal fixture hooks in\n");
-    printf("     cfm_solver.c or locdit.c to dump step*_velocity.npy\n\n");
+    {
+        float positive[2] = {3.0f, 0.0f};
+        float negative[2] = {1.0f, 1.0f};
+        float st_star = vcpm_cfm_cfg_zero_star(negative, positive, 2, 2.0f);
+        assert(fabsf(st_star - 1.5f) < 1e-6f);
+        assert(fabsf(negative[0] - 4.5f) < 1e-6f);
+        assert(fabsf(negative[1] + 1.5f) < 1e-6f);
+        printf("  CFG-Zero* optimized scale: PASS\n");
+    }
 
     /* ---- Check if we can run the model (ggml backend available) ---- */
     /* Create minimal context and try to run LocDiT forward */
@@ -235,15 +254,18 @@ int main(int argc, char ** argv) {
     dit_w.input_proj_weight  = vcpm_model_get_tensor(model, "feat_decoder.estimator.in_proj.weight");
     if (!dit_w.input_proj_weight)
         dit_w.input_proj_weight = vcpm_model_get_tensor(model, "feat_decoder.in_proj.weight");
+    dit_w.input_proj_bias = vcpm_model_get_tensor(model, "feat_decoder.estimator.in_proj.bias");
     dit_w.output_proj_weight = vcpm_model_get_tensor(model, "feat_decoder.estimator.out_proj.weight");
     if (!dit_w.output_proj_weight)
         dit_w.output_proj_weight = vcpm_model_get_tensor(model, "feat_decoder.out_proj.weight");
+    dit_w.output_proj_bias = vcpm_model_get_tensor(model, "feat_decoder.estimator.out_proj.bias");
     dit_w.norm_weight        = vcpm_model_get_tensor(model, "feat_decoder.estimator.norm.weight");
     if (!dit_w.norm_weight)
         dit_w.norm_weight = vcpm_model_get_tensor(model, "feat_decoder.norm.weight");
     dit_w.cond_proj_weight   = vcpm_model_get_tensor(model, "feat_decoder.estimator.cond_proj.weight");
     if (!dit_w.cond_proj_weight)
         dit_w.cond_proj_weight = vcpm_model_get_tensor(model, "feat_decoder.cond_proj.weight");
+    dit_w.cond_proj_bias = vcpm_model_get_tensor(model, "feat_decoder.estimator.cond_proj.bias");
     dit_w.time_mlp_w1  = vcpm_model_get_tensor(model, "feat_decoder.estimator.time_mlp.linear_1.weight");
     dit_w.time_mlp_b1  = vcpm_model_get_tensor(model, "feat_decoder.estimator.time_mlp.linear_1.bias");
     dit_w.time_mlp_w2  = vcpm_model_get_tensor(model, "feat_decoder.estimator.time_mlp.linear_2.weight");
@@ -302,30 +324,35 @@ int main(int argc, char ** argv) {
     struct ggml_tensor * x_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, feat_dim, seq_len);
     assert(x_t && x_t->data);
 
-    /* Initialize x_t with small random noise (since cond is zeros at step 0) */
+    /* The fixture is [D,P]; ggml [D,P] storage is contiguous [P,D]. */
     float * xd = (float *)x_t->data;
-    for (int i = 0; i < feat_dim * seq_len; i++) {
-        xd[i] = ((float)rand() / RAND_MAX - 0.5f) * 0.1f;
-    }
+    vcpm_cfm_dim_major_to_patch_major(
+        xd, noise_data, feat_dim, seq_len);
 
     /* cond: prev_latent — load from fixture */
     struct ggml_tensor * cond = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, feat_dim, seq_len);
     assert(cond && cond->data);
-    memcpy(cond->data, cond_data, (size_t)n_cond * sizeof(float));
+    vcpm_cfm_dim_major_to_patch_major(
+        (float *)cond->data, cond_data, feat_dim, seq_len);
 
     /* mu: LM+RALM conditioning — load from fixture */
     struct ggml_tensor * mu = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 2048, 1);
     assert(mu && mu->data);
     memcpy(mu->data, mu_data, 2048 * sizeof(float));
 
-    /* timestep: t=1.0 (first CFM step) */
+    /* First non-zero CFG-Zero* evaluation for 10 steps is Python dump d0002:
+     * sway_t(step=1) with dt forced to zero in mean mode. */
     struct ggml_tensor * timestep = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
     assert(timestep && timestep->data);
-    ((float *)timestep->data)[0] = 1.0f;
+    {
+        const float base = 0.9f;
+        ((float *)timestep->data)[0] =
+            base + (cosf(1.57079632679489661923f * base) - 1.0f + base);
+    }
 
     struct ggml_tensor * dt = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
     assert(dt && dt->data);
-    ((float *)dt->data)[0] = -0.1f;
+    ((float *)dt->data)[0] = 0.0f;
 
     /* Create compute graph */
     struct ggml_cgraph * graph = ggml_new_graph_custom(ctx, 65536, false);
@@ -347,8 +374,9 @@ int main(int argc, char ** argv) {
     printf("  Computing graph...\n");
     ggml_build_forward_expand(graph, vel);
     ggml_graph_compute_with_ctx(ctx, graph, 1);
+    vcpm_locdit_debug_dump("parity", 0, 2);
 
-    /* ---- Compare velocity against expected pred_feat ---- */
+    /* ---- Compare velocity against the exact Python d0002 fixture ---- */
     printf("\n=== Velocity Comparison ===\n");
     int n_vel = (int)ggml_nelements(vel);
     float * vd = (float *)vel->data;
@@ -358,15 +386,20 @@ int main(int argc, char ** argv) {
     vel_rms = sqrtf(vel_rms / n_vel);
     printf("  Velocity RMS: %.4f\n", vel_rms);
 
-    /* Compare against pred_feat fixture */
-    float cos_sim = cosine_sim(vd, pred_data, n_vel < n_pred ? n_vel : n_pred);
-    printf("  Cosine similarity vs pred_feat: %.6f\n", cos_sim);
+    /* ggml [D,P] is stored patch-major. Python's CFM fixture is [D,P]
+     * dimension-major, so compare by logical (d,p) coordinates. */
+    float * velocity_logical = (float *)malloc((size_t)n_vel * sizeof(float));
+    assert(velocity_logical);
+    vcpm_cfm_patch_major_to_dim_major(
+        velocity_logical, vd, feat_dim, seq_len);
+    float cos_sim = cosine_sim(velocity_logical, velocity_ref, n_vel);
+    printf("  Cosine similarity vs d0002 velocity: %.6f\n", cos_sim);
 
     /* Compute max absolute error */
     float max_err = 0.0f;
-    int min_n = n_vel < n_pred ? n_vel : n_pred;
+    int min_n = n_vel < n_velocity_ref ? n_vel : n_velocity_ref;
     for (int i = 0; i < min_n; i++) {
-        float err = fabsf(vd[i] - pred_data[i]);
+        float err = fabsf(velocity_logical[i] - velocity_ref[i]);
         if (err > max_err) max_err = err;
     }
     printf("  Max absolute error: %.6f\n", max_err);
@@ -374,28 +407,17 @@ int main(int argc, char ** argv) {
     /* RMS error */
     float rms_err = 0.0f;
     for (int i = 0; i < min_n; i++) {
-        float err = vd[i] - pred_data[i];
+        float err = velocity_logical[i] - velocity_ref[i];
         rms_err += err * err;
     }
     rms_err = sqrtf(rms_err / min_n);
     printf("  RMS error: %.6f\n", rms_err);
 
-    /* The pred_feat is the full CFM output (denoised latent), NOT just velocity.
-     * Some key differences:
-     *   - pred_feat is the result of 10 CFM integration steps
-     *   - velocity is the raw LocDiT output at the first step
-     * So we expect LOW similarity when comparing velocity vs full CFM output.
-     * For proper verification, we need step*_velocity.npy fixtures.
-     */
-    printf("\n  NOTE: cfm_pred_feat is the FULL CFM denoised output, not raw velocity.\n");
-    printf("  Low cosine similarity is expected for velocity-vs-pred comparison.\n");
-    printf("  To properly verify velocity:\n");
-    printf("  1. Dump step*_scalar_velocity.npy from Python feat_decoder\n");
-    printf("  2. Or compare against cfm_final_out.npy after full CFM solve\n\n");
-
-    /* ---- Check basic sanity ---- */
+    /* ---- Numerical parity gate ---- */
     assert(vel_rms > 0.0f && "Velocity should have non-zero RMS");
     assert(isfinite(vel_rms) && "Velocity should be finite");
+    fflush(stdout);
+    assert(cos_sim > 0.98f && "LocDiT d0002 velocity parity regression");
 
     /* Check that velocity is non-trivial (not all zeros) */
     int n_nonzero = 0;
@@ -406,14 +428,16 @@ int main(int argc, char ** argv) {
     printf("  Non-zero elements: %d/%d (%d%%)\n",
            n_nonzero, n_vel, n_nonzero * 100 / n_vel);
 
-    printf("\n=== PASS: CFM/DiT structural verification ===\n");
+    printf("\n=== PASS: CFM/DiT d0002 numerical parity ===\n");
+    free(velocity_logical);
 
 cleanup:
     free(dit_w.layer_weights);
 done:
     free(mu_data);
     free(cond_data);
-    free(pred_data);
+    free(noise_data);
+    free(velocity_ref);
     vcpm_model_free(model);
     if (ctx) ggml_free(ctx);
     return 0;

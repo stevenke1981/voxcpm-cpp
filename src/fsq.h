@@ -47,4 +47,13 @@ struct ggml_tensor * vcpm_fsq_forward(struct ggml_context * ctx,
                                        struct ggml_tensor * x,
                                        const vcpm_fsq_weights * w);
 
+/*
+ * VoxCPM2 ScalarQuantizationLayer inference core:
+ * tanh(x) -> round(x * quant_scale) / quant_scale.
+ * The learned input/output projections are built by the caller.
+ */
+struct ggml_tensor * vcpm_fsq_quantize(struct ggml_context * ctx,
+                                        struct ggml_tensor * x,
+                                        float quant_scale);
+
 #endif /* VCPM_FSQ_H */
