@@ -253,7 +253,16 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
         (t)->buffer = NULL; \
     } while(0)
 
-    /* Collect all unique tensors referenced by the graph (nodes + their sources) */
+    /* Collect all unique tensors referenced by the graph (nodes + their sources).
+     *
+     * IMPORTANT: Graph nodes (intermediate/output tensors) ARE collected so the
+     * gallocr allocates GPU memory for them.  However their CPU data (from the
+     * ggml_init allocator) is uninitialized and MUST NOT be uploaded — doing so
+     * would overwrite the GPU buffer of another tensor that shares the same
+     * device memory (gallocr reuses buffers across non-overlapping lifetimes).
+     *
+     * We track which tensors are graph nodes so the upload loop can skip them. */
+    int is_node[VCPM_MAX_LEAVES] = {0};
     for (int i = 0; i < ggml_graph_n_nodes(graph) && n_cpu < VCPM_MAX_LEAVES; i++) {
         struct ggml_tensor * t = ggml_graph_node(graph, i);
         if (!t) continue;
@@ -261,7 +270,7 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
             int dup = 0;
             for (int j = 0; j < n_cpu; j++)
                 if (cpu_tensors[j] == t) { dup = 1; break; }
-            if (!dup) VCPM_ADD_CPU_TENSOR(t);
+            if (!dup) { int idx = n_cpu; VCPM_ADD_CPU_TENSOR(t); is_node[idx] = 1; }
         }
         for (int si = 0; si < GGML_MAX_SRC && t->src[si]; si++) {
             struct ggml_tensor * s = t->src[si];
@@ -335,11 +344,16 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
         }
     }
 
-    /* Copy CPU input data to newly-allocated GPU tensors. */
+    /* Copy CPU input data to newly-allocated GPU tensors.
+     * Skip graph node tensors — their CPU data is uninitialized allocator
+     * memory, and uploading it could overwrite another tensor's data that
+     * shares the same GPU buffer (gallocr reuses memory across non-overlapping
+     * lifetimes). */
     for (int j = 0; j < n_cpu; j++) {
         struct ggml_tensor * t = cpu_tensors[j];
-        if (t && cpu_ptrs[j]) {
-            ggml_backend_buffer_t eff_buf = t->view_src ? t->view_src->buffer : t->buffer;
+        if (!t || !cpu_ptrs[j]) continue;
+        if (is_node[j]) continue;
+        ggml_backend_buffer_t eff_buf = t->view_src ? t->view_src->buffer : t->buffer;
             if (eff_buf) {
                 ggml_backend_tensor_set(t, cpu_ptrs[j], 0, cpu_nbytes[j]);
                 /* DEBUG: verify upload for named tensors */
@@ -359,7 +373,6 @@ int vcpm_backend_compute(vcpm_backend * be, struct ggml_cgraph * graph) {
                 fprintf(stderr, "VCPM_DEBUG compute: tensor %d has no effective buffer after alloc (name='%s')\n",
                         j, t->name ? t->name : "?");
             }
-        }
     }
 
     /* Compute the graph on GPU */

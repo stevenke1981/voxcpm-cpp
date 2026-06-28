@@ -103,3 +103,9 @@
 **Trigger:** Python VoxCPM defaults to `load_denoiser=True`, but the C runtime had no denoiser state and could silently skip ZipEnhancer prompt/reference preprocessing.
 **Rule:** Treat `load_denoiser=True` as an external ModelScope ZipEnhancer contract, not GGUF tensor loading. Until a native backend exists, expose requested/loaded status in inspect and fail `--denoise` explicitly instead of silently continuing.
 **Source:** VoxCPM C/C++ denoiser load contract
+
+---
+## Lesson #25 — 2026-06-28
+**Trigger:** CUDA prompt eval output was all-zero/F16-garbage because leaf graph node readback used `t->buffer` after it was already NULLed. Second pass's leaf-skip logic silently discarded every graph output tensor.
+**Rule:** When debugging CUDA backend output, verify the readback path FIRST: confirm that ggml_backend_tensor_get is called with a non-NULL `t->buffer`. The leaf collection must read back WHILE buffers are still set, THEN restore CPU pointers — not the reverse. A leaf that was added to `cpu_tensors[]` with `VCPM_ADD_CPU_TENSOR` (which sets `t->buffer = NULL`) must still have its GPU data read back before the buffer reference is lost.
+**Source:** VoxCPM C/C++ CUDA readback serialization fix

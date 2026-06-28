@@ -229,6 +229,18 @@ if(VCPM_BUILD_TESTS)
         ${VCPM_TEST_PRIVATE_INCLUDES}
         ${ggml_SOURCE_DIR}/include)
     target_link_libraries(test_prompt_cuda_probe PRIVATE voxcpm)
+    add_executable(test_cuda_ops tests/test_cuda_ops.c)
+    target_include_directories(test_cuda_ops PRIVATE
+        ${VCPM_TEST_PRIVATE_INCLUDES}
+        ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(test_cuda_ops PRIVATE voxcpm)
+    add_executable(test_fixture_parity tests/test_fixture_parity.c)
+    target_include_directories(test_fixture_parity PRIVATE
+        ${VCPM_TEST_PRIVATE_INCLUDES}
+        ${ggml_SOURCE_DIR}/include)
+    target_compile_definitions(test_fixture_parity PRIVATE
+        FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+    target_link_libraries(test_fixture_parity PRIVATE voxcpm)
     set(VCPM_MODEL_FIXTURE "$ENV{VCPM_MODEL}")
     if(VCPM_MODEL_FIXTURE)
         add_test(NAME vae_only COMMAND test_vae_only "${VCPM_MODEL_FIXTURE}")

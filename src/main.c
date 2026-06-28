@@ -283,7 +283,7 @@ static int do_tts_common(int argc, char ** argv, int streaming) {
     const char * denoiser_model = NULL;
     int    threads    = 0;
     float  cfg        = 2.0f;
-    int    steps      = 10;
+    int    steps      = 30;
     int    min_len    = 2;
     int    max_len    = 4096;
     int    use_pcm16  = 0;
@@ -447,7 +447,7 @@ static int cmd_clone(int argc, char ** argv) {
     int    threads      = 0;
     int    consent      = 0;
     float  cfg          = 2.0f;
-    int    steps        = 10;
+    int    steps        = 30;
     int    max_len      = 4096;
     int    use_pcm16    = 0;
     int    denoise      = 0;
@@ -575,7 +575,7 @@ static int cmd_bench(int argc, char ** argv) {
     const char * backend_str  = NULL;
     int    threads    = 0;
     float  cfg        = 2.0f;
-    int    steps      = 10;
+    int    steps      = 30;
     int    max_len    = 128;
     int    repeat     = 3;
 

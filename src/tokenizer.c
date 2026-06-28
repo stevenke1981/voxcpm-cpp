@@ -300,51 +300,101 @@ int vcpm_tokenizer_encode(const vcpm_tokenizer * tok,
     char * normalized = normalize_voxcpm_text(text);
     if (!normalized) return -1;
 
-    char ** symbols = NULL;
-    int n_symbols = split_initial_symbols(tok, normalized, &symbols);
-    free(normalized);
-    if (n_symbols < 0 || !symbols) return -1;
+    /* ---- GPT-2/LLaMA-style pre-tokenization: split on U+2581 (▁) ----
+     * normalize_voxcpm_text replaces each space with ▁.  U+2581 only
+     * ever appears as the first character of a token in this vocab,
+     * so splitting on it gives us word boundaries (GPT-2 pre-tokenization
+     * equivalent).  Each word keeps its leading ▁, so BPE merges stay
+     * within the word and never cross word boundaries. */
+    const char marker_utf8[] = "\xE2\x96\x81"; /* U+2581 */
+    const size_t marker_len = 3;
 
-    while (n_symbols > 1) {
-        int best_pos = -1;
-        int best_rank = -1;
-        for (int i = 0; i + 1 < n_symbols; i++) {
-            int rank = merge_rank(tok, symbols[i], symbols[i + 1]);
-            if (rank >= 0 && (best_rank < 0 || rank < best_rank)) {
-                best_rank = rank;
-                best_pos = i;
+    /* 1. Collect word boundaries */
+    /* Pre-count words by scanning for ▁ markers */
+    int max_words = 1;
+    for (const char * p = normalized + marker_len; *p; p++) {
+        if (memcmp(p, marker_utf8, marker_len) == 0) {
+            max_words++;
+            p += marker_len - 1;
+        }
+    }
+
+    /* Word span: {start, length} pair */
+    typedef struct { const char * start; size_t len; } word_span;
+    word_span * words = (word_span *)calloc((size_t)max_words, sizeof(word_span));
+    if (!words) { free(normalized); return -1; }
+
+    int n_words = 0;
+    words[n_words].start = normalized;
+    n_words = 1;
+    for (const char * p = normalized; *p; ) {
+        if (p > normalized && memcmp(p, marker_utf8, marker_len) == 0) {
+            words[n_words - 1].len = (size_t)(p - words[n_words - 1].start);
+            words[n_words].start = p;
+            n_words++;
+            p += marker_len;
+        } else {
+            p++;
+        }
+    }
+    if (n_words > 0) {
+        words[n_words - 1].len = strlen(words[n_words - 1].start);
+    }
+
+    /* 2. BPE-encode each word independently */
+    for (int w = 0; w < n_words && n_tokens < max_len; w++) {
+        /* Build null-terminated copy of this word */
+        char * word = strndup_local(words[w].start, words[w].len);
+        if (!word) { free(words); free(normalized); return -1; }
+
+        char ** symbols = NULL;
+        int n_symbols = split_initial_symbols(tok, word, &symbols);
+        if (n_symbols < 0 || !symbols) { free(word); free(words); free(normalized); return -1; }
+
+        /* BPE merges within this word */
+        while (n_symbols > 1) {
+            int best_pos = -1;
+            int best_rank = -1;
+            for (int i = 0; i + 1 < n_symbols; i++) {
+                int rank = merge_rank(tok, symbols[i], symbols[i + 1]);
+                if (rank >= 0 && (best_rank < 0 || rank < best_rank)) {
+                    best_rank = rank;
+                    best_pos = i;
+                }
+            }
+            if (best_pos < 0) break;
+
+            size_t merged_len = strlen(symbols[best_pos]) + strlen(symbols[best_pos + 1]);
+            char * merged = (char *)malloc(merged_len + 1);
+            if (!merged) break;
+            strcpy(merged, symbols[best_pos]);
+            strcat(merged, symbols[best_pos + 1]);
+            free(symbols[best_pos]);
+            free(symbols[best_pos + 1]);
+            symbols[best_pos] = merged;
+            for (int i = best_pos + 1; i + 1 < n_symbols; i++) {
+                symbols[i] = symbols[i + 1];
+            }
+            n_symbols--;
+        }
+
+        /* Output IDs */
+        for (int i = 0; i < n_symbols && n_tokens < max_len; i++) {
+            int id = token_id_by_str(tok, symbols[i]);
+            if (id >= 0) {
+                append_expanded_token(tok, id, ids, &n_tokens, max_len);
+            } else {
+                const unsigned char * p = (const unsigned char *)symbols[i];
+                while (*p && n_tokens < max_len) ids[n_tokens++] = (int32_t)*p++;
             }
         }
-        if (best_pos < 0) break;
 
-        size_t merged_len = strlen(symbols[best_pos]) + strlen(symbols[best_pos + 1]);
-        char * merged = (char *)malloc(merged_len + 1);
-        if (!merged) break;
-        strcpy(merged, symbols[best_pos]);
-        strcat(merged, symbols[best_pos + 1]);
-        free(symbols[best_pos]);
-        free(symbols[best_pos + 1]);
-        symbols[best_pos] = merged;
-        for (int i = best_pos + 1; i + 1 < n_symbols; i++) {
-            symbols[i] = symbols[i + 1];
-        }
-        n_symbols--;
+        for (int i = 0; i < n_symbols; i++) free(symbols[i]);
+        free(symbols);
+        free(word);
     }
-
-    for (int i = 0; i < n_symbols && n_tokens < max_len; i++) {
-        int id = token_id_by_str(tok, symbols[i]);
-        if (id >= 0) {
-            append_expanded_token(tok, id, ids, &n_tokens, max_len);
-        } else {
-            const unsigned char * p = (const unsigned char *)symbols[i];
-            while (*p && n_tokens < max_len) ids[n_tokens++] = (int32_t)*p++;
-        }
-    }
-
-    for (int i = 0; i < n_symbols; i++) {
-        free(symbols[i]);
-    }
-    free(symbols);
+    free(words);
+    free(normalized);
 
     return n_tokens;
 }
