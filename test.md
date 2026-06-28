@@ -260,7 +260,23 @@ Current status:
   Base LM step `0.999344`, FSQ step `0.998427`, and Residual LM step `0.999139`.
 - The end-to-end Chinese gate uses `--seed 42`; local ASR transcribes
   `hello_zh.wav` as `你好,這是測試`.
-- G8 is not complete; clone is safety-gated and returns explicit not-implemented.
+- G8 synthetic-reference clone smoke now passes with the consent gate enabled.
+
+### 2026-06-29 stop / VAE encoder / clone regression
+
+- Full Release CTest with `VCPM_MODEL=voxcpm2_f16.gguf`: 14/14 pass.
+- `stop`: verifies the exact `torch.argmax` class rule, including ties and
+  positive/negative logit pairs.
+- `verify_stop_parity.py`: steps 1-4 max-abs logit error
+  `0.033269/0.005796/0.008420/0.004555`; classes `0/0/0/1` match Python.
+- `vae_layout`: verifies ggml channel-major `[time,channel]` output is copied to
+  contiguous `[time][latent_dim]` reference patches.
+- `model_clone_smoke`: generates a synthetic 220 Hz reference, runs
+  encode→conditioning→generation→decode, and validates a non-empty 48 kHz WAV.
+- Chinese stop regression: `你好，這是測試。` now generates 10 patches,
+  76,800 samples (1.60 sec); ASR returns `你好,这是测试`.
+- True low-latency streaming remains pending; the current API is still a
+  one-shot callback after full generation.
 
 ## 9. Debugging Failed Audio
 

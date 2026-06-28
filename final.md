@@ -108,11 +108,11 @@ voxcpm-c/
 - [ ] Fresh clone build succeeds.
 - [ ] Converter succeeds on pinned HF snapshot.
 - [ ] `inspect` reports correct metadata.
-- [ ] Unit tests pass.
-- [ ] Model fixture tests pass.
-- [ ] TTS smoke produces valid 48 kHz mono WAV.
-- [ ] Clone smoke produces valid WAV.
-- [ ] Streaming smoke passes.
+- [x] Unit tests pass.
+- [x] Model fixture tests pass.
+- [x] TTS smoke produces valid 48 kHz mono WAV.
+- [x] Clone smoke produces valid WAV (synthetic reference; consent gate enabled).
+- [x] Streaming one-shot callback smoke passes.
 - [ ] License and notices included.
 - [ ] README documents safety limitations.
 

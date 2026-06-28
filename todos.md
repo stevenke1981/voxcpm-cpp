@@ -131,7 +131,7 @@
 - [x] `vcpm_generate()` full pipeline — end-to-end audio generation milestone (commit 1bc7d0c).
 - [x] `text_embed` cosine similarity vs Python: **1.0**.
 - [x] `mu_init` cosine similarity vs Python: **0.9935**.
-- [x] Stop predictor: CPU-based, uses stop_proj + SiLU + stop_head + sigmoid.
+- [x] Stop predictor: CPU-based, uses stop_proj + SiLU + stop_head + Python-compatible argmax.
 - [x] Max/min length handling (min_len/max_len from gen_params).
 - [x] Autoregressive loop ordering corrected to match Python (mu→CFM→LM→FSQ→RALM).
 - [x] LocEnc rewritten to all-P parallel + CLS prepend + bidirectional attention.
@@ -171,9 +171,9 @@
 
 3. **[MED] Native ZipEnhancer denoiser backend** — Python `load_denoiser=True` uses ModelScope ZipEnhancer for prompt/reference preprocessing. The C runtime now exposes and gates this contract, but actual denoising requires a native backend or explicit external preprocessing.
 
-4. **[MED] Verify stop predictor against Python** — Compare `step*_stop_logits.npy` from Python fixture vs C `gen_predict_stop` output. Early stopping could truncate audio.
+4. **[DONE] Verify stop predictor against Python** — `tools/verify_stop_parity.py` compares GGUF logits/classes with `step*_stop_logits.npy`; runtime now uses `argmax`, fixing premature Chinese tail truncation.
 
-5. **[LOW] VAE encoder not end-to-end tested** — encoder code exists and compiles but hasn't been validated against Python encoder output.
+5. **[PARTIAL] VAE encoder end-to-end** — layout unit test and synthetic reference clone smoke pass; Python encoder latent cosine fixture is still pending.
 
 ### 11c. Future Features (not started)
 
