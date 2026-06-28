@@ -361,18 +361,20 @@ struct ggml_tensor * vcpm_vae_conv1d_layer(struct ggml_context * ctx,
     (void)graph;
     struct ggml_tensor * out;
 
-    if (weight->ne[1] == 1 && weight->ne[2] > 1) {
-        /* Depthwise conv1d */
+    if (weight->ne[1] == 1 && weight->ne[2] > 1 && input->ne[1] == weight->ne[2]) {
+        /* Depthwise conv1d: verify input channels match weight's OC dimension.
+         * In GGML format weight [K, IC, OC], depthwise has IC=1, OC=groups.
+         * Regular conv1d with IC=1 (e.g. model.0: Conv1d 1->64, k=7) has
+         * identical weight shape but input->ne[1] != weight->ne[2]. */
         return depthwise_conv1d(ctx, graph, weight, bias, input, stride, pad, dilate, model);
     }
 
     /* Regular conv1d (F32 precision)
-     * For pad > 0 with single output channel (model.9), use causal left-padding.
+     * CausalConv1d: apply left-only padding, then Conv1d(pad=0).
      * Python CausalConv1d applies F.pad(x, (pad*dilation*2, 0)) then Conv1d(pad=0).
-     * This avoids the 3-sample future leakage that causes high-frequency distortion.
-     * For multi-output-channel convs (fc_mu, fc_logvar, encoder block.0), keep
-     * symmetric padding as trained. */
-    if (pad > 0 && weight->ne[2] == 1) {
+     * All VAE V2 conv layers use CausalConv1d (encoder and decoder), so no
+     * symmetric padding anywhere. VAE V2 is a causal model end-to-end. */
+    if (pad > 0) {
         /* Causal left-pad: left_pad = pad * 2 * dilate */
         int left_pad = pad * 2 * (dilate > 0 ? dilate : 1);
         int64_t N = input->ne[0], IC = input->ne[1];
