@@ -141,7 +141,7 @@ vcpm_generation_params vcpm_default_generation_params(void) {
     vcpm_generation_params p;
     memset(&p, 0, sizeof(p));
     p.cfg_value = 2.0f;
-    p.inference_steps = 30;
+    p.inference_steps = 10;
     p.min_len = 2;
     p.max_len = 4096;
     p.denoise = 0;

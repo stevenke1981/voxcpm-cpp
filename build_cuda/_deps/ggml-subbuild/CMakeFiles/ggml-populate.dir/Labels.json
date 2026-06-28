@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/ggml-populate"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/7488d53085bb65c51cfd8fb0c0ead6ff/ggml-populate.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/1f201e02b8eb412b38abe65d9625c400/ggml-populate-complete.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/f78f5d03d4e471ea9bedbf192eed98bb/ggml-populate-build.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/f78f5d03d4e471ea9bedbf192eed98bb/ggml-populate-configure.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/f78f5d03d4e471ea9bedbf192eed98bb/ggml-populate-download.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/f78f5d03d4e471ea9bedbf192eed98bb/ggml-populate-install.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/f78f5d03d4e471ea9bedbf192eed98bb/ggml-populate-mkdir.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/f78f5d03d4e471ea9bedbf192eed98bb/ggml-populate-patch.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/f78f5d03d4e471ea9bedbf192eed98bb/ggml-populate-test.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build_cuda/_deps/ggml-subbuild/CMakeFiles/f78f5d03d4e471ea9bedbf192eed98bb/ggml-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"ggml-populate"
+		],
+		"name" : "ggml-populate"
+	}
+}

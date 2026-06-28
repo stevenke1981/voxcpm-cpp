@@ -1,0 +1,5 @@
+hidden_size=16
+n_heads=4
+n_kv_heads=2
+head_dim=4
+n_tokens=3

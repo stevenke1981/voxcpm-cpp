@@ -1,0 +1,16 @@
+# CMake generation dependency list for this directory.
+C:/Program Files/CMake/share/cmake-4.3/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/CMakeParseImplicitLinkInfo.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/CheckCSourceRuns.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/CheckCXXCompilerFlag.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/CheckCXXSourceCompiles.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/FindOpenMP.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/FindPackageHandleStandardArgs.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/FindPackageMessage.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/Internal/CheckCompilerFlag.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/Internal/CheckFlagCommonConfig.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/Internal/CheckSourceCompiles.cmake
+C:/Program Files/CMake/share/cmake-4.3/Modules/Internal/CheckSourceRuns.cmake
+D:/voxcpm-cpp/build-cpu/_deps/ggml-src/cmake/common.cmake
+D:/voxcpm-cpp/build-cpu/_deps/ggml-src/src/CMakeLists.txt
+D:/voxcpm-cpp/build-cpu/_deps/ggml-src/src/ggml-cpu/cmake/FindSIMD.cmake

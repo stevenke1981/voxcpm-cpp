@@ -1,0 +1,99 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\ggml-cpu.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\ggml-cpu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\repack.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\hbm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\quants.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\traits.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\amx\amx.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\amx\mmq.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\binary-ops.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\unary-ops.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\vec.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\ops.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\arch\x86\quants.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\arch\x86\repack.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\repack.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\hbm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\quants.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\traits.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\amx\amx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\amx\mmq.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\ggml-cpu-impl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\common.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\binary-ops.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\unary-ops.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\simd-mappings.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\vec.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\ggml-cpu\ops.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\voxcpm-cpp\build-cpu\_deps\ggml-src\src\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{34AD4E1B-295F-35E4-A48B-8D40DB511584}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{955E03BE-6BDB-3BDF-A069-9470CEE77E6F}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

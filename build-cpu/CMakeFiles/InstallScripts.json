@@ -1,0 +1,10 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/voxcpm-cpp/build-cpu/cmake_install.cmake",
+		"D:/voxcpm-cpp/build-cpu/_deps/ggml-build/cmake_install.cmake",
+		"D:/voxcpm-cpp/build-cpu/_deps/ggml-build/src/cmake_install.cmake",
+		"D:/voxcpm-cpp/build-cpu/_deps/ggml-build/src/ggml-cpu/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -1,0 +1,3 @@
+hidden_size=8
+n_tokens=4
+eps=1e-06

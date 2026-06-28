@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/CMakeFiles/ggml-populate"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/CMakeFiles/ggml-populate.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/CMakeFiles/ggml-populate-complete.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/ggml-populate-prefix/src/ggml-populate-stamp/ggml-populate-build.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/ggml-populate-prefix/src/ggml-populate-stamp/ggml-populate-configure.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/ggml-populate-prefix/src/ggml-populate-stamp/ggml-populate-download.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/ggml-populate-prefix/src/ggml-populate-stamp/ggml-populate-install.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/ggml-populate-prefix/src/ggml-populate-stamp/ggml-populate-mkdir.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/ggml-populate-prefix/src/ggml-populate-stamp/ggml-populate-patch.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/ggml-populate-prefix/src/ggml-populate-stamp/ggml-populate-test.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-subbuild/ggml-populate-prefix/src/ggml-populate-stamp/ggml-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"ggml-populate"
+		],
+		"name" : "ggml-populate"
+	}
+}

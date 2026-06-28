@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/ggml-populate"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/df0c872d8a4f8714734468a7fb11d639/ggml-populate.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/4897b499c805766c465adde3cbf9ac6e/ggml-populate-complete.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/e41d539eef630c5443a1d535c0d23f47/ggml-populate-build.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/e41d539eef630c5443a1d535c0d23f47/ggml-populate-configure.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/e41d539eef630c5443a1d535c0d23f47/ggml-populate-download.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/e41d539eef630c5443a1d535c0d23f47/ggml-populate-install.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/e41d539eef630c5443a1d535c0d23f47/ggml-populate-mkdir.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/e41d539eef630c5443a1d535c0d23f47/ggml-populate-patch.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/e41d539eef630c5443a1d535c0d23f47/ggml-populate-test.rule"
+		},
+		{
+			"file" : "D:/voxcpm-cpp/build-cpu/_deps/ggml-subbuild/CMakeFiles/e41d539eef630c5443a1d535c0d23f47/ggml-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"ggml-populate"
+		],
+		"name" : "ggml-populate"
+	}
+}

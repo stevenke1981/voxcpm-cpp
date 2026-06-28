@@ -241,6 +241,14 @@ if(VCPM_BUILD_TESTS)
     target_compile_definitions(test_fixture_parity PRIVATE
         FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_link_libraries(test_fixture_parity PRIVATE voxcpm)
+
+    add_executable(debug_attention_dump tests/debug_attention_dump.c)
+    target_include_directories(debug_attention_dump PRIVATE
+        ${VCPM_TEST_PRIVATE_INCLUDES}
+        ${ggml_SOURCE_DIR}/include)
+    target_compile_definitions(debug_attention_dump PRIVATE
+        FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+    target_link_libraries(debug_attention_dump PRIVATE voxcpm)
     set(VCPM_MODEL_FIXTURE "$ENV{VCPM_MODEL}")
     if(VCPM_MODEL_FIXTURE)
         add_test(NAME vae_only COMMAND test_vae_only "${VCPM_MODEL_FIXTURE}")

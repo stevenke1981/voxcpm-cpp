@@ -1,0 +1,11 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/voxcpm-cpp/build-cuda-ninja/cmake_install.cmake",
+		"D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-build/cmake_install.cmake",
+		"D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-build/src/cmake_install.cmake",
+		"D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-build/src/ggml-cpu/cmake_install.cmake",
+		"D:/voxcpm-cpp/build-cuda-ninja/_deps/ggml-build/src/ggml-cuda/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

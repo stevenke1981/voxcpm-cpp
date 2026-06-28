@@ -1,0 +1,514 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClInclude Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\include\ggml-cuda.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\acc.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\add-id.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\allreduce.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\arange.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\argmax.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\argsort.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\binbcast.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\clamp.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\col2im-1d.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\concat.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\conv-transpose-1d.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\conv2d-dw.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\conv2d-transpose.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\conv2d.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\convert.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\count-equal.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\cpy.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\cross-entropy-loss.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\cumsum.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\diag.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\diagmask.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\fattn-tile.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\fattn-wmma-f16.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\fattn.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\fill.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\fwht.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\gated_delta_net.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\getrows.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\ggml-cuda.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\gla.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\im2col.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\mean.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\mmf.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\mmid.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\mmq.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\mmvf.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\mmvq.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\norm.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\opt-step-adamw.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\opt-step-sgd.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\out-prod.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\pad.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\pad_reflect_1d.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\pool2d.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\quantize.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\roll.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\rope.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\scale.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\set-rows.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\set.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\snake.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\softcap.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\softmax.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\solve_tri.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\ssm-conv.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\ssm-scan.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\sum.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\sumrows.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\top-k.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\topk-moe.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\tri.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\tsembd.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\unary.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\upscale.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\wkv.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq112-dv112.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq128-dv128.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq192-dv128.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq256-dv256.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq320-dv256.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq40-dv40.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq512-dv512.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq576-dv512.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq64-dv64.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq72-dv72.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq80-dv80.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-tile-instance-dkq96-dv96.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_1-ncols2_16.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_1-ncols2_32.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_1-ncols2_8.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_16-ncols2_1.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_16-ncols2_2.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_16-ncols2_4.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_2-ncols2_16.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_2-ncols2_32.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_2-ncols2_4.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_2-ncols2_8.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_32-ncols2_1.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_32-ncols2_2.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_4-ncols2_16.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_4-ncols2_2.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_4-ncols2_4.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_4-ncols2_8.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_64-ncols2_1.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_8-ncols2_1.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_8-ncols2_2.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_8-ncols2_4.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-mma-f16-instance-ncols1_8-ncols2_8.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-iq1_s.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-iq2_s.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-iq2_xs.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-iq2_xxs.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-iq3_s.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-iq3_xxs.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-iq4_nl.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-iq4_xs.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-mxfp4.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-nvfp4.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q1_0.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q2_k.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q3_k.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q4_0.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q4_1.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q4_k.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q5_0.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q5_1.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q5_k.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q6_k.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmq-instance-q8_0.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_1.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_10.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_11.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_12.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_13.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_14.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_15.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_16.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_2.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_3.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_4.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_5.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_6.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_7.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_8.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\mmf-instance-ncols_9.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-vec-instance-f16-f16.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-vec-instance-q4_0-q4_0.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-vec-instance-q8_0-q8_0.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\..\..\ggml-src\src\ggml-cuda\template-instances\fattn-vec-instance-bf16-bf16.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\acc.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\add-id.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\allreduce.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\arange.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\argmax.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\argsort.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\binbcast.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\clamp.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\col2im-1d.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\common.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\concat.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\conv-transpose-1d.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\conv2d-dw.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\conv2d-transpose.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\conv2d.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\convert.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\count-equal.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\cp-async.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\cpy-utils.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\cpy.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\cross-entropy-loss.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\cumsum.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\dequantize.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\diag.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\diagmask.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\fattn-common.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\fattn-mma-f16.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\fattn-tile.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\fattn-vec.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\fattn-wmma-f16.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\fattn.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\fill.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\fwht.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\gated_delta_net.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\getrows.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\gla.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\im2col.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\mean.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\mma.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\mmf.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\mmid.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\mmq.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\mmvf.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\mmvq.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\norm.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\opt-step-adamw.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\opt-step-sgd.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\out-prod.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\pad.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\pad_reflect_1d.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\pool2d.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\quantize.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\reduce_rows.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\roll.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\rope.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\scale.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\set-rows.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\set.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\snake.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\softcap.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\softmax.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\solve_tri.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\ssm-conv.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\ssm-scan.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\sum.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\sumrows.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\top-k.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\topk-moe.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\tri.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\tsembd.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\unary.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\upscale.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\vecdotq.cuh" />
+    <None Include="D:\voxcpm-cpp\build_cuda\_deps\ggml-src\src\ggml-cuda\wkv.cuh" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{6617D366-5A12-3356-8FCC-F0D6E5C50F30}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{BEE478C6-CBB8-3CE8-A223-5F9579A4AD60}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

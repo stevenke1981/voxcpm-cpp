@@ -300,10 +300,10 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state * state,
 
     ggml_build_forward_expand(vae_graph, audio_t);
     if (vcpm_debug_env()) fprintf(stderr, "VCPM_DEBUG VAE: about to compute\n");
-    /* Always use CPU for VAE decode: ggml_im2col + ggml_mul_mat with F32
-     * weights produce all-zero or NaN results on CUDA due to depthwise conv
-     * shape routing issues. The VAE graph is ~0.03% of total compute cost,
-     * so CPU fallback has negligible latency impact. */
+    /* Always use CPU for VAE decode: ggml_conv_1d_dw and depthwise conv
+     * involve many small kernel launches on GPU with F32 weight upload
+     * overhead that dominates latency. CPU fallback is significantly faster
+     * (empirical: ~0.2s VAE on CPU vs ~28s GPU upload+compute for Q8 model). */
     {
         struct ggml_cplan vae_plan = ggml_graph_plan(vae_graph, 1, NULL);
         size_t vae_work_sz = vae_plan.work_size;
