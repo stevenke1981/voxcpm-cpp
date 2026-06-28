@@ -141,12 +141,34 @@ vcpm_status vcpm_gen_run(vcpm_generate_state * state,
 
         /* Normal generation position */
         float * patch = latent_out + (size_t)n_patches * (size_t)total_patch_dim;
+
+        /* Save pre-update hidden for stop check.
+         * Python ordering: stop check uses the SAME lm_hidden that conditioned
+         * this DIT step, BEFORE the lm_hidden update via base_lm.forward_step.
+         * gen_step internally calls gen_lm_update which overwrites last_lm_hidden,
+         * so we copy BEFORE gen_step. */
+        int stop_hs = state->hidden_size;
+        float pre_hidden_buf[4096];
+        int have_pre_hidden = 0;
+        if (state->last_lm_hidden && stop_hs > 0 && stop_hs <= 2048) {
+            memcpy(pre_hidden_buf, state->last_lm_hidden, (size_t)stop_hs * sizeof(float));
+            have_pre_hidden = 1;
+        }
+
         vcpm_status st = vcpm_gen_step(state, token_ids, pos, gen_params, patch);
         if (st != VCPM_OK) return st;
         n_patches++;
 
-        if (n_patches >= min_patches) {
+        /* Python check condition: i > min_len where i = n_patches - 1.
+         * Equivalent: n_patches > min_patches + 1. */
+        if (n_patches > min_patches + 1) {
+            float * saved_hidden = NULL;
+            if (have_pre_hidden) {
+                saved_hidden = state->last_lm_hidden;
+                state->last_lm_hidden = pre_hidden_buf;
+            }
             float stop_prob = gen_predict_stop(state, n_patches - 1);
+            if (saved_hidden) state->last_lm_hidden = saved_hidden;
             if (stop_prob >= 0.0f) {
                 if (stop_prob > stop_threshold) {
                     if (vcpm_debug_shapes_env()) {

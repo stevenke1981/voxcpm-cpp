@@ -89,17 +89,58 @@ float gen_predict_stop(vcpm_generate_state * state, int ar_step) {
         free(proj_out); free(logits); free(W_buf); free(b_buf);
         return -1.0f;
     }
-    read_tensor_f32(state->stop_proj_weight, W_buf, (size_t)hs * hs);
-    if (b_buf) read_tensor_f32(state->stop_proj_bias, b_buf, (size_t)hs);
+    int err_w = read_tensor_f32(state->stop_proj_weight, W_buf, (size_t)hs * hs);
+    int err_b = 0;
+    if (b_buf) err_b = read_tensor_f32(state->stop_proj_bias, b_buf, (size_t)hs);
+    if (err_w || err_b) {
+        fprintf(stderr, "VCPM_DEBUG_STOP_ERROR: read_tensor_f32 failed err_w=%d err_b=%d\n", err_w, err_b);
+        free(proj_out); free(logits); free(W_buf); free(b_buf);
+        return -1.0f;
+    }
 
-    /* stop_proj: [2048, 2048] hidden [2048] -> proj [2048] */
+    /* stop_proj: GGUF weight shape = [in_features=2048, out_features=2048]
+     * (transposed from PyTorch's [out_features, in_features] by converter).
+     * Stored in C row-major: W_gguf[i, j] = W_pytorch[j, i]
+     * Correct access: proj_out[i] = Σ hidden[j] * W_gguf[j, i] = Σ hidden[j] * W_buf[j*hs + i]
+     * (NOT W_buf[i*hs+j] which would read W_pytorch[i,j]'s transpose). */
     for (int i = 0; i < hs; i++) {
         float sum = b_buf ? b_buf[i] : 0.0f;
         for (int j = 0; j < hs; j++) {
-            sum += W_buf[i * hs + j] * hidden[j];
+            sum += W_buf[j * hs + i] * hidden[j];
         }
         proj_out[i] = sum;
     }
+
+    /* Debug: diag stop weight and bias after read */
+    {
+        int wt = state->stop_proj_weight ? (int)state->stop_proj_weight->type : -1;
+        int bt = state->stop_proj_bias ? (int)state->stop_proj_bias->type : -1;
+        fprintf(stderr, "VCPM_DIAG_STOP: b_buf=%s stop_proj_weight.type=%d bias.type=%d\n",
+                b_buf ? "non-NULL" : "NULL", wt, bt);
+        fprintf(stderr, "VCPM_DIAG_STOP: W_buf col0[0..3]=%.8f %.8f %.8f %.8f\n",
+                W_buf[0], W_buf[hs], W_buf[2*hs], W_buf[3*hs]);
+        fprintf(stderr, "VCPM_DIAG_STOP: W_buf col1[0..3]=%.8f %.8f %.8f %.8f\n",
+                W_buf[1], W_buf[hs+1], W_buf[2*hs+1], W_buf[3*hs+1]);
+        fprintf(stderr, "VCPM_DIAG_STOP: hidden[0..3]=%.8f %.8f %.8f %.8f\n",
+                hidden[0], hidden[1], hidden[2], hidden[3]);
+        if (b_buf) {
+            fprintf(stderr, "VCPM_DIAG_STOP: bias[0]=%.8f bias[1]=%.8f\n", b_buf[0], b_buf[1]);
+        }
+        float dot_0 = 0, dot_1 = 0;
+        for (int j = 0; j < hs; j++) {
+            dot_0 += W_buf[j * hs + 0] * hidden[j];
+            dot_1 += W_buf[j * hs + 1] * hidden[j];
+        }
+        fprintf(stderr, "VCPM_DIAG_STOP: dot_0=%.8f dot_1=%.8f\n", dot_0, dot_1);
+        if (b_buf) {
+            fprintf(stderr, "VCPM_DIAG_STOP: proj_out[0]=%.8f (bias=%.8f) proj_out[1]=%.8f (bias=%.8f)\n",
+                    dot_0 + b_buf[0], b_buf[0], dot_1 + b_buf[1], b_buf[1]);
+        } else {
+            fprintf(stderr, "VCPM_DIAG_STOP: proj_out[0]=%.8f (no bias) proj_out[1]=%.8f (no bias)\n",
+                    dot_0, dot_1);
+        }
+    }
+
     free(W_buf);
     free(b_buf);
 
@@ -109,18 +150,21 @@ float gen_predict_stop(vcpm_generate_state * state, int ar_step) {
         proj_out[i] = x / (1.0f + expf(-x));
     }
 
-    /* stop_head: weight ne=[in_features=2048, out_features=2] */
+    /* stop_head: GGUF tensor shape = [in_features=2048, out_features=2]
+     * Stored in C row-major: flat[2*i+0] = W_ggml[i,0] = input[i]->output[0] (continue)
+     *                           flat[2*i+1] = W_ggml[i,1] = input[i]->output[1] (stop)
+     * Must use stride=2 (not stride=hs) to read each column separately. */
     {
         float * H_buf = (float *)malloc((size_t)hs * 2 * sizeof(float));
         if (!H_buf) { free(proj_out); free(logits); return -1.0f; }
         read_tensor_f32(state->stop_head_weight, H_buf, (size_t)hs * 2);
-        for (int k = 0; k < 2; k++) {
-            float sum = 0.0f;
-            for (int j = 0; j < hs; j++) {
-                sum += H_buf[k * hs + j] * proj_out[j];
-            }
-            logits[k] = sum;
+        float sum0 = 0.0f, sum1 = 0.0f;
+        for (int j = 0; j < hs; j++) {
+            sum0 += H_buf[2 * j + 0] * proj_out[j];
+            sum1 += H_buf[2 * j + 1] * proj_out[j];
         }
+        logits[0] = sum0;
+        logits[1] = sum1;
         free(H_buf);
     }
 

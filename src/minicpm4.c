@@ -274,13 +274,16 @@ struct ggml_tensor * vcpm_attention(struct ggml_context * ctx,
         int64_t kv_len;
         struct ggml_tensor * k_sel, * v_sel;
         if (no_causal) {
-            /* Non-causal: bidrectional, attend to all n_tokens */
+            /* Non-causal: bidirectional, attend to all n_tokens using
+             * fresh K/V (not KV cache).  The cache would accumulate stale
+             * positions across persistent-graph compute iterations since
+             * n_used is incremented each call. */
             k_sel = ggml_view_3d(ctx, k_reshaped,
-                                  head_dim, n_kv_heads, n_tokens,
-                                  k_reshaped->nb[1], k_reshaped->nb[2], 0);
+                                   head_dim, n_kv_heads, n_tokens,
+                                   k_reshaped->nb[1], k_reshaped->nb[2], 0);
             v_sel = ggml_view_3d(ctx, v_reshaped,
-                                  head_dim, n_kv_heads, n_tokens,
-                                  v_reshaped->nb[1], v_reshaped->nb[2], 0);
+                                   head_dim, n_kv_heads, n_tokens,
+                                   v_reshaped->nb[1], v_reshaped->nb[2], 0);
             kv_len = n_tokens;
         } else {
             /* Causal: use KV cache up to write_pos + ti + 1

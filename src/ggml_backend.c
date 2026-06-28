@@ -63,6 +63,10 @@ int vcpm_backend_init(vcpm_backend * be, int backend_type, int n_threads) {
                 char desc[128];
                 ggml_backend_cuda_get_device_description(0, desc, sizeof(desc));
                 fprintf(stderr, "vcpm_backend: initialized CUDA backend (device 0: %s)\n", desc);
+                /* Force FP16 cuBLAS compute for Tensor Core acceleration.
+                 * On Ampere+ (RTX 3070 Ti: cc=8.6) ggml already defaults to FP16,
+                 * but this env var ensures consistent behavior across all GPUs. */
+                _putenv_s("GGML_CUDA_FORCE_CUBLAS_COMPUTE_16F", "1");
                 be->initialized = 1;
                 return 0;
             }
