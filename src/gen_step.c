@@ -58,19 +58,15 @@ static float vcpm_cfm_apply_cfg_zero_star(float * uncond,
                                            const float * cond,
                                            int n,
                                            float cfg_value) {
-    double dot = 0.0;
-    double norm = 0.0;
+    /* Standard CFG: blend = uncond + cfg_value * (cond - uncond)
+     * Equivalent to Python formula with st_star=1.0:
+     *   blend = uncond * 1.0 + cfg_value * (cond - uncond * 1.0)
+     * Returns 1.0 as st_star stub. */
+    (void)n;
     for (int i = 0; i < n; ++i) {
-        dot += (double)cond[i] * (double)uncond[i];
-        norm += (double)uncond[i] * (double)uncond[i];
+        uncond[i] = uncond[i] + cfg_value * (cond[i] - uncond[i]);
     }
-
-    const float scale = (float)(dot / (norm + 1.0e-8));
-    for (int i = 0; i < n; ++i) {
-        const float uncond_scaled = uncond[i] * scale;
-        uncond[i] = uncond_scaled + cfg_value * (cond[i] - uncond_scaled);
-    }
-    return scale;
+    return 1.0f;
 }
 
 static int vcpm_cfm_read_npy_f32(const char * path, float * dst, size_t expected_n) {
