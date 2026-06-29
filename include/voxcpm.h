@@ -77,6 +77,9 @@ vcpm_generation_params vcpm_default_generation_params(void);
 
 vcpm_context * vcpm_load_model(const char * gguf_path, const vcpm_model_params * params);
 vcpm_status vcpm_generate(vcpm_context * ctx, const vcpm_generation_params * params, vcpm_audio * out_audio);
+/* Calls cb once per generated latent patch (normally 160 ms at 48 kHz).
+ * samples remains valid only for the duration of the callback. Returning
+ * non-zero cancels generation and returns VCPM_ERR_BACKEND. */
 vcpm_status vcpm_generate_stream(vcpm_context * ctx, const vcpm_generation_params * params, vcpm_stream_cb cb, void * user_data);
 const char * vcpm_last_error(const vcpm_context * ctx);
 void vcpm_audio_free(vcpm_audio * audio);

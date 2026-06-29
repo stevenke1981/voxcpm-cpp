@@ -116,7 +116,8 @@ reference 與 prompt latents 以 `[reference patches][prompt patches]` 排入同
 - Python 的 ZipEnhancer denoiser 尚無 native C backend；`--denoise` 會明確回傳
   `VCPM_ERR_NOT_IMPLEMENTED`，可先在 runtime 外部預處理 conditioning audio。
 - Python 端可選的 VAD/長音訊切分未移植；目前應自行提供乾淨、長度合理的 WAV。
-- streaming 仍是一階段 callback，不是低延遲分塊串流。
+- streaming 已改為每個生成 patch 回呼一次新 PCM；clone conditioning 仍沿用相同
+  sequence 與 consent gate。
 - clone 端到端已對齊序列與 conditioning 語意，但多 patch recurrence 仍有累積
   數值漂移；不能把「三模式 smoke 通過」誤寫成全模型 bit-exact。
 - 模型權重、真人聲音樣本與生成 WAV 不納入 git。

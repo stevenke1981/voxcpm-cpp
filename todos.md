@@ -186,7 +186,10 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
 
 ### 11c. Future Features (not started)
 
-- [ ] True chunked streaming (`vcpm_generate_stream` with chunked AudioVAE decode).
+- [x] True chunked callback streaming：每個 AR patch 生成後回呼 160 ms PCM，
+  串接結果與 non-stream decode 在 `1e-6` 內逐 sample 等價。
+- [ ] 將 correctness-first 完整 causal-prefix VAE 重算優化成逐層 convolution state，
+  降低長音訊的二次計算量。
 - [ ] `design` CLI (voice design with control prefix).
 - [ ] `batch` CLI (batch generation from text file).
 - [ ] Sidecar JSON metadata for AI-generated content labeling.
@@ -250,8 +253,8 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
    逐步記錄 trajectory 與 next-state cosine，避免只看最終 WAV。
 
 ### P1 (下一階段)
-3. **True streaming 設計與實作** — 需要持久化每層 causal-conv state，
-   並驗證多 callback 與非 streaming decode 等價。
+3. **Streaming decoder 效能** — 多 callback 與 non-streaming PCM 等價已完成；
+   下一步以逐層 causal-conv state 取代完整 prefix 重算。
 
 ### P2
 4. **Native ZipEnhancer denoiser backend**。

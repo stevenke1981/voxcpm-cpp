@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <limits.h>
 
 struct vcpm_context {
     char last_error[512];
@@ -237,15 +238,90 @@ vcpm_context *vcpm_load_model(const char *gguf_path, const vcpm_model_params *pa
     return ctx;
 }
 
-vcpm_status vcpm_generate(vcpm_context *ctx, const vcpm_generation_params *params,
-                          vcpm_audio *out_audio) {
-    if (!ctx || !params || !out_audio)
+typedef struct vcpm_stream_decode_state {
+    vcpm_stream_cb callback;
+    void *user_data;
+    float *decoded_prefix;
+    size_t capacity;
+    size_t emitted_samples;
+    int sample_rate;
+    int callback_failed;
+} vcpm_stream_decode_state;
+
+static vcpm_status vcpm_decode_stream_prefix(
+    vcpm_generate_state *state, const float *latent_prefix,
+    int n_patches, void *user_data) {
+    vcpm_stream_decode_state *stream =
+        (vcpm_stream_decode_state *)user_data;
+    if (!state || !latent_prefix || n_patches <= 0 || !stream ||
+        !stream->callback)
+        return VCPM_ERR_INVALID_ARG;
+
+    int patch_size =
+        state->model && state->model->config.patch_size > 0
+            ? state->model->config.patch_size
+            : 1;
+    int upsample = 1;
+    for (int i = 0; i < VCPM_VAE_V2_N_DECODER_BLOCKS; i++) {
+        int stride = state->vae_v2_cfg.decoder_rates[i];
+        if (stride <= 0 || upsample > INT_MAX / stride)
+            return VCPM_ERR_MODEL_FORMAT;
+        upsample *= stride;
+    }
+    size_t required =
+        (size_t)n_patches * (size_t)patch_size * (size_t)upsample;
+    size_t max_stream_samples = (size_t)stream->sample_rate * 30U;
+    if (required > max_stream_samples)
+        required = max_stream_samples;
+    if (required <= stream->emitted_samples)
+        return VCPM_OK;
+
+    if (required > stream->capacity) {
+        float *next =
+            (float *)realloc(stream->decoded_prefix,
+                             required * sizeof(float));
+        if (!next)
+            return VCPM_ERR_OOM;
+        stream->decoded_prefix = next;
+        stream->capacity = required;
+    }
+
+    int decoded_samples = 0;
+    vcpm_status status = vcpm_gen_decode(
+        state, latent_prefix, n_patches, stream->decoded_prefix,
+        (int)required, &decoded_samples);
+    if (status != VCPM_OK)
+        return status;
+    if (decoded_samples < 0 ||
+        (size_t)decoded_samples < stream->emitted_samples)
+        return VCPM_ERR_BACKEND;
+
+    size_t new_samples =
+        (size_t)decoded_samples - stream->emitted_samples;
+    if (new_samples > 0) {
+        int callback_status = stream->callback(
+            stream->decoded_prefix + stream->emitted_samples,
+            new_samples, stream->sample_rate, stream->user_data);
+        if (callback_status != 0) {
+            stream->callback_failed = 1;
+            return VCPM_ERR_BACKEND;
+        }
+        stream->emitted_samples = (size_t)decoded_samples;
+    }
+    return VCPM_OK;
+}
+
+static vcpm_status vcpm_generate_impl(
+    vcpm_context *ctx, const vcpm_generation_params *params,
+    vcpm_audio *out_audio, vcpm_stream_cb stream_cb, void *stream_user_data) {
+    if (!ctx || !params || (!out_audio && !stream_cb))
         return VCPM_ERR_INVALID_ARG;
     if (!params->text || !params->text[0]) {
         vcpm_set_error(ctx, "text must not be empty");
         return VCPM_ERR_INVALID_ARG;
     }
-    memset(out_audio, 0, sizeof(*out_audio));
+    if (out_audio)
+        memset(out_audio, 0, sizeof(*out_audio));
 
     int is_reference = params->reference_audio_path && params->reference_audio_path[0];
     int is_prompt_audio = params->prompt_audio_path && params->prompt_audio_path[0];
@@ -452,28 +528,55 @@ vcpm_status vcpm_generate(vcpm_context *ctx, const vcpm_generation_params *param
         return VCPM_ERR_OOM;
     }
 
+    int output_sample_rate = ctx->model->config.vae_out_sample_rate > 0
+                                 ? ctx->model->config.vae_out_sample_rate
+                                 : ctx->model->config.sample_rate;
+    vcpm_stream_decode_state stream_state;
+    memset(&stream_state, 0, sizeof(stream_state));
+    stream_state.callback = stream_cb;
+    stream_state.user_data = stream_user_data;
+    stream_state.sample_rate = output_sample_rate;
+
     int n_patches = 0;
-    vcpm_status st = vcpm_gen_run(gen_state, seq.token_ids, seq.text_mask, seq.audio_mask,
-                                  seq.length, seq.first_gen_pos, latent_buffer, &n_patches,
-                                  max_patches, params);
+    vcpm_status st;
+    if (stream_cb) {
+        st = vcpm_gen_run_stream(
+            gen_state, seq.token_ids, seq.text_mask, seq.audio_mask,
+            seq.length, seq.first_gen_pos, latent_buffer, &n_patches,
+            max_patches, params, vcpm_decode_stream_prefix, &stream_state);
+    } else {
+        st = vcpm_gen_run(
+            gen_state, seq.token_ids, seq.text_mask, seq.audio_mask,
+            seq.length, seq.first_gen_pos, latent_buffer, &n_patches,
+            max_patches, params);
+    }
     free(conditioning_latents);
     gen_state->conditioning_latent_data = NULL;
     if (st != VCPM_OK) {
+        free(stream_state.decoded_prefix);
         free(latent_buffer);
         vcpm_gen_free(gen_state);
-        vcpm_set_error(ctx, "generation failed before latent decode");
+        vcpm_set_error(
+            ctx, stream_state.callback_failed
+                     ? "stream callback failed"
+                     : "generation failed before latent decode");
         return st;
     }
     if (n_patches <= 0) {
+        free(stream_state.decoded_prefix);
         free(latent_buffer);
         vcpm_gen_free(gen_state);
         vcpm_set_error(ctx, "generation produced no latent patches");
         return VCPM_ERR_MODEL_FORMAT;
     }
 
-    int output_sample_rate = ctx->model->config.vae_out_sample_rate > 0
-                                 ? ctx->model->config.vae_out_sample_rate
-                                 : ctx->model->config.sample_rate;
+    if (stream_cb) {
+        free(stream_state.decoded_prefix);
+        free(latent_buffer);
+        vcpm_gen_free(gen_state);
+        return VCPM_OK;
+    }
+
     size_t max_audio_samples = (size_t) output_sample_rate * 30; /* 30 sec max */
     float *audio_buf = (float *) malloc(max_audio_samples * sizeof(float));
     if (!audio_buf) {
@@ -507,23 +610,17 @@ vcpm_status vcpm_generate(vcpm_context *ctx, const vcpm_generation_params *param
     return VCPM_OK;
 }
 
+vcpm_status vcpm_generate(vcpm_context *ctx,
+                          const vcpm_generation_params *params,
+                          vcpm_audio *out_audio) {
+    return vcpm_generate_impl(ctx, params, out_audio, NULL, NULL);
+}
+
 vcpm_status vcpm_generate_stream(vcpm_context *ctx, const vcpm_generation_params *params,
                                  vcpm_stream_cb cb, void *user_data) {
     if (!ctx || !params || !cb)
         return VCPM_ERR_INVALID_ARG;
-
-    vcpm_audio audio;
-    vcpm_status st = vcpm_generate(ctx, params, &audio);
-    if (st != VCPM_OK)
-        return st;
-
-    int cb_ret = cb(audio.samples, audio.n_samples, audio.sample_rate, user_data);
-    vcpm_audio_free(&audio);
-    if (cb_ret != 0) {
-        vcpm_set_error(ctx, "stream callback failed");
-        return VCPM_ERR_BACKEND;
-    }
-    return VCPM_OK;
+    return vcpm_generate_impl(ctx, params, NULL, cb, user_data);
 }
 
 const char *vcpm_last_error(const vcpm_context *ctx) {

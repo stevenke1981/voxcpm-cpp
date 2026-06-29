@@ -56,10 +56,12 @@ int vcpm_build_prompt_segments(const int32_t *text_mask, const int32_t *audio_ma
     return count;
 }
 
-vcpm_status vcpm_gen_run(vcpm_generate_state *state, const int32_t *token_ids,
-                         const int32_t *text_mask, const int32_t *audio_mask, int seq_len,
-                         int first_gen_pos, float *latent_out, int *n_patches_out,
-                         int max_patches, const vcpm_generation_params *gen_params) {
+static vcpm_status vcpm_gen_run_impl(
+    vcpm_generate_state *state, const int32_t *token_ids,
+    const int32_t *text_mask, const int32_t *audio_mask, int seq_len,
+    int first_gen_pos, float *latent_out, int *n_patches_out,
+    int max_patches, const vcpm_generation_params *gen_params,
+    vcpm_gen_patch_cb patch_cb, void *user_data) {
     if (!state || !token_ids || !text_mask || !audio_mask || !latent_out || !n_patches_out)
         return VCPM_ERR_INVALID_ARG;
     if (seq_len <= 0 || max_patches <= 0 || first_gen_pos < 0 || first_gen_pos >= seq_len)
@@ -183,6 +185,11 @@ vcpm_status vcpm_gen_run(vcpm_generate_state *state, const int32_t *token_ids,
         if (st != VCPM_OK)
             return st;
         n_patches++;
+        if (patch_cb) {
+            st = patch_cb(state, latent_out, n_patches, user_data);
+            if (st != VCPM_OK)
+                return st;
+        }
 
         /* Python check condition: i > min_len where i = n_patches - 1.
          * Equivalent: n_patches > min_patches + 1. */
@@ -229,6 +236,28 @@ vcpm_status vcpm_gen_run(vcpm_generate_state *state, const int32_t *token_ids,
         }
     }
     return VCPM_OK;
+}
+
+vcpm_status vcpm_gen_run(vcpm_generate_state *state, const int32_t *token_ids,
+                         const int32_t *text_mask, const int32_t *audio_mask, int seq_len,
+                         int first_gen_pos, float *latent_out, int *n_patches_out,
+                         int max_patches, const vcpm_generation_params *gen_params) {
+    return vcpm_gen_run_impl(
+        state, token_ids, text_mask, audio_mask, seq_len, first_gen_pos,
+        latent_out, n_patches_out, max_patches, gen_params, NULL, NULL);
+}
+
+vcpm_status vcpm_gen_run_stream(vcpm_generate_state *state, const int32_t *token_ids,
+                                const int32_t *text_mask, const int32_t *audio_mask,
+                                int seq_len, int first_gen_pos, float *latent_out,
+                                int *n_patches_out, int max_patches,
+                                const vcpm_generation_params *gen_params,
+                                vcpm_gen_patch_cb patch_cb, void *user_data) {
+    if (!patch_cb)
+        return VCPM_ERR_INVALID_ARG;
+    return vcpm_gen_run_impl(
+        state, token_ids, text_mask, audio_mask, seq_len, first_gen_pos,
+        latent_out, n_patches_out, max_patches, gen_params, patch_cb, user_data);
 }
 
 /* ---- AudioVAE V2 decode ---- */

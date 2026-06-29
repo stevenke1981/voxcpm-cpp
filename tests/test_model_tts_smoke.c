@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct audio_stats {
     float peak;
@@ -21,6 +22,8 @@ typedef struct stream_capture {
     int sample_rate;
     size_t n_samples;
     audio_stats stats;
+    float * samples;
+    size_t capacity;
 } stream_capture;
 
 static audio_stats calc_stats(const float * samples, size_t n_samples) {
@@ -66,11 +69,33 @@ static int capture_stream_cb(const float * samples, size_t n_samples,
                              int sample_rate, void * user_data) {
     stream_capture * cap = (stream_capture *)user_data;
     if (!cap || !samples) return -1;
+    if (cap->n_samples + n_samples > cap->capacity) {
+        size_t next_capacity = cap->capacity ? cap->capacity * 2 : n_samples;
+        while (next_capacity < cap->n_samples + n_samples)
+            next_capacity *= 2;
+        float * next = (float *)realloc(
+            cap->samples, next_capacity * sizeof(float));
+        if (!next) return -1;
+        cap->samples = next;
+        cap->capacity = next_capacity;
+    }
+    memcpy(cap->samples + cap->n_samples, samples,
+           n_samples * sizeof(float));
     cap->calls++;
     cap->sample_rate = sample_rate;
-    cap->n_samples = n_samples;
-    cap->stats = calc_stats(samples, n_samples);
+    cap->n_samples += n_samples;
+    cap->stats = calc_stats(cap->samples, cap->n_samples);
     return 0;
+}
+
+static int reject_stream_cb(const float * samples, size_t n_samples,
+                            int sample_rate, void * user_data) {
+    (void)samples;
+    (void)n_samples;
+    (void)sample_rate;
+    int * calls = (int *)user_data;
+    (*calls)++;
+    return 1;
 }
 
 int main(int argc, char ** argv) {
@@ -91,6 +116,12 @@ int main(int argc, char ** argv) {
     vcpm_status st = vcpm_generate(ctx, &gp, &audio);
     assert(st == VCPM_OK);
     assert_audio_sane(&audio);
+    size_t expected_samples = audio.n_samples;
+    float * expected_audio = (float *)malloc(
+        expected_samples * sizeof(float));
+    assert(expected_audio != NULL);
+    memcpy(expected_audio, audio.samples,
+           expected_samples * sizeof(float));
     printf("PASS: model TTS smoke (%zu samples, %d Hz)\n",
            audio.n_samples, audio.sample_rate);
     vcpm_audio_free(&audio);
@@ -103,19 +134,30 @@ int main(int argc, char ** argv) {
     cap.stats.rms = 0.0;
     cap.stats.finite_count = 0;
     cap.stats.clip_count = 0;
+    cap.samples = NULL;
+    cap.capacity = 0;
 
     st = vcpm_generate_stream(ctx, &gp, capture_stream_cb, &cap);
     assert(st == VCPM_OK);
-    assert(cap.calls == 1);
+    assert(cap.calls > 1);
     assert(cap.sample_rate == 48000);
-    assert(cap.n_samples > (size_t)cap.sample_rate / 2);
+    assert(cap.n_samples == expected_samples);
     assert(cap.stats.finite_count == cap.n_samples);
     assert(cap.stats.peak > 0.01f);
     assert(cap.stats.peak < 1.5f);
     assert(cap.stats.rms > 0.001);
     assert(cap.stats.clip_count == 0);
+    for (size_t i = 0; i < expected_samples; i++)
+        assert(fabsf(cap.samples[i] - expected_audio[i]) < 1e-6f);
     printf("PASS: model stream smoke (%zu samples, %d Hz)\n",
            cap.n_samples, cap.sample_rate);
+    free(cap.samples);
+    free(expected_audio);
+
+    int rejected_calls = 0;
+    st = vcpm_generate_stream(ctx, &gp, reject_stream_cb, &rejected_calls);
+    assert(st == VCPM_ERR_BACKEND);
+    assert(rejected_calls == 1);
 
     vcpm_free(ctx);
     return 0;

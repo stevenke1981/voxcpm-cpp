@@ -112,7 +112,8 @@ voxcpm-c/
 - [x] Model fixture tests pass.
 - [x] TTS smoke produces valid 48 kHz mono WAV.
 - [x] Clone smoke produces valid WAV (synthetic reference; consent gate enabled).
-- [x] Streaming one-shot callback smoke passes.
+- [x] Streaming performs one callback per generated patch; concatenated PCM
+  matches non-streaming decode and callback cancellation is propagated.
 - [x] Third-party notices included; project-level license selection remains an
   explicit repository-owner decision.
 - [x] README documents safety limitations.
@@ -136,5 +137,6 @@ voxcpm-c/
 - Upstream Python parity fixtures for tokenizer, sequence, Base LM, LocEnc/FSQ/RALM, LocDiT/CFM, and AudioVAE are still required before declaring semantic parity.
 - TTS currently passes objective WAV sanity only; intelligibility/voice quality still needs listening review and fixture parity.
 - Reference cloning is not implemented beyond the CLI safety gate.
-- Streaming is a one-shot callback baseline, not true chunked autoregressive/AudioVAE streaming.
+- Streaming currently recomputes the complete causal VAE prefix per patch;
+  per-layer convolution-state caching remains a performance optimization.
 - Generation memory uses a large 6 GiB arena; long-form output still needs graph allocator reuse and memory growth tests.

@@ -171,6 +171,11 @@ typedef struct vcpm_stream_sink {
     const char *path;
     int pcm16;
     int wrote;
+    float *samples;
+    size_t n_samples;
+    size_t capacity;
+    int sample_rate;
+    int calls;
 } vcpm_stream_sink;
 
 static int vcpm_stream_sink_cb(const float *samples, size_t n_samples, int sample_rate,
@@ -178,11 +183,25 @@ static int vcpm_stream_sink_cb(const float *samples, size_t n_samples, int sampl
     vcpm_stream_sink *sink = (vcpm_stream_sink *) user_data;
     if (!sink || !sink->path || !samples)
         return -1;
-    int ret = sink->pcm16 ? vcpm_write_wav_pcm16(sink->path, samples, sample_rate, 1, n_samples)
-                          : vcpm_write_wav_f32(sink->path, samples, sample_rate, 1, n_samples);
-    if (ret == 0)
-        sink->wrote = 1;
-    return ret;
+    if (sink->sample_rate != 0 && sink->sample_rate != sample_rate)
+        return -1;
+    if (sink->n_samples + n_samples > sink->capacity) {
+        size_t next_capacity = sink->capacity ? sink->capacity * 2 : n_samples;
+        while (next_capacity < sink->n_samples + n_samples)
+            next_capacity *= 2;
+        float *next = (float *)realloc(
+            sink->samples, next_capacity * sizeof(float));
+        if (!next)
+            return -1;
+        sink->samples = next;
+        sink->capacity = next_capacity;
+    }
+    memcpy(sink->samples + sink->n_samples, samples,
+           n_samples * sizeof(float));
+    sink->n_samples += n_samples;
+    sink->sample_rate = sample_rate;
+    sink->calls++;
+    return 0;
 }
 
 /* ================================================================
@@ -412,15 +431,32 @@ static int do_tts_common(int argc, char **argv, int streaming) {
         sink.path = out_path;
         sink.pcm16 = use_pcm16;
         sink.wrote = 0;
+        sink.samples = NULL;
+        sink.n_samples = 0;
+        sink.capacity = 0;
+        sink.sample_rate = 0;
+        sink.calls = 0;
 
         vcpm_status st = vcpm_generate_stream(ctx, &gp, vcpm_stream_sink_cb, &sink);
+        if (st == VCPM_OK && sink.n_samples > 0) {
+            int write_ret =
+                sink.pcm16
+                    ? vcpm_write_wav_pcm16(
+                          sink.path, sink.samples, sink.sample_rate, 1,
+                          sink.n_samples)
+                    : vcpm_write_wav_f32(
+                          sink.path, sink.samples, sink.sample_rate, 1,
+                          sink.n_samples);
+            sink.wrote = write_ret == 0;
+        }
+        free(sink.samples);
         if (st != VCPM_OK || !sink.wrote) {
             fprintf(stderr, "error: generation failed: %s\n", vcpm_last_error(ctx));
             vcpm_free(ctx);
             free(owned_text);
             return 4;
         }
-        printf("Stream callback wrote %s\n", out_path);
+        printf("Stream wrote %s in %d chunks\n", out_path, sink.calls);
     } else {
         vcpm_audio audio = {0};
         vcpm_status st = vcpm_generate(ctx, &gp, &audio);

@@ -272,6 +272,18 @@ vcpm_status vcpm_gen_run(vcpm_generate_state *state, const int32_t *token_ids,
                          int first_gen_pos, float *latent_out, int *n_patches_out,
                          int max_patches, const vcpm_generation_params *gen_params);
 
+typedef vcpm_status (*vcpm_gen_patch_cb)(vcpm_generate_state *state,
+                                         const float *latent_prefix,
+                                         int n_patches,
+                                         void *user_data);
+
+vcpm_status vcpm_gen_run_stream(vcpm_generate_state *state, const int32_t *token_ids,
+                                const int32_t *text_mask, const int32_t *audio_mask,
+                                int seq_len, int first_gen_pos, float *latent_out,
+                                int *n_patches_out, int max_patches,
+                                const vcpm_generation_params *gen_params,
+                                vcpm_gen_patch_cb patch_cb, void *user_data);
+
 /*
  * Decode generated latents to audio waveform via AudioVAE.
  *
