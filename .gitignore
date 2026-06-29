@@ -68,3 +68,6 @@ check_*.py
 # Python venv
 .venv/
 venv/
+
+# Agent-isolated feature worktrees
+.worktrees/
