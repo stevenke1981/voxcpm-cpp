@@ -105,7 +105,7 @@ voxcpm-c/
 
 ## 7. Release Checklist
 
-- [ ] Fresh clone build succeeds.
+- [x] Clean detached worktree build and model-free release packaging succeed.
 - [ ] Converter succeeds on pinned HF snapshot.
 - [ ] `inspect` reports correct metadata.
 - [x] Unit tests pass.
