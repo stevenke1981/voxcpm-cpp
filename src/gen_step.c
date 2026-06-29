@@ -713,6 +713,10 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
                            int fill_pos) {
     if (!state) return VCPM_ERR_INVALID_ARG;
 
+    vcpm_status status = VCPM_OK;
+    float * audio_embed_data = NULL;
+    float * base_hidden_data = NULL;
+    float * fsq_data = NULL;
     size_t update_mem = 3ULL * 1024 * 1024 * 1024;
     struct ggml_init_params update_params = {
         .mem_size   = update_mem,
@@ -727,7 +731,10 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
 
     struct ggml_tensor * fe_out = NULL;
     struct ggml_tensor * audio_embed = gen_build_audio_embed(state, update_ctx, graph, &fe_out);
-    if (!audio_embed) { ggml_free(update_ctx); return VCPM_ERR_BACKEND; }
+    if (!audio_embed) {
+        status = VCPM_ERR_BACKEND;
+        goto cleanup;
+    }
     ggml_set_name(audio_embed, "update_audio_embed");
     VCPM_LOG_SHAPE("update.audio_embed", audio_embed);
 
@@ -757,30 +764,72 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
                                                                audio_embed, &base_cfg,
                                                                &base_w, &base_cache,
                                                                fill_pos);
-    if (!base_hidden) { ggml_free(update_ctx); return VCPM_ERR_BACKEND; }
+    if (!base_hidden) {
+        status = VCPM_ERR_BACKEND;
+        goto cleanup;
+    }
     ggml_set_name(base_hidden, "update_base_hidden");
     VCPM_LOG_SHAPE("update.base_hidden", base_hidden);
 
     struct ggml_tensor * fsq_out = gen_fsq_hidden(state, update_ctx, graph, base_hidden);
+    if (!fsq_out) {
+        status = VCPM_ERR_BACKEND;
+        goto cleanup;
+    }
     ggml_set_name(fsq_out, "update_fsq_out");
 
-    if (fsq_out) ggml_build_forward_expand(graph, fsq_out);
-    vcpm_backend_compute_graph(&state->backend, update_ctx, graph, 1);
+    ggml_build_forward_expand(graph, fsq_out);
+    if (vcpm_backend_compute_graph(&state->backend, update_ctx, graph, 1) != 0) {
+        status = VCPM_ERR_BACKEND;
+        goto cleanup;
+    }
 
     /* NaN check on base_hidden right after compute */
-    if (base_hidden && base_hidden->data) {
+    if (base_hidden->data) {
         size_t nh = (size_t)base_hidden->ne[0] * (size_t)base_hidden->ne[1];
         char nl[64]; snprintf(nl, sizeof(nl), "base_hidden_%04d", fill_pos);
         vcpm_check_nan((const float *)base_hidden->data, nh, nl);
     }
 
-    if (vcpm_debug_shapes_env() && base_hidden && base_hidden->data) {
+    if (audio_embed->type != GGML_TYPE_F32 ||
+        base_hidden->type != GGML_TYPE_F32 ||
+        fsq_out->type != GGML_TYPE_F32 ||
+        !audio_embed->data || !base_hidden->data || !fsq_out->data) {
+        status = VCPM_ERR_BACKEND;
+        goto cleanup;
+    }
+
+    const size_t audio_count = (size_t)audio_embed->ne[0] *
+                               (size_t)audio_embed->ne[1];
+    const size_t base_count = (size_t)base_hidden->ne[0] *
+                              (size_t)base_hidden->ne[1];
+    const size_t fsq_count = (size_t)fsq_out->ne[0] *
+                             (size_t)fsq_out->ne[1];
+    if (audio_count != (size_t)state->hidden_size ||
+        base_count != (size_t)state->hidden_size ||
+        fsq_count != (size_t)state->hidden_size) {
+        status = VCPM_ERR_BACKEND;
+        goto cleanup;
+    }
+
+    audio_embed_data = (float *)malloc(audio_count * sizeof(float));
+    base_hidden_data = (float *)malloc(base_count * sizeof(float));
+    fsq_data = (float *)malloc(fsq_count * sizeof(float));
+    if (!audio_embed_data || !base_hidden_data || !fsq_data) {
+        status = VCPM_ERR_OOM;
+        goto cleanup;
+    }
+    memcpy(audio_embed_data, audio_embed->data, audio_count * sizeof(float));
+    memcpy(base_hidden_data, base_hidden->data, base_count * sizeof(float));
+    memcpy(fsq_data, fsq_out->data, fsq_count * sizeof(float));
+
+    if (vcpm_debug_shapes_env()) {
         char label[64];
         snprintf(label, sizeof(label), "base_hidden_update_%04d", fill_pos);
-        vcpm_dump_tensor(label, (const float *)base_hidden->data,
+        vcpm_dump_tensor(label, base_hidden_data,
                           base_hidden->ne[0], base_hidden->ne[1], 0);
         snprintf(label, sizeof(label), "audio_embed_update_%04d", fill_pos);
-        vcpm_dump_tensor(label, (const float *)audio_embed->data,
+        vcpm_dump_tensor(label, audio_embed_data,
                           audio_embed->ne[0], audio_embed->ne[1], 0);
         if (fe_out && fe_out->data) {
             snprintf(label, sizeof(label), "fe_output_update_%04d", fill_pos);
@@ -789,13 +838,13 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
         }
     }
 
-    if (state->lm_hidden_state && fsq_out && fsq_out->data) {
-        memcpy(state->lm_hidden_state, fsq_out->data,
+    if (state->lm_hidden_state) {
+        memcpy(state->lm_hidden_state, fsq_data,
                (size_t)state->hidden_size * sizeof(float));
     }
 
-    if (state->last_lm_hidden && fsq_out && fsq_out->data) {
-        memcpy(state->last_lm_hidden, fsq_out->data,
+    if (state->last_lm_hidden) {
+        memcpy(state->last_lm_hidden, fsq_data,
                (size_t)state->hidden_size * sizeof(float));
     }
 
@@ -806,22 +855,57 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
                           state->hidden_size, 1, 0);
     }
 
-    struct ggml_tensor * fusion_in = ggml_concat(update_ctx, fsq_out, audio_embed, 0);
+    /*
+     * Base LM forward mutates its KV cache.  Do not leave that stateful graph
+     * connected while computing RALM: expanding and executing the combined
+     * graph would apply the Base LM cache writes a second time at fill_pos.
+     */
+    ggml_graph_clear(graph);
+    struct ggml_tensor * fsq_leaf = ggml_new_tensor_2d(
+        update_ctx, GGML_TYPE_F32, state->hidden_size, 1);
+    struct ggml_tensor * audio_embed_leaf = ggml_new_tensor_2d(
+        update_ctx, GGML_TYPE_F32, state->hidden_size, 1);
+    if (!fsq_leaf || !audio_embed_leaf ||
+        !fsq_leaf->data || !audio_embed_leaf->data) {
+        status = VCPM_ERR_OOM;
+        goto cleanup;
+    }
+    memcpy(fsq_leaf->data, fsq_data, fsq_count * sizeof(float));
+    memcpy(audio_embed_leaf->data, audio_embed_data,
+           audio_count * sizeof(float));
+    ggml_set_name(fsq_leaf, "update_fsq_leaf");
+    ggml_set_name(audio_embed_leaf, "update_audio_embed_leaf");
+
+    struct ggml_tensor * fusion_in = ggml_concat(
+        update_ctx, fsq_leaf, audio_embed_leaf, 0);
+    if (!fusion_in) {
+        status = VCPM_ERR_BACKEND;
+        goto cleanup;
+    }
     ggml_set_name(fusion_in, "update_fusion_in");
     struct ggml_tensor * ralm_in = vcpm_linear_proj(update_ctx, fusion_in,
                                                       state->fusion_concat_proj);
+    if (!ralm_in) {
+        status = VCPM_ERR_BACKEND;
+        goto cleanup;
+    }
     ggml_set_name(ralm_in, "update_ralm_in");
 
     struct ggml_tensor * ralm_hidden = gen_forward_ralm(state, update_ctx, graph,
                                                           ralm_in, fill_pos);
-    if (ralm_hidden) {
-        ggml_set_name(ralm_hidden, "update_ralm_hidden");
-        ggml_build_forward_expand(graph, ralm_hidden);
+    if (!ralm_hidden) {
+        status = VCPM_ERR_BACKEND;
+        goto cleanup;
+    }
+    ggml_set_name(ralm_hidden, "update_ralm_hidden");
+    ggml_build_forward_expand(graph, ralm_hidden);
+
+    if (vcpm_backend_compute_graph(&state->backend, update_ctx, graph, 1) != 0) {
+        status = VCPM_ERR_BACKEND;
+        goto cleanup;
     }
 
-    vcpm_backend_compute_graph(&state->backend, update_ctx, graph, 1);
-
-    if (state->residual_hidden_state && ralm_hidden && ralm_hidden->data) {
+    if (state->residual_hidden_state && ralm_hidden->data) {
         memcpy(state->residual_hidden_state, ralm_hidden->data,
                (size_t)state->res_hidden_size * sizeof(float));
     }
@@ -833,7 +917,11 @@ vcpm_status gen_lm_update(vcpm_generate_state * state,
                           state->res_hidden_size, 1, 0);
     }
 
+cleanup:
+    free(audio_embed_data);
+    free(base_hidden_data);
+    free(fsq_data);
     ggml_graph_clear(graph);
     ggml_free(update_ctx);
-    return VCPM_OK;
+    return status;
 }

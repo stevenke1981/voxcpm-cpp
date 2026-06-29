@@ -1,0 +1,17 @@
+{
+  "source": "OpenBMB/VoxCPM MiniCPMModel.forward_step",
+  "device": "cpu",
+  "dtype": "bfloat16",
+  "torch_version": "2.10.0+cpu",
+  "steps": 7,
+  "teacher_forcing_inputs": "fixtures/ref curr_embed_proj",
+  "cuda_reference_cosines": [
+    0.9999306797981262,
+    0.9999565482139587,
+    0.9999597072601318,
+    0.9999250173568726,
+    0.01010726485401392,
+    0.40892744064331055,
+    0.7377404570579529
+  ]
+}

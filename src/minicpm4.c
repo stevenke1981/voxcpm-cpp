@@ -204,6 +204,15 @@ void vcpm_rope(struct ggml_context * ctx, struct ggml_cgraph * graph,
                                head_dim, GGML_ROPE_TYPE_NEOX,
                                0, (float)rope_theta, freq_scale,
                                0.0f, 1.0f, 0.0f, 0.0f);
+
+    /*
+     * Upstream runs the transformer in bfloat16.  apply_rotary_pos_emb()
+     * therefore stores BF16 Q/K values in the static cache.  ggml's RoPE
+     * node preserves our F32 graph type, so round its outputs explicitly
+     * before attention and before K is copied into the persistent cache.
+     */
+    *q = minicpm_bf16_round(ctx, *q);
+    *k = minicpm_bf16_round(ctx, *k);
 }
 
 /* ---- Attention (GQA-correct) ---- */

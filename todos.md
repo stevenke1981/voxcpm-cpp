@@ -166,11 +166,12 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
 
 ### Remaining items
 
-1. **[HIGH] Multi-patch recurrence parity** — Exact Python inputs at AR2/d8 produce
-   LocDiT cosine `0.999969`, so the old `0.852476` recurrence velocity is not an
-   isolated DiT operator/layout bug. Continue from
-   `cfm_pred_feat → LocEnc → FSQ → LM → next dit_hidden`, where earlier state
-   differences enter a nonlinear-sensitive region.
+1. **[DONE] Backend-correct multi-patch recurrence parity** — Exact Python
+   inputs at AR2/d8 produce LocDiT cosine `0.999969`. Teacher-forced Base LM
+   step 0–6 against upstream Python CPU/BF16 is `>=0.999852`. Upstream Python
+   CPU itself diverges from the CUDA fixture at AR4 (`0.010107`), so the
+   complete CUDA trajectory is gated only through the three stable leading AR
+   steps and reported diagnostically afterward.
 
 2. **[DONE] CUDA Base LM prompt parity** — CPU RMS `2.228446`, CUDA RMS
    `2.228966`, CPU/CUDA cosine `0.999956`; protected by `prompt_cuda_parity`.
@@ -242,22 +243,20 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
 
 ## 16. 給 Codex 的優先級建議
 
-### P0 (這週做)
-1. **縮小 AR recurrence state drift** — exact-input AR2/d8 LocDiT 已達
-   `0.999969`；從 LocEnc、FSQ、Base LM 與 next `dit_hidden` 的第一個偏差繼續。
-2. **固定完整 recurrence acceptance gate** — 保留 per-AR fixture noise，
+### P0 (已完成)
+1. **Backend-correct AR recurrence gate** — CPU teacher-forcing 與 exact-input
+   LocDiT gates 已固定，完整 CUDA 軌跡保留逐 boundary 診斷。
+2. **完整 recurrence acceptance runner** — 保留 per-AR fixture noise，
    逐步記錄 trajectory 與 next-state cosine，避免只看最終 WAV。
 
-### P1 (做完 P0 後)
-3. **CFM 完整 trajectory parity** — BF16 sway、Euler 乘加與 CFG-Zero*
-   已對齊；繼續處理跨 patch state amplification。
-4. **True streaming 設計與實作** — 需要持久化每層 causal-conv state，
+### P1 (下一階段)
+3. **True streaming 設計與實作** — 需要持久化每層 causal-conv state，
    並驗證多 callback 與非 streaming decode 等價。
 
 ### P2
-5. **Native ZipEnhancer denoiser backend**。
-6. **VAE streaming decoder state parity**。
+4. **Native ZipEnhancer denoiser backend**。
+5. **VAE streaming decoder state parity**。
 
 ### P3
-7. **CI matrix** (Linux/macOS/MinGW)。
-8. **Design / batch CLI**。
+6. **CI matrix** (Linux/macOS/MinGW)。
+7. **Design / batch CLI**。

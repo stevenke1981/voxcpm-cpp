@@ -255,6 +255,11 @@ if(VCPM_BUILD_TESTS)
         ${VCPM_TEST_PRIVATE_INCLUDES}
         ${ggml_SOURCE_DIR}/include)
     target_link_libraries(test_cfm_parity PRIVATE voxcpm)
+    add_executable(test_base_lm_recurrence tests/test_base_lm_recurrence.c)
+    target_include_directories(test_base_lm_recurrence PRIVATE
+        ${VCPM_TEST_PRIVATE_INCLUDES}
+        ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(test_base_lm_recurrence PRIVATE voxcpm)
     if(VCPM_MODEL_FIXTURE)
         add_test(NAME cfm_parity COMMAND test_cfm_parity
                  "${VCPM_MODEL_FIXTURE}" "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ref")
@@ -262,6 +267,22 @@ if(VCPM_BUILD_TESTS)
         add_test(NAME cfm_ar2_d8_parity COMMAND test_cfm_parity
                  "${VCPM_MODEL_FIXTURE}" "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ref" 2 8)
         set_tests_properties(cfm_ar2_d8_parity PROPERTIES LABELS "model")
+        add_test(NAME base_lm_recurrence_parity COMMAND test_base_lm_recurrence
+                 "${VCPM_MODEL_FIXTURE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ref"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ref_cpu")
+        set_tests_properties(base_lm_recurrence_parity PROPERTIES LABELS "model;parity")
+        find_package(Python3 COMPONENTS Interpreter QUIET)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME recurrence_parity
+                COMMAND ${Python3_EXECUTABLE}
+                        "${CMAKE_CURRENT_SOURCE_DIR}/tools/run_recurrence_parity.py"
+                        --exe $<TARGET_FILE:voxcpm-c>
+                        --model "${VCPM_MODEL_FIXTURE}"
+                        --fixtures "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ref"
+                        --work-dir "${CMAKE_CURRENT_BINARY_DIR}/recurrence-parity")
+            set_tests_properties(recurrence_parity PROPERTIES LABELS "model;parity")
+        endif()
     endif()
 
     add_executable(test_vae_dump tests/test_vae_dump.c)

@@ -381,9 +381,8 @@ faster-whisper large-v3-turbo CUDA = 你好,这是测试
 
 ## 16. 尚未宣告完成的項目
 
-- 多 patch recurrence 在 AR2／AR3 仍有累積數值漂移；exact-input d8 gate 已證明
-  LocDiT 算子是 `0.999969`，下一個高優先級是縮小
-  `cfm_pred_feat → LocEnc → FSQ → LM → next dit_hidden` 的 state 誤差。
+- 完整 CPU 與 CUDA 自回歸軌跡在 AR3 後仍會因 SDPA 後端數值差異分岔；
+  這不是 C-only defect，不能用 CUDA 終態 bit-exact 當 CPU runtime 的完成條件。
 - production Gaussian PRNG 不與 PyTorch bit-exact；數值 parity 應繼續使用已匯出的
   per-AR fixture noise。
 - streaming 仍非低延遲 chunked streaming。
@@ -399,3 +398,39 @@ segment。F16 model smoke 的三種模式皆產生 30720 個 48 kHz finite sampl
 
 實作資料流、sequence layout、數值 gate、安全限制與 CLI 範例記錄於
 [`voice-clone-python-parity-2026-06-29.md`](voice-clone-python-parity-2026-06-29.md)。
+
+## 18. Recurrence / CFM backend-correct parity（2026-06-30）
+
+完整 recurrence 的最初基準在 AR4 出現：
+
+```text
+C CPU Base LM vs Python CUDA fixture cosine = 0.048445
+C CPU next DiT vs Python CUDA fixture cosine = 0.587707
+```
+
+一開始懷疑 Base LM graph 與 RALM graph 共用時重複執行 KV write。實作拆圖後，
+數值完全不變；這排除了重複 cache write 作為根因，但拆圖仍保留，因為第二次
+backend compute 不再重算整個 Base LM。兩次 compute 現在各自檢查錯誤，跨圖
+輸入則先 materialize 成 owned F32 leaf tensor。
+
+真正的判別測試是 teacher forcing：以 Python 匯出的 `curr_embed_proj` 逐步餵入
+Base LM，排除 CFM 與 LocEnc。上游 Python 2.10 CPU/BF16 自己在 AR4 相對原本
+CUDA fixture 也降到 `0.010107`；C CPU 同一位置為 `0.010353`。這表示 CPU 與
+CUDA SDPA 的微小差異在自回歸模型中被放大，不是 C cache layout 錯誤。
+
+因此新增兩層 acceptance gate：
+
+1. `base_lm_recurrence_parity`：對上游 Python CPU/BF16 teacher-forcing fixture，
+   step 0–6 cosine 依序為 `0.999935`、`0.999967`、`0.999953`、
+   `0.999954`、`0.999910`、`0.999852`、`0.999871`。
+2. `recurrence_parity`：固定 CUDA noise，逐 boundary 列出 CFM、LocEnc、Base LM、
+   FSQ、RALM、next DiT；前三個尚未分岔的 AR step 以 `cos>=0.90` gate，後續標成
+   `DIAG`，仍要求檔案存在且 metric finite。
+
+RoPE 後的 Q/K 另補上 BF16 round，對齊 Python
+`apply_rotary_pos_emb(...).to(orig_dtype)`，再把 K 寫入 persistent cache。
+`tools/compare_dumps.py` 也修正了 raw Base LM、FSQ、LocEnc 與 audio projection
+的 fixture 對應，避免把 FSQ hidden 誤標成 raw LM hidden。
+
+Release CPU 完整驗證為 `23/23` CTests 通過；其中 9 個需要模型，新增的
+`base_lm_recurrence_parity` 與 `recurrence_parity` 均標記為 `model;parity`。
