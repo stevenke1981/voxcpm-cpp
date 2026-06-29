@@ -176,7 +176,9 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
 2. **[DONE] CUDA Base LM prompt parity** — CPU RMS `2.228446`, CUDA RMS
    `2.228966`, CPU/CUDA cosine `0.999956`; protected by `prompt_cuda_parity`.
 
-3. **[MED] Native ZipEnhancer denoiser backend** — Python `load_denoiser=True` uses ModelScope ZipEnhancer for prompt/reference preprocessing. The C runtime now exposes and gates this contract, but actual denoising requires a native backend or explicit external preprocessing.
+3. **[DONE] Native denoiser backend** — opt-in `native-dsp-v1` 在純 C 中完成
+   adaptive noise-floor/Wiener gain preprocessing，並通過 SNR、finite 與 clone smoke。
+   ModelScope ZipEnhancer 的獨立神經權重不在 GGUF，仍維持明確 unsupported。
 
 4. **[DONE] Verify stop predictor against Python** — `tools/verify_stop_parity.py` compares GGUF logits/classes with `step*_stop_logits.npy`; runtime now uses `argmax`, fixing premature Chinese tail truncation.
 
@@ -257,7 +259,7 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
    下一步以逐層 causal-conv state 取代完整 prefix 重算。
 
 ### P2
-4. **Native ZipEnhancer denoiser backend**。
+4. **選配：轉換並實作 ModelScope ZipEnhancer 神經網路 backend**。
 5. **VAE streaming decoder state parity**。
 
 ### P3

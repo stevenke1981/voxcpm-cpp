@@ -438,5 +438,8 @@ RoPE 後的 Q/K 另補上 BF16 round，對齊 Python
 `tools/compare_dumps.py` 也修正了 raw Base LM、FSQ、LocEnc 與 audio projection
 的 fixture 對應，避免把 FSQ hidden 誤標成 raw LM hidden。
 
-Release CPU 完整驗證為 `23/23` CTests 通過；其中 9 個需要模型，新增的
+Release CPU recurrence 階段驗證為 `23/23` CTests 通過；其中 9 個需要模型，新增的
 `base_lm_recurrence_parity` 與 `recurrence_parity` 均標記為 `model;parity`。
+
+加入 native DSP denoiser 後，完整 Release CPU suite 為 `24/24` 通過
+（15 unit、9 model）。

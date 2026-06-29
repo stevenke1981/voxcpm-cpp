@@ -91,6 +91,7 @@ add_library(voxcpm STATIC
     src/audio_vae_v2_encoder.c
     src/audio_vae_v2_decoder.c
     src/clone_audio.c
+    src/denoiser.c
     src/text_control.c
     src/gen_init.c
     src/gen_prompt.c
@@ -210,6 +211,12 @@ if(VCPM_BUILD_TESTS)
     target_link_libraries(test_cfm_schedule PRIVATE voxcpm)
     add_test(NAME cfm_schedule COMMAND test_cfm_schedule)
     set_tests_properties(cfm_schedule PROPERTIES LABELS "unit")
+
+    add_executable(test_denoiser tests/test_denoiser.c)
+    target_include_directories(test_denoiser PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_denoiser PRIVATE voxcpm)
+    add_test(NAME denoiser COMMAND test_denoiser)
+    set_tests_properties(denoiser PROPERTIES LABELS "unit")
 
     add_executable(test_vae_layout tests/test_vae_layout.c)
     target_include_directories(test_vae_layout PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})

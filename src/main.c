@@ -818,7 +818,7 @@ static void usage(void) {
     puts("  --repeat INT        Benchmark repeat count (default: 3)");
     puts("  --pcm16             Write 16-bit PCM WAV instead of float");
     puts("  --denoise           Denoise prompt/reference audio before generation");
-    puts("  --denoiser-model ID ZipEnhancer model path/id (default: "
+    puts("  --denoiser-model ID Denoiser id; native option: native-dsp-v1 (default: "
          "iic/speech_zipenhancer_ans_multiloss_16k_base)");
     puts("  --no-denoiser       Do not request the external ZipEnhancer denoiser");
     puts("  --reference-audio   Independent reference voice WAV for clone");

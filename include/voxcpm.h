@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 #define VCPM_DEFAULT_DENOISER_MODEL "iic/speech_zipenhancer_ans_multiloss_16k_base"
+#define VCPM_NATIVE_DENOISER_MODEL "native-dsp-v1"
 
 typedef enum vcpm_status {
     VCPM_OK = 0,

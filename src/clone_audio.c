@@ -1,6 +1,7 @@
 #include "clone_audio.h"
 
 #include "audio_vae_v2.h"
+#include "denoiser.h"
 
 #include "ggml-cpu.h"
 #include "ggml.h"
@@ -169,10 +170,10 @@ vcpm_status vcpm_clone_encode_samples(const vcpm_model *model, const float *samp
     return VCPM_OK;
 }
 
-vcpm_status vcpm_clone_encode_audio(const vcpm_model *model, const char *wav_path,
-                                    vcpm_clone_padding padding,
-                                    vcpm_conditioning_audio *output, char *error,
-                                    size_t error_size) {
+vcpm_status vcpm_clone_encode_audio_ex(const vcpm_model *model, const char *wav_path,
+                                       vcpm_clone_padding padding, int denoise,
+                                       vcpm_conditioning_audio *output, char *error,
+                                       size_t error_size) {
     if (!model || !wav_path || !wav_path[0] || !output)
         return clone_error(error, error_size, VCPM_ERR_INVALID_ARG,
                            "invalid clone WAV input");
@@ -202,11 +203,36 @@ vcpm_status vcpm_clone_encode_audio(const vcpm_model *model, const char *wav_pat
         }
     }
 
+    float *denoised = NULL;
+    const float *encode_samples = mono;
+    if (denoise) {
+        denoised = (float *)malloc((size_t)n_frames * sizeof(float));
+        if (!denoised ||
+            vcpm_denoise_f32(mono, n_frames, sample_rate, denoised) != 0) {
+            free(denoised);
+            if (mono != interleaved)
+                free(mono);
+            free(interleaved);
+            return clone_error(error, error_size, VCPM_ERR_BACKEND,
+                               "native DSP denoising failed");
+        }
+        encode_samples = denoised;
+    }
+
     vcpm_status status =
-        vcpm_clone_encode_samples(model, mono, n_frames, sample_rate, padding,
+        vcpm_clone_encode_samples(model, encode_samples, n_frames, sample_rate, padding,
                                   output, error, error_size);
+    free(denoised);
     if (mono != interleaved)
         free(mono);
     free(interleaved);
     return status;
+}
+
+vcpm_status vcpm_clone_encode_audio(const vcpm_model *model, const char *wav_path,
+                                    vcpm_clone_padding padding,
+                                    vcpm_conditioning_audio *output, char *error,
+                                    size_t error_size) {
+    return vcpm_clone_encode_audio_ex(
+        model, wav_path, padding, 0, output, error, error_size);
 }

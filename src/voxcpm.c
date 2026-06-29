@@ -6,6 +6,7 @@
 #include "clone_audio.h"
 #include "text_control.h"
 #include "audio_vae_v2.h"
+#include "denoiser.h"
 #include "debug_dump.h"
 
 #include "ggml.h"
@@ -207,10 +208,8 @@ vcpm_context *vcpm_load_model(const char *gguf_path, const vcpm_model_params *pa
             return NULL;
         }
         ctx->params.denoiser_model_path = ctx->denoiser_model_path;
-        /* Python load_denoiser=True uses ModelScope ZipEnhancer.
-         * The C runtime records the requested model, but has no native
-         * ZipEnhancer backend yet. Generation gates --denoise explicitly. */
-        ctx->denoiser_loaded = 0;
+        ctx->denoiser_loaded =
+            strcmp(denoiser_path, VCPM_NATIVE_DENOISER_MODEL) == 0;
     }
 
     char err_buf[512];
@@ -340,8 +339,8 @@ static vcpm_status vcpm_generate_impl(
     }
     if (params->denoise && is_clone && !ctx->denoiser_loaded) {
         vcpm_set_error(ctx,
-                       "denoise requested, but Python ZipEnhancer denoiser is not implemented in "
-                       "the C runtime; pre-denoise prompt/reference audio or disable --denoise");
+                       "denoise requested, but the selected model is not a native backend; "
+                       "use --denoiser-model native-dsp-v1 or pre-denoise externally");
         return VCPM_ERR_NOT_IMPLEMENTED;
     }
 
@@ -380,14 +379,14 @@ static vcpm_status vcpm_generate_impl(
     char clone_error[512] = {0};
     vcpm_status clone_status = VCPM_OK;
     if (is_reference) {
-        clone_status = vcpm_clone_encode_audio(ctx->model, params->reference_audio_path,
-                                               VCPM_CLONE_PAD_RIGHT, &reference,
-                                               clone_error, sizeof(clone_error));
+        clone_status = vcpm_clone_encode_audio_ex(
+            ctx->model, params->reference_audio_path, VCPM_CLONE_PAD_RIGHT,
+            params->denoise, &reference, clone_error, sizeof(clone_error));
     }
     if (clone_status == VCPM_OK && is_prompt_audio) {
-        clone_status = vcpm_clone_encode_audio(ctx->model, params->prompt_audio_path,
-                                               VCPM_CLONE_PAD_LEFT, &prompt,
-                                               clone_error, sizeof(clone_error));
+        clone_status = vcpm_clone_encode_audio_ex(
+            ctx->model, params->prompt_audio_path, VCPM_CLONE_PAD_LEFT,
+            params->denoise, &prompt, clone_error, sizeof(clone_error));
     }
     if (clone_status != VCPM_OK) {
         vcpm_conditioning_audio_free(&reference);
@@ -678,7 +677,7 @@ int vcpm_inspect(const vcpm_context *ctx, char *buf, size_t buf_size) {
                        "  Requested:       %s\n"
                        "  Loaded:          %s\n"
                        "  Model:           %s\n"
-                       "  Backend:         external Python ZipEnhancer; no native C backend\n",
+                       "  Backend:         native DSP for native-dsp-v1; ZipEnhancer unavailable\n",
                        ctx->last_error[0] ? ctx->last_error : "unknown error",
                        ctx->denoiser_requested ? "yes" : "no", ctx->denoiser_loaded ? "yes" : "no",
                        ctx->denoiser_model_path ? ctx->denoiser_model_path : "(none)");
@@ -737,9 +736,8 @@ int vcpm_inspect(const vcpm_context *ctx, char *buf, size_t buf_size) {
         "  Requested:       %s\n"
         "  Loaded:          %s\n"
         "  Model:           %s\n"
-        "  Backend:         external Python ZipEnhancer; no native C backend\n"
-        "  Runtime gate:    --denoise returns VCPM_ERR_NOT_IMPLEMENTED until a native backend is "
-        "added\n"
+        "  Backend:         native DSP for native-dsp-v1; ZipEnhancer unavailable\n"
+        "  Runtime gate:    use --denoiser-model native-dsp-v1 for native denoising\n"
         "\n"
         "Tensors: %d total\n",
         ctx->model_path ? ctx->model_path : "?", cfg->version, cfg->patch_size, cfg->feat_dim,

@@ -163,9 +163,11 @@ prompt/reference audio enhancement when `denoise=True` is requested. This is an
 external preprocessing model, not a VoxCPM GGUF tensor.
 
 The C runtime now exposes the same load intent through `vcpm_model_params` and
-reports it in `inspect`. There is not yet a native C ZipEnhancer backend, so
-`vcpm_generation_params.denoise=1` with prompt/reference audio returns
-`VCPM_ERR_NOT_IMPLEMENTED` instead of silently running without denoising.
+reports it in `inspect`. The pure-C `native-dsp-v1` backend is available by
+setting `denoiser_model_path` to `VCPM_NATIVE_DENOISER_MODEL`; it applies an
+adaptive Wiener-style frame gain before AudioVAE encoding. ModelScope
+ZipEnhancer itself remains unavailable because its separate neural weights are
+not in the VoxCPM GGUF, and requests still return `VCPM_ERR_NOT_IMPLEMENTED`.
 
 ## 3. Streaming API
 

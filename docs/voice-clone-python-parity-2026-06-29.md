@@ -113,7 +113,8 @@ reference 與 prompt latents 以 `[reference patches][prompt patches]` 排入同
 
 ## 已知邊界
 
-- Python 的 ZipEnhancer denoiser 尚無 native C backend；`--denoise` 會明確回傳
+- `--denoise --denoiser-model native-dsp-v1` 提供純 C adaptive DSP preprocessing；
+  Python 的 ZipEnhancer 神經網路尚無 native C backend，選其 model id 會明確回傳
   `VCPM_ERR_NOT_IMPLEMENTED`，可先在 runtime 外部預處理 conditioning audio。
 - Python 端可選的 VAD/長音訊切分未移植；目前應自行提供乾淨、長度合理的 WAV。
 - streaming 已改為每個生成 patch 回呼一次新 PCM；clone conditioning 仍沿用相同
