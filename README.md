@@ -76,6 +76,8 @@ tests/test_smoke.c
 ```bash
 voxcpm-c tts   --model ./models/voxcpm2-f16.gguf   --text "(young warm female voice)你好，這是 VoxCPM2 C runtime 測試。"   --cfg 2.0   --steps 10   --out output.wav
 
+voxcpm-c tts --model ./models/voxcpm2-f16.gguf --control "溫暖、平穩、稍慢的台灣華語女聲" --text "這是一段語音控制測試。" --min-len 30 --steps 10 --out controlled.wav
+
 voxcpm-c stream   --model ./models/voxcpm2-f16.gguf   --text "Streaming release gate test."   --steps 2   --max-len 16   --out stream.wav
 
 voxcpm-c clone --model ./models/voxcpm2-f16.gguf --text "這是一段聲音複製測試。" --reference-audio ref_16k.wav --i-have-consent --out clone.wav
@@ -92,6 +94,7 @@ Current verified baseline:
 - Full `tts` runs on the converted f16 VoxCPM2 GGUF (`models/voxcpm2-f16.gguf`, ignored by git).
 - `VCPM_MODEL=models/voxcpm2-f16.gguf` registers and passes `vae_only` plus `model_tts_smoke`.
 - A 10-step TTS smoke writes 48 kHz mono WAV with non-zero finite samples.
+- `--control` 已接入 TSLM tokenizer prefix，並透過 FSQ/fusion 間接影響 RALM；語意、參數責任與試聽數據見 [`docs/tslm-ralm-control.md`](docs/tslm-ralm-control.md)。
 - `stream` is currently a one-shot callback smoke path: it uses `vcpm_generate_stream()` and writes the callback audio to WAV. It is not yet low-latency chunked streaming.
 - Incomplete/mock GGUFs fail `tts` with a missing tensor diagnostic instead of dummy audio.
 - `clone` 與 C API 已支援 reference-only、prompt-only continuation、combined 三種 Python-compatible conditioning 模式；所有模式都要求明確 consent。
