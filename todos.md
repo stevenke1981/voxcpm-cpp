@@ -156,24 +156,30 @@
 - `vae_input`: NaN=0, valid=768
 - Audio output: NaN=0, Inf=0, valid=23040/23040, min=-0.71, max=0.72, rms=0.066
 
-**CUDA status**: CUDA no longer crashes for the Q8_0 minimal-fix model. On RTX 3060 Ti 8 GB, `--backend cuda` initializes ggml CUDA, offloads 814 tensors (5269.44 MB), executes generation, and writes finite WAV. Numeric parity is still failing: with deterministic CFM fixture noise, CUDA `base_lm_out` and `mu_init` dumps are all zero while the CPU control path is non-zero and close to Python. The next fix is the Base LM prompt graph output/readback/offload path, before debugging CFM/VAE audio quality.
+**CUDA status**: CUDA prompt readback is fixed. On the current 8 GB CUDA system,
+`test_prompt_cuda_probe` reports CPU/CUDA cosine `0.999956` and RMSE `0.020914`;
+the CUDA prompt is non-zero. `prompt_cuda_parity` is now registered by CMake when
+CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
+23040-sample WAV.
 
 ### Remaining items
 
-1. **[HIGH] Verify C output against Python reference** — Minimal fix model produces valid audio on CPU. Next step: compare dumped C tensors (`text_embed`, `mu_init`, per-step CFM trajectories, final audio) against Python fixtures with matching text+seed. See `tools/compare_fixtures.py`.
+1. **[HIGH] Multi-patch recurrence parity** — Exact Python inputs at AR2/d8 produce
+   LocDiT cosine `0.999969`, so the old `0.852476` recurrence velocity is not an
+   isolated DiT operator/layout bug. Continue from
+   `cfm_pred_feat → LocEnc → FSQ → LM → next dit_hidden`, where earlier state
+   differences enter a nonlinear-sensitive region.
 
-2. **[HIGH] CUDA Base LM prompt parity** — CUDA now runs end-to-end, but deterministic parity shows the first CUDA-specific failure at prompt eval:
-   - CPU vs Python: `base_lm_out` cosine about `0.9565`, `mu_init` cosine about `0.9934`.
-   - CUDA vs Python: `base_lm_out` and `mu_init` are all zero.
-   - CPU vs CUDA: `text_embed` and fixture noise match exactly, so the mismatch is not tokenization or CFM random state.
-   - Isolation status: `test_prompt_cuda_probe` now runs only `gen_forward_text()` and confirms the same failure before RALM/CFM/VAE. CPU prompt RMS is `2.227537`; CUDA prompt RMS is `0.000000` with `8192/8192` zero values.
-   - Next action: verify graph output tensor residency/readback after compute, then inspect Q8_0/F16 op dispatch only if the output tensor is actually computed.
+2. **[DONE] CUDA Base LM prompt parity** — CPU RMS `2.228446`, CUDA RMS
+   `2.228966`, CPU/CUDA cosine `0.999956`; protected by `prompt_cuda_parity`.
 
 3. **[MED] Native ZipEnhancer denoiser backend** — Python `load_denoiser=True` uses ModelScope ZipEnhancer for prompt/reference preprocessing. The C runtime now exposes and gates this contract, but actual denoising requires a native backend or explicit external preprocessing.
 
 4. **[DONE] Verify stop predictor against Python** — `tools/verify_stop_parity.py` compares GGUF logits/classes with `step*_stop_logits.npy`; runtime now uses `argmax`, fixing premature Chinese tail truncation.
 
-5. **[PARTIAL] VAE encoder end-to-end** — layout unit test and synthetic reference clone smoke pass; Python encoder latent cosine fixture is still pending.
+5. **[DONE] VAE encoder Python parity** — deterministic 220 Hz fixture produces
+   25 latent frames in both runtimes; cosine `0.999998719`, RMSE `0.002795445`.
+   Odd-stride causal padding and `output_padding` semantics are fixed.
 
 ### 11c. Future Features (not started)
 
@@ -190,12 +196,9 @@
 - [x] `voxcpm-c bench` command with RTF measurement.
 - [x] Q8_0 quantization (45% size reduction, 2.44 GB).
 - [x] **CUDA backend smoke** — Q8_0 minimal-fix model now runs with `--backend cuda` on RTX 3060 Ti 8 GB, initializes CUDA, offloads weights, and writes finite WAV.
-- [ ] **Fix CUDA Base LM prompt parity** — CUDA `base_lm_out`/`mu_init` dumps are zero while CPU controls are finite and close to Python with the same text and fixture noise.
-  - Isolation probe: `build-cuda\test_prompt_cuda_probe.exe voxcpm2_v2_q8_0_minimal_fix.gguf "Hello world."` reproduces the failure with only Base LM prompt eval.
-  - Verify whether the prompt output tensor is left on device without correct CPU readback, or whether the CUDA graph really computes zeros.
-  - If readback is correct, inspect CUDA support for the exact Q8_0/F16/F32 ops used in Base LM prompt eval.
-  - Do not tune CFM/VAE audio quality until this first CUDA mismatch is resolved.
-- [ ] Add CPU thread setting (`--threads N`).
+- [x] **CUDA Base LM prompt parity** — CPU/CUDA cosine `0.999956`; registered
+  as a CUDA-labelled model CTest.
+- [x] Add CPU thread setting (`--threads N`).
 - [ ] Reuse KV cache across generations.
 - [ ] Compare RTF: CPU vs CUDA vs Q8_0-CUDA.
 
@@ -238,16 +241,20 @@
 ## 16. 給 Codex 的優先級建議
 
 ### P0 (這週做)
-1. **修 CUDA Base LM prompt readback/compute** — `test_prompt_cuda_probe` 已確認只跑 Base LM prompt graph 就會 CUDA all-zero；先判斷是 readback 問題還是 graph compute 問題。
-2. **跑逐層 Base LM CUDA fixture** — 固定 text `"Hello world."`，逐層 dump 第一個 non-zero/zero 差異。
+1. **縮小 AR recurrence state drift** — exact-input AR2/d8 LocDiT 已達
+   `0.999969`；從 LocEnc、FSQ、Base LM 與 next `dit_hidden` 的第一個偏差繼續。
+2. **固定完整 recurrence acceptance gate** — 保留 per-AR fixture noise，
+   逐步記錄 trajectory 與 next-state cosine，避免只看最終 WAV。
 
 ### P1 (做完 P0 後)
-3. **CFM 完整 trajectory parity** — deterministic noise 已可載入；等 Base LM CUDA prompt parity 修好後，再逐 step 比對 velocity。
-4. **Stop predictor parity** — 比對 C vs Python stop logits。
+3. **CFM 完整 trajectory parity** — BF16 sway、Euler 乘加與 CFG-Zero*
+   已對齊；繼續處理跨 patch state amplification。
+4. **True streaming 設計與實作** — 需要持久化每層 causal-conv state，
+   並驗證多 callback 與非 streaming decode 等價。
 
 ### P2
-5. **VAE encoder 端到端測試** — 目前只有 structural code，沒跑過 encode→decode roundtrip。
-6. **True streaming** — chunked AudioVAE decode。
+5. **Native ZipEnhancer denoiser backend**。
+6. **VAE streaming decoder state parity**。
 
 ### P3
 7. **CI matrix** (Linux/macOS/MinGW)。

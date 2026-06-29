@@ -5,7 +5,9 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 if(MSVC)
-    add_compile_options(/utf-8)
+    add_compile_options(
+        "$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>")
 endif()
 
 # ---- ccache support ----
@@ -177,6 +179,12 @@ if(VCPM_BUILD_TESTS)
     add_test(NAME stop COMMAND test_stop)
     set_tests_properties(stop PROPERTIES LABELS "unit")
 
+    add_executable(test_cfm_schedule tests/test_cfm_schedule.c)
+    target_include_directories(test_cfm_schedule PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_cfm_schedule PRIVATE voxcpm)
+    add_test(NAME cfm_schedule COMMAND test_cfm_schedule)
+    set_tests_properties(cfm_schedule PROPERTIES LABELS "unit")
+
     add_executable(test_vae_layout tests/test_vae_layout.c)
     target_include_directories(test_vae_layout PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_vae_layout PRIVATE voxcpm)
@@ -225,6 +233,9 @@ if(VCPM_BUILD_TESTS)
         add_test(NAME cfm_parity COMMAND test_cfm_parity
                  "${VCPM_MODEL_FIXTURE}" "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ref")
         set_tests_properties(cfm_parity PROPERTIES LABELS "model")
+        add_test(NAME cfm_ar2_d8_parity COMMAND test_cfm_parity
+                 "${VCPM_MODEL_FIXTURE}" "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ref" 2 8)
+        set_tests_properties(cfm_ar2_d8_parity PROPERTIES LABELS "model")
     endif()
 
     add_executable(test_vae_dump tests/test_vae_dump.c)
@@ -246,6 +257,11 @@ if(VCPM_BUILD_TESTS)
     add_executable(test_model_clone_smoke tests/test_model_clone_smoke.c)
     target_include_directories(test_model_clone_smoke PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_model_clone_smoke PRIVATE voxcpm)
+    add_executable(test_vae_encoder_parity tests/test_vae_encoder_parity.c)
+    target_include_directories(test_vae_encoder_parity PRIVATE
+        ${VCPM_TEST_PRIVATE_INCLUDES}
+        ${ggml_SOURCE_DIR}/include)
+    target_link_libraries(test_vae_encoder_parity PRIVATE voxcpm)
     add_executable(test_latent_parity tests/test_latent_parity.c)
     target_include_directories(test_latent_parity PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_latent_parity PRIVATE voxcpm)
@@ -281,6 +297,14 @@ if(VCPM_BUILD_TESTS)
         set_tests_properties(model_tts_smoke PROPERTIES LABELS model)
         add_test(NAME model_clone_smoke COMMAND test_model_clone_smoke "${VCPM_MODEL_FIXTURE}")
         set_tests_properties(model_clone_smoke PROPERTIES LABELS model)
+        add_test(NAME vae_encoder_parity COMMAND test_vae_encoder_parity
+                 "${VCPM_MODEL_FIXTURE}" "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ref")
+        set_tests_properties(vae_encoder_parity PROPERTIES LABELS model)
+        if(VCPM_ENABLE_CUDA)
+            add_test(NAME prompt_cuda_parity COMMAND test_prompt_cuda_probe
+                     "${VCPM_MODEL_FIXTURE}" "Hello world.")
+            set_tests_properties(prompt_cuda_parity PROPERTIES LABELS "model;cuda")
+        endif()
     else()
         message(STATUS "Skipping model fixture ctest registration; set VCPM_MODEL to enable model tests")
     endif()

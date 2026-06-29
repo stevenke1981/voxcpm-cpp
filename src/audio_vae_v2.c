@@ -212,7 +212,8 @@ struct ggml_tensor *vcpm_conv1d_f32(struct ggml_context *ctx, struct ggml_tensor
 static struct ggml_tensor *depthwise_conv1d(struct ggml_context *ctx, struct ggml_cgraph *graph,
                                             struct ggml_tensor *weight, struct ggml_tensor *bias,
                                             struct ggml_tensor *input, int stride, int pad,
-                                            int dilate, const struct vcpm_model *model) {
+                                            int output_padding, int dilate,
+                                            const struct vcpm_model *model) {
     (void) model;
     /* ggml_conv_1d weight convention: ne[0]=K(kernel), ne[1]=IC, ne[2]=OC
      * For depthwise: OC groups with IC=1 per group, so weight ne = [K, 1, OC] */
@@ -228,7 +229,7 @@ static struct ggml_tensor *depthwise_conv1d(struct ggml_context *ctx, struct ggm
     }
     int K = (int) weight->ne[0]; /* kernel size = 7 */
     int C = (int) weight->ne[2]; /* output channels (= input channels for depthwise) */
-    int left_pad = pad * 2;      /* causal: left-only padding = 6 * dilation */
+    int left_pad = pad * 2 - output_padding;
 
     if (C > 4096) {
         if (bias && bias->ne[0] == (int64_t) C) {
@@ -350,7 +351,8 @@ static struct ggml_tensor * depthwise_conv1d_old(struct ggml_context * ctx,
 struct ggml_tensor *vcpm_vae_conv1d_layer(struct ggml_context *ctx, struct ggml_cgraph *graph,
                                           struct ggml_tensor *weight, struct ggml_tensor *bias,
                                           struct ggml_tensor *input, int stride, int pad,
-                                          int dilate, const struct vcpm_model *model) {
+                                          int output_padding, int dilate,
+                                          const struct vcpm_model *model) {
     (void) graph;
     struct ggml_tensor *out;
 
@@ -359,7 +361,8 @@ struct ggml_tensor *vcpm_vae_conv1d_layer(struct ggml_context *ctx, struct ggml_
          * In GGML format weight [K, IC, OC], depthwise has IC=1, OC=groups.
          * Regular conv1d with IC=1 (e.g. model.0: Conv1d 1->64, k=7) has
          * identical weight shape but input->ne[1] != weight->ne[2]. */
-        return depthwise_conv1d(ctx, graph, weight, bias, input, stride, pad, dilate, model);
+        return depthwise_conv1d(ctx, graph, weight, bias, input, stride, pad, output_padding,
+                                dilate, model);
     }
 
     /* Regular conv1d (F32 precision)
@@ -368,8 +371,11 @@ struct ggml_tensor *vcpm_vae_conv1d_layer(struct ggml_context *ctx, struct ggml_
      * All VAE V2 conv layers use CausalConv1d (encoder and decoder), so no
      * symmetric padding anywhere. VAE V2 is a causal model end-to-end. */
     if (pad > 0) {
-        /* Causal left-pad: left_pad = pad * 2 * dilate */
-        int left_pad = pad * 2 * (dilate > 0 ? dilate : 1);
+        /* Python CausalConv1d: F.pad(x, (padding * 2 - output_padding, 0)).
+         * Callers include dilation in padding when the layer requires it. */
+        int left_pad = pad * 2 - output_padding;
+        if (left_pad < 0)
+            return NULL;
         int64_t N = input->ne[0], IC = input->ne[1];
         struct ggml_tensor *padded = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, N + left_pad, IC);
         if (!padded)
@@ -580,7 +586,8 @@ struct ggml_tensor *vcpm_vae_residual_unit(struct ggml_context *ctx, struct ggml
     /* Depthwise conv1d: kernel=7, causal padding, stride=1
      * Python CausalConv1d uses left_pad = 3 * dilation * 2 = 6 * dilation.
      * We pass pad = 3*dilation so depthwise_conv1d can compute left_pad = pad*2. */
-    h = vcpm_vae_conv1d_layer(ctx, graph, conv1_w, conv1_b, h, 1, 3 * dilation, dilation, model);
+    h = vcpm_vae_conv1d_layer(ctx, graph, conv1_w, conv1_b, h, 1, 3 * dilation, 0, dilation,
+                              model);
     if (!h)
         return residual;
     if (dbg_slot + 1 < 32)
@@ -597,7 +604,8 @@ struct ggml_tensor *vcpm_vae_residual_unit(struct ggml_context *ctx, struct ggml
         vcpm_vae_save_snapshot(ctx, graph, h);
 
     /* Conv2: pointwise kernel=1, padding=0, dilation=1 */
-    struct ggml_tensor *c2 = vcpm_vae_conv1d_layer(ctx, graph, conv2_w, conv2_b, h, 1, 0, 1, model);
+    struct ggml_tensor *c2 =
+        vcpm_vae_conv1d_layer(ctx, graph, conv2_w, conv2_b, h, 1, 0, 0, 1, model);
     if (!c2)
         return residual;
     if (dbg_slot + 3 < 32)

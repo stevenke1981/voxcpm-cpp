@@ -144,9 +144,10 @@ struct ggml_tensor *vcpm_vae_tensor_by_name(struct ggml_context *ctx,
 
 /* F32-precision conv1d layer with bias (auto depthwise vs regular) */
 struct ggml_tensor *vcpm_vae_conv1d_layer(struct ggml_context *ctx, struct ggml_cgraph *graph,
-                                          struct ggml_tensor *weight, struct ggml_tensor *bias,
-                                          struct ggml_tensor *input, int stride, int pad,
-                                          int dilate, const struct vcpm_model *model);
+                                           struct ggml_tensor *weight, struct ggml_tensor *bias,
+                                           struct ggml_tensor *input, int stride, int pad,
+                                           int output_padding, int dilate,
+                                           const struct vcpm_model *model);
 
 /* ConvTranspose1d upsampling with causal trim */
 struct ggml_tensor *vcpm_vae_upconv_transpose1d(struct ggml_context *ctx, struct ggml_cgraph *graph,

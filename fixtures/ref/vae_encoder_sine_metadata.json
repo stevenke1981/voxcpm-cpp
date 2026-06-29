@@ -1,0 +1,33 @@
+{
+  "amplitude": 0.08,
+  "audio": {
+    "dtype": "float32",
+    "max": 0.07999999821186066,
+    "mean": -1.9324125795083804e-09,
+    "min": -0.07999999821186066,
+    "rms": 0.05656854169513867,
+    "sha256": "4c9212452ecb14c0e2c1eda88814ba7d83ddecf64c2837dae0d03df761ade79a",
+    "shape": [
+      1,
+      1,
+      16000
+    ]
+  },
+  "checkpoint": "audiovae.pth",
+  "frequency_hz": 220.0,
+  "mean": {
+    "dtype": "float32",
+    "max": 5.033256530761719,
+    "mean": 0.016849538609967567,
+    "min": -4.732201099395752,
+    "rms": 1.7388279645891547,
+    "sha256": "78d63a8d42f586f301e1b3a3cfd91639c6908338b85fb67bce095b5a48d16030",
+    "shape": [
+      1,
+      64,
+      25
+    ]
+  },
+  "sample_rate": 16000,
+  "source": "upstream VoxCPM AudioVAE.encode"
+}

@@ -107,7 +107,7 @@ int main(void) {
     int pass = 1;
 
     printf("=== test_wav_writer ===\n");
-    printf("Generating %d Hz sine, %d sec at %d Hz...\n", freq, duration_sec, sr);
+    printf("Generating %.0f Hz sine, %d sec at %d Hz...\n", (double) freq, duration_sec, sr);
 
     /* ---- Step 1: Generate sine ---- */
     float * sine = gen_sine(n, sr, freq, amplitude);

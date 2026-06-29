@@ -69,6 +69,12 @@ float vcpm_cfm_cfg_zero_star(
     float cfg_value);
 
 /*
+ * Reproduce upstream's BF16 t_span construction:
+ * linspace -> multiply by pi/2 -> cos -> arithmetic.
+ */
+float vcpm_cfm_sway_t_bf16(int step, int n_steps);
+
+/*
  * Velocity function pointer.
  * Implemented by the caller to compute v_theta(x_t, t, cond).
  *

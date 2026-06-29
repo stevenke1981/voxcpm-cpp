@@ -24,7 +24,7 @@ int main(void) {
     int ret = 0;
 
     printf("=== ConvTranspose1d verify test ===\n");
-    printf("K=%d OC=%d IC=%d L=%d stride=%d OW=%d\n", K, OC, IC, L, stride);
+    printf("K=%d OC=%d IC=%d L=%d stride=%d OW=%d\n", K, OC, IC, L, stride, OW);
 
     /* Allocate weight and input data */
     size_t w_nelem = (size_t)K * OC * IC;

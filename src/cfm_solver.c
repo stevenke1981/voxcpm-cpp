@@ -20,6 +20,22 @@
 #include <string.h>
 #include <math.h>
 
+static float bf16_scalar(float value) {
+    return ggml_bf16_to_fp32(ggml_fp32_to_bf16(value));
+}
+
+float vcpm_cfm_sway_t_bf16(int step, int n_steps) {
+    if (n_steps <= 0 || step < 0 || step > n_steps)
+        return 0.0f;
+
+    const float base = bf16_scalar(1.0f - (float) step / (float) n_steps);
+    const float half_pi = bf16_scalar(1.57079632679489661923f);
+    const float angle = bf16_scalar(half_pi * base);
+    const float cosine = bf16_scalar(cosf(angle));
+    const float inner = bf16_scalar(bf16_scalar(cosine - 1.0f) + base);
+    return bf16_scalar(base + inner);
+}
+
 /* ---- Memory helpers ---- */
 
 void vcpm_cfm_dim_major_to_patch_major(float * dst,
@@ -55,15 +71,23 @@ float vcpm_cfm_cfg_zero_star(float * negative,
     double dot = 0.0;
     double squared_norm = 0.0;
     for (int i = 0; i < n; ++i) {
-        dot += (double)positive[i] * (double)negative[i];
-        squared_norm += (double)negative[i] * (double)negative[i];
+        const float positive_bf16 = bf16_scalar(positive[i]);
+        const float negative_bf16 = bf16_scalar(negative[i]);
+        dot += bf16_scalar(positive_bf16 * negative_bf16);
+        squared_norm += bf16_scalar(negative_bf16 * negative_bf16);
     }
 
-    const float st_star = (float)(dot / (squared_norm + 1.0e-8));
+    const float dot_bf16 = bf16_scalar((float) dot);
+    const float norm_bf16 = bf16_scalar((float) squared_norm + 1.0e-8f);
+    const float st_star = bf16_scalar(dot_bf16 / norm_bf16);
+    const float cfg_bf16 = bf16_scalar(cfg_value);
     for (int i = 0; i < n; ++i) {
-        const float negative_scaled = negative[i] * st_star;
-        negative[i] = negative_scaled +
-                      cfg_value * (positive[i] - negative_scaled);
+        const float positive_bf16 = bf16_scalar(positive[i]);
+        const float negative_bf16 = bf16_scalar(negative[i]);
+        const float negative_scaled = bf16_scalar(negative_bf16 * st_star);
+        const float guidance_delta = bf16_scalar(positive_bf16 - negative_scaled);
+        const float guidance = bf16_scalar(cfg_bf16 * guidance_delta);
+        negative[i] = bf16_scalar(negative_scaled + guidance);
     }
     return st_star;
 }

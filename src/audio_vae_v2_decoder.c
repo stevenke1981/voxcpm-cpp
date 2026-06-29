@@ -170,7 +170,7 @@ struct ggml_tensor * vcpm_vae_v2_decode(
     }
 
     if (w0) {
-        h = vcpm_vae_conv1d_layer(ctx, graph, w0, b0, h, 1, 3, 1, model);
+        h = vcpm_vae_conv1d_layer(ctx, graph, w0, b0, h, 1, 3, 0, 1, model);
         g_dbg_tensors[g_dbg_count++] = h;
         vcpm_vae_save_snapshot(ctx, graph, h);
         ggml_set_name(h, "vae_model0");
@@ -183,7 +183,7 @@ struct ggml_tensor * vcpm_vae_v2_decode(
     struct ggml_tensor * b1 = vcpm_vae_tensor_by_name(ctx, model, name);
 
     if (w1) {
-        h = vcpm_vae_conv1d_layer(ctx, graph, w1, b1, h, 1, 0, 1, model);
+        h = vcpm_vae_conv1d_layer(ctx, graph, w1, b1, h, 1, 0, 0, 1, model);
         g_dbg_tensors[g_dbg_count++] = h;
         vcpm_vae_save_snapshot(ctx, graph, h);
         ggml_set_name(h, "vae_model1");
@@ -264,7 +264,7 @@ struct ggml_tensor * vcpm_vae_v2_decode(
     struct ggml_tensor * b9 = vcpm_vae_tensor_by_name(ctx, model, name);
 
     if (w9 && h) {
-        h = vcpm_vae_conv1d_layer(ctx, graph, w9, b9, h, 1, 3, 1, model);
+        h = vcpm_vae_conv1d_layer(ctx, graph, w9, b9, h, 1, 3, 0, 1, model);
         g_dbg_tensors[g_dbg_count++] = h;
         vcpm_vae_save_snapshot(ctx, graph, h);
         ggml_set_name(h, "vae_model9");

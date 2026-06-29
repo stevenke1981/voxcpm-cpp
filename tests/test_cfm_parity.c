@@ -111,10 +111,16 @@ static float cosine_sim(const float * a, const float * b, int n) {
 int main(int argc, char ** argv) {
     const char * gguf_path = argc > 1 ? argv[1] : "voxcpm2_v2_full.gguf";
     const char * fixture_dir = argc > 2 ? argv[2] : "fixtures/ref";
+    const int ar_step = argc > 3 ? atoi(argv[3]) : 0;
+    const int diffusion_step = argc > 4 ? atoi(argv[4]) : 2;
+    const int fixture_n_steps = 10;
+    assert(ar_step >= 0);
+    assert(diffusion_step >= 2 && diffusion_step <= fixture_n_steps);
 
     printf("=== CFM/DiT Parity Test ===\n");
     printf("GGUF: %s\n", gguf_path);
     printf("Fixtures: %s\n", fixture_dir);
+    printf("Fixture point: AR%d d%d\n", ar_step, diffusion_step);
 
     /* ---- Load model ---- */
     char err_buf[512] = {0};
@@ -132,29 +138,35 @@ int main(int argc, char ** argv) {
     /* ---- Load fixtures ---- */
     char path[512];
     int n_mu = 0;
-    snprintf(path, sizeof(path), "%s/dit_hidden_init.npy", fixture_dir);
+    snprintf(path, sizeof(path), "%s/step%04d_dit_hidden.npy", fixture_dir, ar_step);
     float * mu_data = read_npy_f32(path, &n_mu, NULL, 1);
-    if (!mu_data) {
+    if (!mu_data && ar_step == 0) {
         /* Try alternative fixture name */
-        snprintf(path, sizeof(path), "%s/step0000_dit_hidden.npy", fixture_dir);
+        snprintf(path, sizeof(path), "%s/dit_hidden_init.npy", fixture_dir);
         mu_data = read_npy_f32(path, &n_mu, NULL, 1);
-        assert(mu_data && "Missing dit_hidden fixture");
     }
+    assert(mu_data && "Missing dit_hidden fixture");
     printf("  mu: %d floats\n", n_mu);
 
-    snprintf(path, sizeof(path), "%s/step0000_cfm_cond.npy", fixture_dir);
+    snprintf(path, sizeof(path), "%s/step%04d_cfm_cond.npy", fixture_dir, ar_step);
     int n_cond = 0, cond_shape[3] = {0};
     float * cond_data = read_npy_f32(path, &n_cond, cond_shape, 3);
     assert(cond_data && "Missing cfm_cond fixture");
     printf("  cond: %d floats\n", n_cond);
 
-    snprintf(path, sizeof(path), "%s/ar0000_cfm_noise.npy", fixture_dir);
+    if (diffusion_step == 2) {
+        snprintf(path, sizeof(path), "%s/ar%04d_cfm_noise.npy", fixture_dir, ar_step);
+    } else {
+        snprintf(path, sizeof(path), "%s/ar%04d_d%04d_cfm_traj_state.npy", fixture_dir, ar_step,
+                 diffusion_step - 1);
+    }
     int n_noise = 0;
     float * noise_data = read_npy_f32(path, &n_noise, NULL, 1);
-    assert(noise_data && "Missing CFM noise fixture");
-    printf("  noise: %d floats\n", n_noise);
+    assert(noise_data && "Missing exact CFM input-state fixture");
+    printf("  exact input state: %d floats\n", n_noise);
 
-    snprintf(path, sizeof(path), "%s/ar0000_d0002_cfm_velocity_cond.npy", fixture_dir);
+    snprintf(path, sizeof(path), "%s/ar%04d_d%04d_cfm_velocity_cond.npy", fixture_dir, ar_step,
+             diffusion_step);
     int n_velocity_ref = 0;
     float * velocity_ref = read_npy_f32(path, &n_velocity_ref, NULL, 1);
     assert(velocity_ref && "Missing conditional velocity fixture");
@@ -169,7 +181,7 @@ int main(int argc, char ** argv) {
     printf("\n=== Fixture verification (structural) ===\n");
     printf("  mu dim check: n_mu=%d (expected 2048)\n", n_mu);
     printf("  cond dim check: n_cond=%d (expected 256 = 64*4)\n", n_cond);
-    printf("  noise dim check: n_noise=%d (expected 256 = 64*4)\n", n_noise);
+    printf("  input-state dim check: n_noise=%d (expected 256 = 64*4)\n", n_noise);
     printf("  velocity dim check: n_velocity_ref=%d (expected 256 = 64*4)\n",
            n_velocity_ref);
 
@@ -320,7 +332,7 @@ int main(int argc, char ** argv) {
     int hidden_size = mcfg->dit_hidden_size; /* 1024 */
     (void)hidden_size;
 
-    /* x_t: noisy latent at t=1.0 — start from Gaussian noise scaled to feat_dim */
+    /* x_t: exact Python trajectory state immediately before this velocity evaluation. */
     struct ggml_tensor * x_t = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, feat_dim, seq_len);
     assert(x_t && x_t->data);
 
@@ -340,15 +352,12 @@ int main(int argc, char ** argv) {
     assert(mu && mu->data);
     memcpy(mu->data, mu_data, 2048 * sizeof(float));
 
-    /* First non-zero CFG-Zero* evaluation for 10 steps is Python dump d0002:
-     * sway_t(step=1) with dt forced to zero in mean mode. */
+    /* Python labels its first evaluated velocity d0002, corresponding to
+     * t_span[1]. In general dN uses t_span[N-1]. */
     struct ggml_tensor * timestep = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
     assert(timestep && timestep->data);
-    {
-        const float base = 0.9f;
-        ((float *)timestep->data)[0] =
-            base + (cosf(1.57079632679489661923f * base) - 1.0f + base);
-    }
+    ((float *)timestep->data)[0] =
+        vcpm_cfm_sway_t_bf16(diffusion_step - 1, fixture_n_steps);
 
     struct ggml_tensor * dt = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
     assert(dt && dt->data);
@@ -374,7 +383,7 @@ int main(int argc, char ** argv) {
     printf("  Computing graph...\n");
     ggml_build_forward_expand(graph, vel);
     ggml_graph_compute_with_ctx(ctx, graph, 1);
-    vcpm_locdit_debug_dump("parity", 0, 2);
+    vcpm_locdit_debug_dump("parity", ar_step, diffusion_step);
 
     /* ---- Compare velocity against the exact Python d0002 fixture ---- */
     printf("\n=== Velocity Comparison ===\n");
@@ -393,7 +402,7 @@ int main(int argc, char ** argv) {
     vcpm_cfm_patch_major_to_dim_major(
         velocity_logical, vd, feat_dim, seq_len);
     float cos_sim = cosine_sim(velocity_logical, velocity_ref, n_vel);
-    printf("  Cosine similarity vs d0002 velocity: %.6f\n", cos_sim);
+    printf("  Cosine similarity vs AR%d d%d velocity: %.6f\n", ar_step, diffusion_step, cos_sim);
 
     /* Compute max absolute error */
     float max_err = 0.0f;
@@ -417,7 +426,7 @@ int main(int argc, char ** argv) {
     assert(vel_rms > 0.0f && "Velocity should have non-zero RMS");
     assert(isfinite(vel_rms) && "Velocity should be finite");
     fflush(stdout);
-    assert(cos_sim > 0.98f && "LocDiT d0002 velocity parity regression");
+    assert(cos_sim > 0.98f && "LocDiT exact-input velocity parity regression");
 
     /* Check that velocity is non-trivial (not all zeros) */
     int n_nonzero = 0;
@@ -428,7 +437,7 @@ int main(int argc, char ** argv) {
     printf("  Non-zero elements: %d/%d (%d%%)\n",
            n_nonzero, n_vel, n_nonzero * 100 / n_vel);
 
-    printf("\n=== PASS: CFM/DiT d0002 numerical parity ===\n");
+    printf("\n=== PASS: CFM/DiT exact-input numerical parity ===\n");
     free(velocity_logical);
 
 cleanup:

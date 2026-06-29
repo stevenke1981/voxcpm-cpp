@@ -47,12 +47,6 @@ static float vcpm_bf16_scalar(float value) {
 
 /* ---- CFM helper functions ---- */
 
-static float vcpm_cfm_sway_t(int step, int n_steps) {
-    if (n_steps <= 0) return 0.0f;
-    const float base = 1.0f - (float)step / (float)n_steps;
-    return base + (cosf((float)M_PI_2 * base) - 1.0f + base);
-}
-
 static int vcpm_cfm_zero_star_steps(int n_steps) {
     if (n_steps <= 1) return 0;
     int zero_steps = (int)(((float)n_steps + 1.0f) * 0.04f);
@@ -542,7 +536,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
 
         /* Seed first-step input data */
         {
-            float t0 = vcpm_cfm_sway_t(first_cfm_step, n_steps);
+            float t0 = vcpm_cfm_sway_t_bf16(first_cfm_step, n_steps);
             memcpy(x_t->data, x_data, (size_t)total_patch_dim * sizeof(float));
             if (cond_t) memcpy(cond_t->data, prev_data, (size_t)prev_dim * sizeof(float));
             if (t_tensor->data) ((float *)t_tensor->data)[0] = t0;
@@ -601,9 +595,9 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                 continue;
             }
 
-            const float t = vcpm_cfm_sway_t(step, n_steps);
-            const float next_t = vcpm_cfm_sway_t(step + 1, n_steps);
-            const float step_size = -(t - next_t);
+            const float t = vcpm_cfm_sway_t_bf16(step, n_steps);
+            const float next_t = vcpm_cfm_sway_t_bf16(step + 1, n_steps);
+            const float step_size = vcpm_bf16_scalar(-(t - next_t));
 
             /* Update input tensor data in-place */
             memcpy(x_t->data, x_data, (size_t)total_patch_dim * sizeof(float));
@@ -630,8 +624,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                     vcpm_cfm_dump_velocity("blend", ar_step_counter, step + 1,
                                             vel, latent_dim, patch_size);
                     for (int j = 0; j < total_patch_dim; j++) {
-                        x_data[j] = vcpm_bf16_scalar(
-                            x_data[j] + step_size * vel[j]);
+                        const float delta = vcpm_bf16_scalar(step_size * vel[j]);
+                        x_data[j] = vcpm_bf16_scalar(x_data[j] + delta);
                     }
                 }
             } else {
@@ -644,8 +638,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
                     vcpm_cfm_dump_velocity("blend", ar_step_counter, step + 1,
                                            vel, latent_dim, patch_size);
                     for (int j = 0; j < total_patch_dim; j++) {
-                        x_data[j] = vcpm_bf16_scalar(
-                            x_data[j] + step_size * vel[j]);
+                        const float delta = vcpm_bf16_scalar(step_size * vel[j]);
+                        x_data[j] = vcpm_bf16_scalar(x_data[j] + delta);
                     }
                 }
             }

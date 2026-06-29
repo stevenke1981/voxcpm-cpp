@@ -98,11 +98,11 @@ static struct ggml_tensor *encoder_block(struct ggml_context *ctx, struct ggml_c
     struct ggml_tensor *dw_b = vcpm_vae_tensor_by_name(ctx, model, name);
 
     int K = (int) dw_w->ne[0];
-    int pad = (K - stride) / 2;
+    int pad = (K - stride + 1) / 2;
     if (pad < 0)
         pad = 0;
 
-    h = vcpm_vae_conv1d_layer(ctx, graph, dw_w, dw_b, h, stride, pad, 1, model);
+    h = vcpm_vae_conv1d_layer(ctx, graph, dw_w, dw_b, h, stride, pad, stride % 2, 1, model);
     if (!h) {
         fprintf(stderr, "VAE V2 encoder: downconv failed in block.%d\n", block_idx);
         return NULL;
@@ -141,7 +141,7 @@ struct ggml_tensor *vcpm_vae_v2_encode(struct ggml_context *ctx, struct ggml_cgr
     if (w0) {
         int K0 = (int) w0->ne[0];
         int pad0 = (K0 - 1) / 2;
-        h = vcpm_vae_conv1d_layer(ctx, graph, w0, b0, h, 1, pad0, 1, model);
+        h = vcpm_vae_conv1d_layer(ctx, graph, w0, b0, h, 1, pad0, 0, 1, model);
         ggml_set_name(h, "vae_enc_block0");
         if (!h) {
             fprintf(stderr, "VAE V2 encoder: block.0 conv failed\n");
@@ -183,7 +183,7 @@ struct ggml_tensor *vcpm_vae_v2_encode(struct ggml_context *ctx, struct ggml_cgr
     int K_mu = (int) mu_w->ne[0];
     int pad_mu = (K_mu - 1) / 2;
     struct ggml_tensor *mean =
-        vcpm_vae_conv1d_layer(ctx, graph, mu_w, mu_b, h, 1, pad_mu, 1, model);
+        vcpm_vae_conv1d_layer(ctx, graph, mu_w, mu_b, h, 1, pad_mu, 0, 1, model);
     if (!mean) {
         fprintf(stderr, "VAE V2 encoder: fc_mu conv failed\n");
         return NULL;
@@ -192,7 +192,7 @@ struct ggml_tensor *vcpm_vae_v2_encode(struct ggml_context *ctx, struct ggml_cgr
 
     if (out_logvar) {
         struct ggml_tensor *logvar =
-            vcpm_vae_conv1d_layer(ctx, graph, lv_w, lv_b, h, 1, pad_mu, 1, model);
+            vcpm_vae_conv1d_layer(ctx, graph, lv_w, lv_b, h, 1, pad_mu, 0, 1, model);
         if (!logvar) {
             fprintf(stderr, "VAE V2 encoder: fc_logvar conv failed\n");
             return NULL;
