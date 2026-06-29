@@ -138,7 +138,7 @@
 - [x] CFM sampler aligned with reference (sway t-span, dt=0.0, CFG-Zero*).
 - [x] `prev_patch` transpose fix (commit 1aba093): dim-major → column-major for FeatEncoder.
 - [x] CLI commands: `tts`, `inspect`, `tokenize`, `bench`, `clone` (with consent gate).
-- [x] Reference voice cloning pipeline (R14, commit d154730).
+- [x] Python-compatible voice cloning: reference-only, prompt-only continuation, and combined.
 - [x] `bench` command (R10) with wall clock / CPU time / RTF / CSV output.
 - [x] Denoiser load contract exposed: C API/CLI now records Python's default ZipEnhancer intent and fails explicitly on `--denoise` until a native backend exists.
 

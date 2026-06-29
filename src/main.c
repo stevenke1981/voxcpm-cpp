@@ -480,6 +480,7 @@ static int cmd_clone(int argc, char **argv) {
     int consent = 0;
     float cfg = 2.0f;
     int steps = 30;
+    int min_len = 2;
     int max_len = 4096;
     int use_pcm16 = 0;
     int denoise = 0;
@@ -495,6 +496,7 @@ static int cmd_clone(int argc, char **argv) {
         {"--i-have-consent", VCPM_ARG_FLAG, &consent, "Confirm consent", 1, NULL},
         {"--cfg", VCPM_ARG_FLOAT, &cfg, "CFG scale", 0, "2.0"},
         {"--steps", VCPM_ARG_INT, &steps, "Diffusion steps", 0, "10"},
+        {"--min-len", VCPM_ARG_INT, &min_len, "Min generated patches", 0, "2"},
         {"--max-len", VCPM_ARG_INT, &max_len, "Max generated patches", 0, "4096"},
         {"--backend", VCPM_ARG_STRING, &backend_str, "cpu/cuda/metal/vulkan", 0, NULL},
         {"--threads", VCPM_ARG_INT, &threads, "CPU threads", 0, NULL},
@@ -561,6 +563,7 @@ static int cmd_clone(int argc, char **argv) {
     gparams.consent_confirmed = consent;
     gparams.cfg_value = cfg;
     gparams.inference_steps = steps;
+    gparams.min_len = min_len;
     gparams.max_len = max_len;
     gparams.denoise = denoise;
 
@@ -753,6 +756,8 @@ static void usage(void) {
     puts("  voxcpm-c tokenize --model model.gguf --text \"hello\"");
     puts("  voxcpm-c clone --model model.gguf --reference-audio ref.wav --text \"hello\" "
          "--i-have-consent --out out.wav");
+    puts("  voxcpm-c clone --model model.gguf --prompt-audio prompt.wav "
+         "--prompt-text \"transcript\" --text \"continue\" --i-have-consent --out out.wav");
     puts("  voxcpm-c bench --model model.gguf --text \"hello\" [--repeat 3]");
     puts("");
     puts("Options:");
@@ -773,11 +778,14 @@ static void usage(void) {
     puts("  --denoiser-model ID ZipEnhancer model path/id (default: "
          "iic/speech_zipenhancer_ans_multiloss_16k_base)");
     puts("  --no-denoiser       Do not request the external ZipEnhancer denoiser");
+    puts("  --reference-audio   Independent reference voice WAV for clone");
+    puts("  --prompt-audio      Continuation prompt WAV for clone");
+    puts("  --prompt-text       Exact UTF-8 transcript of --prompt-audio");
     puts("");
     puts("Safety:");
     puts("  AI-generated speech must be disclosed where appropriate.");
     puts("  Do not impersonate, defraud, or clone a voice without consent.");
-    puts("  Cloning commands require --i-have-consent when implemented.");
+    puts("  Cloning commands require --i-have-consent.");
 }
 
 static int voxcpm_cli_main(int argc, char **argv) {

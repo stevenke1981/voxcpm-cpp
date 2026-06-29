@@ -42,6 +42,9 @@ typedef struct vcpm_model_params {
 typedef struct vcpm_generation_params {
     const char * text;
     const char * control;
+    /* Voice clone inputs. reference audio is right-padded; prompt audio is
+     * left-padded and should be paired with its exact UTF-8 transcript.
+     * Any audio input requires consent_confirmed != 0. */
     const char * reference_audio_path;
     const char * prompt_audio_path;
     const char * prompt_text;

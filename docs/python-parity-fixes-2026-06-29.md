@@ -387,3 +387,15 @@ faster-whisper large-v3-turbo CUDA = 你好,这是测试
 - production Gaussian PRNG 不與 PyTorch bit-exact；數值 parity 應繼續使用已匯出的
   per-AR fixture noise。
 - streaming 仍非低延遲 chunked streaming。
+
+## 17. 三模式語音 Clone 對齊
+
+reference-only、prompt-only continuation 與 combined conditioning 已完成：
+reference WAV 採右補零、prompt WAV 採左補零，`prompt_text + target_text` 只進行
+一次 UTF-8 tokenizer 編碼，且 prefix 會按絕對 KV position 交錯執行 text/audio
+segment。F16 model smoke 的三種模式皆產生 30720 個 48 kHz finite samples。
+中文 combined CLI 以 `--min-len 12` 驗證時，CUDA ASR 完整轉錄為
+「这是复制测试」，未裁掉末尾「测试」。
+
+實作資料流、sequence layout、數值 gate、安全限制與 CLI 範例記錄於
+[`voice-clone-python-parity-2026-06-29.md`](voice-clone-python-parity-2026-06-29.md)。

@@ -246,29 +246,19 @@ vcpm_status vcpm_generate(vcpm_context *ctx, const vcpm_generation_params *param
     }
     memset(out_audio, 0, sizeof(*out_audio));
 
-    if (!ctx->model_loaded) {
-        vcpm_set_error(ctx, "model not loaded");
-        return VCPM_ERR_MODEL_FORMAT;
-    }
-
-    if (!ctx->tokenizer_loaded) {
-        vcpm_set_error(ctx, "tokenizer not loaded - model missing tokenizer metadata");
-        return VCPM_ERR_MODEL_FORMAT;
-    }
-
     int is_reference = params->reference_audio_path && params->reference_audio_path[0];
     int is_prompt_audio = params->prompt_audio_path && params->prompt_audio_path[0];
     int is_clone = is_reference || is_prompt_audio;
-    vcpm_conditioning_audio reference = {0};
-    vcpm_conditioning_audio prompt = {0};
-
     if (is_clone && !params->consent_confirmed) {
         vcpm_set_error(ctx, "voice clone generation requires consent confirmation");
         return VCPM_ERR_INVALID_ARG;
     }
-    if ((is_reference && !vcpm_path_exists(params->reference_audio_path)) ||
-        (is_prompt_audio && !vcpm_path_exists(params->prompt_audio_path))) {
-        vcpm_set_error(ctx, "clone conditioning audio file not found");
+    if (is_reference && !vcpm_path_exists(params->reference_audio_path)) {
+        vcpm_set_error(ctx, "reference audio file not found");
+        return VCPM_ERR_INVALID_ARG;
+    }
+    if (is_prompt_audio && !vcpm_path_exists(params->prompt_audio_path)) {
+        vcpm_set_error(ctx, "prompt audio file not found");
         return VCPM_ERR_INVALID_ARG;
     }
     if (params->denoise && is_clone && !ctx->denoiser_loaded) {
@@ -278,6 +268,38 @@ vcpm_status vcpm_generate(vcpm_context *ctx, const vcpm_generation_params *param
         return VCPM_ERR_NOT_IMPLEMENTED;
     }
 
+    /* Validate WAV structure before model execution, keeping safety and input
+     * diagnostics deterministic even when model loading failed. */
+    const char *clone_paths[2] = {params->reference_audio_path, params->prompt_audio_path};
+    const char *clone_roles[2] = {"reference audio", "prompt audio"};
+    for (int role = 0; role < 2; role++) {
+        if (!clone_paths[role] || !clone_paths[role][0])
+            continue;
+        float *probe = NULL;
+        int probe_rate = 0;
+        int probe_channels = 0;
+        int64_t probe_frames =
+            vcpm_read_wav_f32(clone_paths[role], &probe, &probe_rate, &probe_channels);
+        free(probe);
+        if (probe_frames <= 0) {
+            char message[128];
+            snprintf(message, sizeof(message), "failed to read %s WAV", clone_roles[role]);
+            vcpm_set_error(ctx, message);
+            return VCPM_ERR_IO;
+        }
+    }
+
+    if (!ctx->model_loaded) {
+        vcpm_set_error(ctx, "model not loaded");
+        return VCPM_ERR_MODEL_FORMAT;
+    }
+    if (!ctx->tokenizer_loaded) {
+        vcpm_set_error(ctx, "tokenizer not loaded - model missing tokenizer metadata");
+        return VCPM_ERR_MODEL_FORMAT;
+    }
+
+    vcpm_conditioning_audio reference = {0};
+    vcpm_conditioning_audio prompt = {0};
     char clone_error[512] = {0};
     vcpm_status clone_status = VCPM_OK;
     if (is_reference) {

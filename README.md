@@ -78,7 +78,11 @@ voxcpm-c tts   --model ./models/voxcpm2-f16.gguf   --text "(young warm female vo
 
 voxcpm-c stream   --model ./models/voxcpm2-f16.gguf   --text "Streaming release gate test."   --steps 2   --max-len 16   --out stream.wav
 
-voxcpm-c clone   --model ./models/voxcpm2-f16.gguf   --text "這是一段聲音複製測試。"   --reference-audio ref_16k.wav   --i-have-consent   --out clone.wav
+voxcpm-c clone --model ./models/voxcpm2-f16.gguf --text "這是一段聲音複製測試。" --reference-audio ref_16k.wav --i-have-consent --out clone.wav
+
+voxcpm-c clone --model ./models/voxcpm2-f16.gguf --prompt-audio prompt.wav --prompt-text "提示音訊的完整逐字稿。" --text "要接續生成的文字。" --i-have-consent --out continuation.wav
+
+voxcpm-c clone --model ./models/voxcpm2-f16.gguf --reference-audio ref.wav --prompt-audio prompt.wav --prompt-text "提示音訊的完整逐字稿。" --text "目標文字。" --i-have-consent --out combined.wav
 ```
 
 Current verified baseline:
@@ -90,4 +94,6 @@ Current verified baseline:
 - A 10-step TTS smoke writes 48 kHz mono WAV with non-zero finite samples.
 - `stream` is currently a one-shot callback smoke path: it uses `vcpm_generate_stream()` and writes the callback audio to WAV. It is not yet low-latency chunked streaming.
 - Incomplete/mock GGUFs fail `tts` with a missing tensor diagnostic instead of dummy audio.
-- `clone` and the C API reference-audio path require consent, check that the reference file exists, and still return explicit not-implemented until reference-audio encoding/conditioning is complete.
+- `clone` 與 C API 已支援 reference-only、prompt-only continuation、combined 三種 Python-compatible conditioning 模式；所有模式都要求明確 consent。
+- Prompt 模式會以 `prompt_text + target_text` 單次 tokenize，reference WAV 右補零、prompt WAV 左補零；完整語意與驗證結果見 [`docs/voice-clone-python-parity-2026-06-29.md`](docs/voice-clone-python-parity-2026-06-29.md)。
+- Native ZipEnhancer denoiser 尚未實作；要求 `--denoise` 時會明確失敗，不會靜默略過。
