@@ -25,6 +25,7 @@ typedef struct vcpm_sequence {
 
     /* Metadata */
     int audio_start_pos; /* position of audio_start_token */
+    int first_gen_pos;   /* first newly generated audio position */
     int n_audio_patches; /* number of audio latent patches to generate */
 } vcpm_sequence;
 
@@ -39,6 +40,15 @@ typedef struct vcpm_seq_builder {
     int max_seq_len;
 } vcpm_seq_builder;
 
+typedef struct vcpm_clone_sequence_params {
+    const int32_t *target_token_ids;
+    int n_target_tokens;
+    const int32_t *prompt_token_ids;
+    int n_prompt_tokens;
+    int n_reference_patches;
+    int n_prompt_patches;
+} vcpm_clone_sequence_params;
+
 /* Initialize builder with defaults */
 void vcpm_seq_builder_init(vcpm_seq_builder *builder, int audio_start, int audio_end, int ref_start,
                            int ref_end, int patch_size, int feat_dim, int max_seq_len);
@@ -51,6 +61,10 @@ int vcpm_seq_build_zero_shot(const vcpm_seq_builder *builder, const int32_t *tex
  * audio_placeholder] */
 int vcpm_seq_build_reference(const vcpm_seq_builder *builder, const int32_t *text_token_ids,
                              int n_text_tokens, int n_ref_patches, vcpm_sequence *seq);
+
+/* Build reference-only, prompt-only, or combined Python-compatible clone sequence. */
+int vcpm_seq_build_clone(const vcpm_seq_builder *builder,
+                         const vcpm_clone_sequence_params *params, vcpm_sequence *seq);
 
 /* Reset sequence */
 void vcpm_seq_reset(vcpm_sequence *seq);

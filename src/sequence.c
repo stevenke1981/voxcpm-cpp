@@ -49,6 +49,7 @@ int vcpm_seq_build_zero_shot(const vcpm_seq_builder *builder, const int32_t *tex
     seq->audio_mask[pos] = 0;
     seq->audio_start_pos = pos;
     pos++;
+    seq->first_gen_pos = pos;
 
     /* Step 3: audio placeholder tokens (generated latent patches).
      * Must create enough positions for meaningful speech output.
@@ -80,68 +81,75 @@ int vcpm_seq_build_zero_shot(const vcpm_seq_builder *builder, const int32_t *tex
     return 0;
 }
 
-int vcpm_seq_build_reference(const vcpm_seq_builder *builder, const int32_t *text_token_ids,
-                             int n_text_tokens, int n_ref_patches, vcpm_sequence *seq) {
-    if (!builder || !text_token_ids || !seq)
+int vcpm_seq_build_clone(const vcpm_seq_builder *builder,
+                         const vcpm_clone_sequence_params *params, vcpm_sequence *seq) {
+    if (!builder || !params || !seq || !params->target_token_ids)
         return -1;
-    if (n_text_tokens <= 0 || n_ref_patches <= 0)
+    if (params->n_target_tokens <= 0 || params->n_prompt_tokens < 0 ||
+        params->n_reference_patches < 0 || params->n_prompt_patches < 0)
+        return -1;
+    if (params->n_prompt_tokens > 0 && !params->prompt_token_ids)
+        return -1;
+    if (params->n_reference_patches == 0 && params->n_prompt_patches == 0)
         return -1;
 
     vcpm_seq_reset(seq);
 
     int pos = 0;
-    int ref_feat_len = n_ref_patches;
-
-    /* Check max length (estimate worst case before computing exact placeholder count) */
-    int total = 1 + ref_feat_len + 1 + n_text_tokens + 1 + n_text_tokens * 8;
-    if (total > VCPM_MAX_SEQ_LEN)
+    int n_text_tokens = params->n_prompt_tokens + params->n_target_tokens;
+    int prompt_len = (params->n_reference_patches > 0 ? 2 : 0) +
+                     params->n_reference_patches + n_text_tokens + 1 +
+                     params->n_prompt_patches;
+    int capacity = builder->max_seq_len < VCPM_MAX_SEQ_LEN ? builder->max_seq_len
+                                                           : VCPM_MAX_SEQ_LEN;
+    if (prompt_len + builder->patch_size > capacity)
         return -1;
-    if (total > builder->max_seq_len)
-        return -1;
 
-    /* Step 1: ref_audio_start */
-    seq->token_ids[pos] = builder->ref_audio_start_token;
+    if (params->n_reference_patches > 0) {
+        seq->token_ids[pos] = builder->ref_audio_start_token;
+        seq->text_mask[pos] = 1;
+        pos++;
+        for (int i = 0; i < params->n_reference_patches; i++) {
+            seq->token_ids[pos] = 0;
+            seq->audio_mask[pos] = 1;
+            pos++;
+        }
+        seq->token_ids[pos] = builder->ref_audio_end_token;
+        seq->text_mask[pos] = 1;
+        pos++;
+    }
+
+    for (int i = 0; i < params->n_prompt_tokens; i++) {
+        seq->token_ids[pos] = params->prompt_token_ids[i];
+        seq->text_mask[pos] = 1;
+        pos++;
+    }
+    for (int i = 0; i < params->n_target_tokens; i++) {
+        seq->token_ids[pos] = params->target_token_ids[i];
+        seq->text_mask[pos] = 1;
+        pos++;
+    }
+
+    seq->token_ids[pos] = builder->audio_start_token;
     seq->text_mask[pos] = 1;
-    seq->audio_mask[pos] = 0;
+    seq->audio_start_pos = pos;
     pos++;
 
-    /* Step 2: reference audio feature placeholders */
-    for (int i = 0; i < ref_feat_len; i++) {
-        seq->token_ids[pos] = 0; /* filled with encoded features later */
+    for (int i = 0; i < params->n_prompt_patches; i++) {
+        seq->token_ids[pos] = 0;
         seq->text_mask[pos] = 0;
         seq->audio_mask[pos] = 1;
         pos++;
     }
+    seq->first_gen_pos = pos;
 
-    /* Step 3: ref_audio_end */
-    seq->token_ids[pos] = builder->ref_audio_end_token;
-    seq->text_mask[pos] = 1;
-    seq->audio_mask[pos] = 0;
-    pos++;
-
-    /* Step 4: text tokens */
-    for (int i = 0; i < n_text_tokens; i++) {
-        seq->token_ids[pos] = text_token_ids[i];
-        seq->text_mask[pos] = 1;
-        seq->audio_mask[pos] = 0;
-        pos++;
-    }
-
-    /* Step 5: audio_start */
-    seq->token_ids[pos] = builder->audio_start_token;
-    seq->text_mask[pos] = 1;
-    seq->audio_mask[pos] = 0;
-    seq->audio_start_pos = pos;
-    pos++;
-
-    /* Step 6: audio placeholder tokens for generated speech */
     int gen_placeholders = builder->patch_size * 16;
     int text_based = n_text_tokens * 8;
     if (text_based > gen_placeholders)
         gen_placeholders = text_based;
-    int max_allowed_ref = builder->max_seq_len - 1 - ref_feat_len - 1 - n_text_tokens - 1;
-    if (gen_placeholders > max_allowed_ref)
-        gen_placeholders = max_allowed_ref;
+    int max_allowed = capacity - pos;
+    if (gen_placeholders > max_allowed)
+        gen_placeholders = max_allowed;
     if (gen_placeholders < builder->patch_size)
         gen_placeholders = builder->patch_size;
     for (int i = 0; i < gen_placeholders; i++) {
@@ -155,6 +163,16 @@ int vcpm_seq_build_reference(const vcpm_seq_builder *builder, const int32_t *tex
     seq->n_text_tokens = n_text_tokens;
     seq->n_audio_patches = gen_placeholders;
     return 0;
+}
+
+int vcpm_seq_build_reference(const vcpm_seq_builder *builder, const int32_t *text_token_ids,
+                             int n_text_tokens, int n_ref_patches, vcpm_sequence *seq) {
+    vcpm_clone_sequence_params params = {
+        .target_token_ids = text_token_ids,
+        .n_target_tokens = n_text_tokens,
+        .n_reference_patches = n_ref_patches,
+    };
+    return vcpm_seq_build_clone(builder, &params, seq);
 }
 
 void vcpm_seq_print(const vcpm_sequence *seq) {

@@ -173,6 +173,12 @@ if(VCPM_BUILD_TESTS)
     add_test(NAME sequence COMMAND test_sequence)
     set_tests_properties(sequence PROPERTIES LABELS "unit")
 
+    add_executable(test_clone_sequence tests/test_clone_sequence.c)
+    target_include_directories(test_clone_sequence PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_clone_sequence PRIVATE voxcpm)
+    add_test(NAME clone_sequence COMMAND test_clone_sequence)
+    set_tests_properties(clone_sequence PROPERTIES LABELS "unit")
+
     add_executable(test_stop tests/test_stop.c)
     target_include_directories(test_stop PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_stop PRIVATE voxcpm)
