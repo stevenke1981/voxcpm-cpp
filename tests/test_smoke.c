@@ -21,6 +21,7 @@ int main(void) {
     assert(gp.inference_steps == 10);
     assert(gp.cfg_value > 1.9f && gp.cfg_value < 2.1f);
     assert(gp.text == NULL);
+    assert(gp.control == NULL);
     assert(gp.min_len == 2);
     assert(gp.max_len == 4096);
     assert(gp.denoise == 0);

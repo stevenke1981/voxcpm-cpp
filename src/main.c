@@ -295,6 +295,7 @@ static int cmd_tokenize(int argc, char **argv) {
 static int do_tts_common(int argc, char **argv, int streaming) {
     const char *model_path = NULL;
     const char *text = NULL;
+    const char *control = NULL;
     const char *out_path = NULL;
     const char *backend_str = NULL;
     const char *text_file = NULL;
@@ -313,6 +314,7 @@ static int do_tts_common(int argc, char **argv, int streaming) {
         {"--model", VCPM_ARG_STRING, &model_path, "GGUF model file", 1, NULL},
         {"--text", VCPM_ARG_STRING, &text, "Input text", 0, NULL},
         {"--text-file", VCPM_ARG_STRING, &text_file, "UTF-8 text file", 0, NULL},
+        {"--control", VCPM_ARG_STRING, &control, "TSLM voice control instruction", 0, NULL},
         {"--out", VCPM_ARG_STRING, &out_path, "Output WAV file", 1, NULL},
         {"--cfg", VCPM_ARG_FLOAT, &cfg, "CFG scale", 0, "2.0"},
         {"--steps", VCPM_ARG_INT, &steps, "Diffusion steps", 0, "10"},
@@ -392,6 +394,7 @@ static int do_tts_common(int argc, char **argv, int streaming) {
 
     vcpm_generation_params gp = vcpm_default_generation_params();
     gp.text = text;
+    gp.control = control;
     gp.cfg_value = cfg;
     gp.inference_steps = steps;
     gp.min_len = min_len;
@@ -470,6 +473,7 @@ static int cmd_stream(int argc, char **argv) {
 static int cmd_clone(int argc, char **argv) {
     const char *model_path = NULL;
     const char *text = NULL;
+    const char *control = NULL;
     const char *ref_audio = NULL;
     const char *prompt_audio = NULL;
     const char *prompt_text = NULL;
@@ -489,6 +493,7 @@ static int cmd_clone(int argc, char **argv) {
     vcpm_arg_def args[] = {
         {"--model", VCPM_ARG_STRING, &model_path, "GGUF model file", 1, NULL},
         {"--text", VCPM_ARG_STRING, &text, "Input text", 1, NULL},
+        {"--control", VCPM_ARG_STRING, &control, "TSLM voice control instruction", 0, NULL},
         {"--reference-audio", VCPM_ARG_STRING, &ref_audio, "Reference audio WAV", 0, NULL},
         {"--prompt-audio", VCPM_ARG_STRING, &prompt_audio, "Continuation prompt WAV", 0, NULL},
         {"--prompt-text", VCPM_ARG_STRING, &prompt_text, "Exact prompt WAV transcript", 0, NULL},
@@ -557,6 +562,7 @@ static int cmd_clone(int argc, char **argv) {
     /* ---- Generate with reference audio ---- */
     vcpm_generation_params gparams = vcpm_default_generation_params();
     gparams.text = text;
+    gparams.control = control;
     gparams.reference_audio_path = ref_audio;
     gparams.prompt_audio_path = prompt_audio;
     gparams.prompt_text = prompt_text;
@@ -764,6 +770,7 @@ static void usage(void) {
     puts("  --model PATH        GGUF model file (required)");
     puts("  --text TEXT         Input text");
     puts("  --text-file PATH    UTF-8 input text file");
+    puts("  --control TEXT      TSLM voice style/prosody instruction");
     puts("  --out PATH          Output WAV file");
     puts("  --cfg FLOAT         CFG scale (default: 2.0)");
     puts("  --steps INT         Diffusion steps (default: 10)");

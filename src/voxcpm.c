@@ -4,6 +4,7 @@
 #include "sequence.h"
 #include "generate.h"
 #include "clone_audio.h"
+#include "text_control.h"
 #include "audio_vae_v2.h"
 #include "debug_dump.h"
 
@@ -319,34 +320,24 @@ vcpm_status vcpm_generate(vcpm_context *ctx, const vcpm_generation_params *param
         return clone_status;
     }
 
-    /* Python tokenizes prompt_text + target_text as one UTF-8 string so BPE
-     * merges at the boundary remain identical. */
+    /* Compose prompt + TSLM voice control + target as one UTF-8 string so BPE
+     * merges at both boundaries remain identical. */
     char *token_text_owned = NULL;
-    const char *token_text = params->text;
-    if (is_prompt_audio) {
-        const char *prompt_text = params->prompt_text ? params->prompt_text : "";
-        size_t prompt_bytes = strlen(prompt_text);
-        size_t target_bytes = strlen(params->text);
-        if (prompt_bytes > SIZE_MAX - target_bytes - 1) {
-            vcpm_conditioning_audio_free(&reference);
-            vcpm_conditioning_audio_free(&prompt);
-            vcpm_set_error(ctx, "prompt and target text are too long");
-            return VCPM_ERR_INVALID_ARG;
-        }
-        token_text_owned = (char *) malloc(prompt_bytes + target_bytes + 1);
-        if (!token_text_owned) {
-            vcpm_conditioning_audio_free(&reference);
-            vcpm_conditioning_audio_free(&prompt);
-            vcpm_set_error(ctx, "out of memory for clone prompt text");
-            return VCPM_ERR_OOM;
-        }
-        memcpy(token_text_owned, prompt_text, prompt_bytes);
-        memcpy(token_text_owned + prompt_bytes, params->text, target_bytes + 1);
-        token_text = token_text_owned;
+    vcpm_status compose_status = vcpm_compose_controlled_text(
+        is_prompt_audio ? params->prompt_text : NULL, params->control, params->text,
+        &token_text_owned);
+    if (compose_status != VCPM_OK) {
+        vcpm_conditioning_audio_free(&reference);
+        vcpm_conditioning_audio_free(&prompt);
+        vcpm_set_error(ctx, compose_status == VCPM_ERR_OOM
+                                ? "out of memory for controlled text"
+                                : "invalid prompt, control, or target text");
+        return compose_status;
     }
 
     int32_t token_ids[8192];
-    int n_tokens = vcpm_tokenizer_encode(&ctx->tokenizer, token_text, token_ids, 8192);
+    int n_tokens =
+        vcpm_tokenizer_encode(&ctx->tokenizer, token_text_owned, token_ids, 8192);
     free(token_text_owned);
     if (n_tokens <= 0) {
         vcpm_conditioning_audio_free(&reference);

@@ -41,6 +41,9 @@ typedef struct vcpm_model_params {
 
 typedef struct vcpm_generation_params {
     const char * text;
+    /* Optional TSLM voice/prosody instruction. The runtime tokenizes it as
+     * "(control)target_text"; RALM is influenced through the existing
+     * TSLM -> FSQ -> fusion path. NULL/blank preserves text-only behavior. */
     const char * control;
     /* Voice clone inputs. reference audio is right-padded; prompt audio is
      * left-padded and should be paired with its exact UTF-8 transcript.
