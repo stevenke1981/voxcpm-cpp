@@ -471,6 +471,8 @@ static int cmd_clone(int argc, char **argv) {
     const char *model_path = NULL;
     const char *text = NULL;
     const char *ref_audio = NULL;
+    const char *prompt_audio = NULL;
+    const char *prompt_text = NULL;
     const char *out_path = NULL;
     const char *backend_str = NULL;
     const char *denoiser_model = NULL;
@@ -486,7 +488,9 @@ static int cmd_clone(int argc, char **argv) {
     vcpm_arg_def args[] = {
         {"--model", VCPM_ARG_STRING, &model_path, "GGUF model file", 1, NULL},
         {"--text", VCPM_ARG_STRING, &text, "Input text", 1, NULL},
-        {"--reference-audio", VCPM_ARG_STRING, &ref_audio, "Reference audio WAV", 1, NULL},
+        {"--reference-audio", VCPM_ARG_STRING, &ref_audio, "Reference audio WAV", 0, NULL},
+        {"--prompt-audio", VCPM_ARG_STRING, &prompt_audio, "Continuation prompt WAV", 0, NULL},
+        {"--prompt-text", VCPM_ARG_STRING, &prompt_text, "Exact prompt WAV transcript", 0, NULL},
         {"--out", VCPM_ARG_STRING, &out_path, "Output WAV file", 1, NULL},
         {"--i-have-consent", VCPM_ARG_FLAG, &consent, "Confirm consent", 1, NULL},
         {"--cfg", VCPM_ARG_FLOAT, &cfg, "CFG scale", 0, "2.0"},
@@ -501,9 +505,10 @@ static int cmd_clone(int argc, char **argv) {
          NULL}};
     int n_args = sizeof(args) / sizeof(args[0]);
 
-    if (argc < 8) {
+    if (argc < 7) {
         fprintf(stderr, "Usage: voxcpm-c clone --model model.gguf --text \"hello\" "
-                        "--reference-audio ref.wav --i-have-consent --out out.wav\n");
+                        "[--reference-audio ref.wav] [--prompt-audio prompt.wav "
+                        "--prompt-text \"transcript\"] --i-have-consent --out out.wav\n");
         return 2;
     }
     if (vcpm_parse_args(argc, argv, 2, args, n_args) < 0)
@@ -513,14 +518,23 @@ static int cmd_clone(int argc, char **argv) {
         fprintf(stderr, "error: clone requires --i-have-consent\n");
         return 2;
     }
-
-    /* Verify reference audio exists */
-    FILE *f = fopen(ref_audio, "rb");
-    if (!f) {
-        fprintf(stderr, "error: reference audio file not found: %s\n", ref_audio);
+    if ((!ref_audio || !ref_audio[0]) && (!prompt_audio || !prompt_audio[0])) {
+        fprintf(stderr, "error: clone requires --reference-audio, --prompt-audio, or both\n");
         return 2;
     }
-    fclose(f);
+
+    /* Verify conditioning audio exists. */
+    const char *audio_paths[] = {ref_audio, prompt_audio};
+    for (int i = 0; i < 2; i++) {
+        if (!audio_paths[i] || !audio_paths[i][0])
+            continue;
+        FILE *f = fopen(audio_paths[i], "rb");
+        if (!f) {
+            fprintf(stderr, "error: conditioning audio file not found: %s\n", audio_paths[i]);
+            return 2;
+        }
+        fclose(f);
+    }
 
     /* ---- Load model ---- */
     vcpm_model_params mparams = vcpm_default_model_params();
@@ -542,6 +556,8 @@ static int cmd_clone(int argc, char **argv) {
     vcpm_generation_params gparams = vcpm_default_generation_params();
     gparams.text = text;
     gparams.reference_audio_path = ref_audio;
+    gparams.prompt_audio_path = prompt_audio;
+    gparams.prompt_text = prompt_text;
     gparams.consent_confirmed = consent;
     gparams.cfg_value = cfg;
     gparams.inference_steps = steps;

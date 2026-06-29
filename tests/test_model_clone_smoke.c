@@ -8,6 +8,31 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+static void run_clone(vcpm_context *ctx, const char *reference_path, const char *prompt_path,
+                      const char *prompt_text, const char *mode) {
+    vcpm_generation_params gp = vcpm_default_generation_params();
+    gp.text = "Synthetic clone smoke test.";
+    gp.reference_audio_path = reference_path;
+    gp.prompt_audio_path = prompt_path;
+    gp.prompt_text = prompt_text;
+    gp.consent_confirmed = 1;
+    gp.inference_steps = 2;
+    gp.max_len = 6;
+
+    vcpm_audio audio = {0};
+    vcpm_status st = vcpm_generate(ctx, &gp, &audio);
+    if (st != VCPM_OK)
+        fprintf(stderr, "%s clone generation failed: %s\n", mode, vcpm_last_error(ctx));
+    assert(st == VCPM_OK);
+    assert(audio.samples != NULL);
+    assert(audio.sample_rate == 48000);
+    assert(audio.n_samples > 0);
+    for (size_t i = 0; i < audio.n_samples; i++)
+        assert(isfinite(audio.samples[i]));
+    printf("%s clone: %zu samples at %d Hz\n", mode, audio.n_samples, audio.sample_rate);
+    vcpm_audio_free(&audio);
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2 && "usage: test_model_clone_smoke <model.gguf>");
     const char *reference_path = "clone_reference_synthetic.wav";
@@ -27,26 +52,19 @@ int main(int argc, char **argv) {
     vcpm_context *ctx = vcpm_load_model(argv[1], &mp);
     assert(ctx != NULL);
 
-    vcpm_generation_params gp = vcpm_default_generation_params();
-    gp.text = "Synthetic reference clone smoke test.";
-    gp.reference_audio_path = reference_path;
-    gp.consent_confirmed = 1;
-    gp.inference_steps = 2;
-    gp.max_len = 6;
+    vcpm_generation_params denied = vcpm_default_generation_params();
+    denied.text = "Consent gate.";
+    denied.prompt_audio_path = reference_path;
+    vcpm_audio denied_audio = {0};
+    assert(vcpm_generate(ctx, &denied, &denied_audio) == VCPM_ERR_INVALID_ARG);
+    assert(denied_audio.samples == NULL);
 
-    vcpm_audio audio;
-    vcpm_status st = vcpm_generate(ctx, &gp, &audio);
-    if (st != VCPM_OK) {
-        fprintf(stderr, "clone generation failed: %s\n", vcpm_last_error(ctx));
-    }
-    assert(st == VCPM_OK);
-    assert(audio.samples != NULL);
-    assert(audio.sample_rate == 48000);
-    assert(audio.n_samples > 0);
-
-    vcpm_audio_free(&audio);
+    run_clone(ctx, reference_path, NULL, NULL, "reference-only");
+    run_clone(ctx, NULL, reference_path, "Synthetic reference transcript. ", "prompt-only");
+    run_clone(ctx, reference_path, reference_path, "Synthetic reference transcript. ",
+              "combined");
     vcpm_free(ctx);
     remove(reference_path);
-    puts("PASS: synthetic-reference clone exercises VAE encode and decode");
+    puts("PASS: all Python-compatible clone modes exercise VAE encode and decode");
     return 0;
 }

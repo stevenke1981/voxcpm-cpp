@@ -183,18 +183,20 @@ struct ggml_tensor * gen_forward_ralm(vcpm_generate_state * state,
  * Python's prompt eval: text_mask=1, feat_mask=0 for all prompt positions,
  * so combined_embed = text_embed for all positions (no feat_embed).
  * lm_hidden = base_lm_out[:, -1, :] at the last text position (audio_start). */
-int gen_prompt_eval(vcpm_generate_state * state,
-                     struct ggml_context * ctx,
-                     struct ggml_cgraph * graph,
-                     const int32_t * token_ids,
-                     int n_text_tokens) {
+int gen_prompt_eval_range(vcpm_generate_state * state,
+                          struct ggml_context * ctx,
+                          struct ggml_cgraph * graph,
+                          const int32_t * token_ids,
+                          int pos_start,
+                          int n_text_tokens) {
     if (n_text_tokens <= 0) return VCPM_OK;
+    if (pos_start < 0) return VCPM_ERR_INVALID_ARG;
 
     int hidden_size = state->hidden_size;
 
     struct ggml_tensor * base_hidden = NULL;
     int st = gen_forward_text(state, ctx, graph, token_ids,
-                                n_text_tokens, 0, &base_hidden);
+                                n_text_tokens, pos_start, &base_hidden);
     if (st != VCPM_OK) return st;
     if (!base_hidden) return VCPM_ERR_BACKEND;
 
@@ -215,7 +217,7 @@ int gen_prompt_eval(vcpm_generate_state * state,
                                                           state->fusion_concat_proj);
         ggml_set_name(ralm_in, "prompt_ralm_in");
 
-        ralm_hidden = gen_forward_ralm(state, ctx, graph, ralm_in, 0);
+        ralm_hidden = gen_forward_ralm(state, ctx, graph, ralm_in, pos_start);
         if (ralm_hidden) {
             ggml_set_name(ralm_hidden, "prompt_ralm_hidden");
         }
@@ -267,4 +269,12 @@ int gen_prompt_eval(vcpm_generate_state * state,
     }
 
     return VCPM_OK;
+}
+
+int gen_prompt_eval(vcpm_generate_state * state,
+                    struct ggml_context * ctx,
+                    struct ggml_cgraph * graph,
+                    const int32_t * token_ids,
+                    int n_text_tokens) {
+    return gen_prompt_eval_range(state, ctx, graph, token_ids, 0, n_text_tokens);
 }

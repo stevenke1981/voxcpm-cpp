@@ -24,13 +24,45 @@
 
 /* ---- Full autoregressive loop ---- */
 
+int vcpm_build_prompt_segments(const int32_t *text_mask, const int32_t *audio_mask,
+                               int first_gen_pos, vcpm_prompt_segment *segments,
+                               int segment_capacity) {
+    if (!text_mask || !audio_mask || first_gen_pos < 0 ||
+        (first_gen_pos > 0 && (!segments || segment_capacity <= 0)))
+        return -1;
+    if (first_gen_pos == 0)
+        return 0;
+
+    int count = 0;
+    for (int pos = 0; pos < first_gen_pos; pos++) {
+        int is_text = text_mask[pos] == 1;
+        int is_audio = audio_mask[pos] == 1;
+        if (is_text == is_audio)
+            return -1;
+        vcpm_prompt_segment_type type =
+            is_text ? VCPM_PROMPT_SEGMENT_TEXT : VCPM_PROMPT_SEGMENT_AUDIO;
+        if (count > 0 && segments[count - 1].type == type &&
+            segments[count - 1].pos_start + segments[count - 1].length == pos) {
+            segments[count - 1].length++;
+            continue;
+        }
+        if (count >= segment_capacity)
+            return -1;
+        segments[count].type = type;
+        segments[count].pos_start = pos;
+        segments[count].length = 1;
+        count++;
+    }
+    return count;
+}
+
 vcpm_status vcpm_gen_run(vcpm_generate_state *state, const int32_t *token_ids,
                          const int32_t *text_mask, const int32_t *audio_mask, int seq_len,
-                         float *latent_out, int *n_patches_out, int max_patches,
-                         const vcpm_generation_params *gen_params) {
-    if (!state || !token_ids || !latent_out || !n_patches_out)
+                         int first_gen_pos, float *latent_out, int *n_patches_out,
+                         int max_patches, const vcpm_generation_params *gen_params) {
+    if (!state || !token_ids || !text_mask || !audio_mask || !latent_out || !n_patches_out)
         return VCPM_ERR_INVALID_ARG;
-    if (seq_len <= 0 || max_patches <= 0)
+    if (seq_len <= 0 || max_patches <= 0 || first_gen_pos < 0 || first_gen_pos >= seq_len)
         return VCPM_ERR_INVALID_ARG;
 
     float cfg_value = gen_params ? gen_params->cfg_value : 2.0f;
@@ -46,18 +78,6 @@ vcpm_status vcpm_gen_run(vcpm_generate_state *state, const int32_t *token_ids,
     int n_patches = 0;
     state->ar_step_counter = 0;
 
-    int first_audio_pos = -1;
-    for (int i = 0; i < seq_len; i++) {
-        if (audio_mask[i] == 1) {
-            if (first_audio_pos < 0)
-                first_audio_pos = i;
-        }
-    }
-    if (first_audio_pos < 0) {
-        *n_patches_out = 0;
-        return VCPM_OK;
-    }
-
     /* Reset KV caches and prev_patch */
     for (int i = 0; i < state->n_base_layers; i++)
         state->base_kv_cache[i].n_used = 0;
@@ -72,78 +92,76 @@ vcpm_status vcpm_gen_run(vcpm_generate_state *state, const int32_t *token_ids,
 
     struct ggml_cgraph *graph = state->step_graph;
 
-    /* Step 1: Prompt eval for text positions only */
-    if (first_audio_pos > 0) {
-        size_t prompt_mem = 4ULL * 1024 * 1024 * 1024;
-        struct ggml_init_params prompt_params = {
-            .mem_size = prompt_mem,
-            .mem_buffer = NULL,
-            .no_alloc = false,
-        };
-        struct ggml_context *prompt_ctx = ggml_init(prompt_params);
-        if (!prompt_ctx)
-            return VCPM_ERR_OOM;
-
-        ggml_graph_clear(graph);
-        int st = gen_prompt_eval(state, prompt_ctx, graph, token_ids, first_audio_pos);
-        ggml_graph_clear(graph);
-        ggml_free(prompt_ctx);
-        if (st != VCPM_OK)
-            return st;
+    /* Execute every text/audio position in the clone prefix in absolute order. */
+    vcpm_prompt_segment *segments =
+        (vcpm_prompt_segment *) calloc((size_t) first_gen_pos, sizeof(*segments));
+    if (!segments)
+        return VCPM_ERR_OOM;
+    int n_segments =
+        vcpm_build_prompt_segments(text_mask, audio_mask, first_gen_pos, segments, first_gen_pos);
+    if (n_segments < 0) {
+        free(segments);
+        return VCPM_ERR_INVALID_ARG;
     }
 
-    /* Step 2: Audio patches — first reference features (if any), then generation */
     int total_patch_dim = latent_dim * patch_size;
-    int first_gen_pos = first_audio_pos;
-    /* Reference latent processing: group patch_size latents per reference patch */
-    int n_ref_patches = (state->ref_latent_data && state->n_ref_latents > 0)
-                            ? state->n_ref_latents / patch_size
-                            : 0;
-    /* Also track remaining latents that don't fill a full patch */
-    int ref_remainder = (state->ref_latent_data && state->n_ref_latents > 0)
-                            ? state->n_ref_latents % patch_size
-                            : 0;
-    int ref_consumed_latents = 0;
+    if (state->n_conditioning_patches > 0 &&
+        (!state->conditioning_latent_data || state->conditioning_patch_size != patch_size ||
+         state->conditioning_feat_dim != state->enc_feat_dim)) {
+        free(segments);
+        return VCPM_ERR_INVALID_ARG;
+    }
+    int conditioning_consumed = 0;
+    for (int segment_index = 0; segment_index < n_segments; segment_index++) {
+        vcpm_prompt_segment segment = segments[segment_index];
+        if (segment.type == VCPM_PROMPT_SEGMENT_TEXT) {
+            size_t prompt_mem = 4ULL * 1024 * 1024 * 1024;
+            struct ggml_init_params prompt_params = {
+                .mem_size = prompt_mem,
+                .mem_buffer = NULL,
+                .no_alloc = false,
+            };
+            struct ggml_context *prompt_ctx = ggml_init(prompt_params);
+            if (!prompt_ctx) {
+                free(segments);
+                return VCPM_ERR_OOM;
+            }
+            ggml_graph_clear(graph);
+            int st = gen_prompt_eval_range(state, prompt_ctx, graph, token_ids,
+                                           segment.pos_start, segment.length);
+            ggml_graph_clear(graph);
+            ggml_free(prompt_ctx);
+            if (st != VCPM_OK) {
+                free(segments);
+                return st;
+            }
+            continue;
+        }
+
+        for (int offset = 0; offset < segment.length; offset++) {
+            if (conditioning_consumed >= state->n_conditioning_patches) {
+                free(segments);
+                return VCPM_ERR_INVALID_ARG;
+            }
+            memcpy(state->prev_patch,
+                   state->conditioning_latent_data +
+                       (size_t) conditioning_consumed * total_patch_dim,
+                   (size_t) total_patch_dim * sizeof(float));
+            vcpm_status st = gen_lm_update(state, segment.pos_start + offset);
+            if (st != VCPM_OK) {
+                free(segments);
+                return st;
+            }
+            conditioning_consumed++;
+        }
+    }
+    free(segments);
+    if (conditioning_consumed != state->n_conditioning_patches)
+        return VCPM_ERR_INVALID_ARG;
 
     for (int pos = first_gen_pos; pos < seq_len && n_patches < effective_max; pos++) {
         if (audio_mask[pos] != 1)
             continue;
-
-        /* Check if this is a reference feature position (token_id == 0 with audio_mask=1)
-         * Process all reference latents (full patches + remainder) before generation */
-        int is_ref_pos = (token_ids[pos] == 0 && state->ref_latent_data &&
-                          ref_consumed_latents < state->n_ref_latents);
-        if (is_ref_pos) {
-            /* Fill prev_patch with patch_size reference latents */
-            int patch_size_fe = state->model ? state->model->config.patch_size : 1;
-            if (patch_size_fe < 1)
-                patch_size_fe = 1;
-            int prev_dim = state->enc_feat_dim * patch_size_fe;
-            int src_dim = state->ref_feat_dim;
-            int n_to_copy = patch_size_fe; /* copy patch_size latents per position */
-
-            /* Don't copy more than remaining */
-            int remaining = state->n_ref_latents - ref_consumed_latents;
-            if (n_to_copy > remaining)
-                n_to_copy = remaining;
-
-            memset(state->prev_patch, 0, (size_t) prev_dim * sizeof(float));
-            for (int k = 0; k < n_to_copy; k++) {
-                float *src = (float *) state->ref_latent_data +
-                             (size_t) (ref_consumed_latents + k) * src_dim;
-                float *dst = state->prev_patch + (size_t) k * src_dim;
-                memcpy(dst, src, (size_t) src_dim * sizeof(float));
-            }
-            ref_consumed_latents += n_to_copy;
-
-            /* Run LM update to condition on this reference feature patch */
-            if (n_to_copy > 0) {
-                vcpm_status st = gen_lm_update(state, pos);
-                if (st != VCPM_OK)
-                    return st;
-            }
-            continue;
-        }
 
         /* Normal generation position */
         float *patch = latent_out + (size_t) n_patches * (size_t) total_patch_dim;

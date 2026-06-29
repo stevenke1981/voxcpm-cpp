@@ -32,6 +32,23 @@ struct ggml_gallocr;
 /* Maximum supported layers */
 #define VCPM_MAX_LAYERS 64
 
+typedef enum vcpm_prompt_segment_type {
+    VCPM_PROMPT_SEGMENT_TEXT = 0,
+    VCPM_PROMPT_SEGMENT_AUDIO = 1,
+} vcpm_prompt_segment_type;
+
+typedef struct vcpm_prompt_segment {
+    vcpm_prompt_segment_type type;
+    int pos_start;
+    int length;
+} vcpm_prompt_segment;
+
+/* Convert the text/audio masks before first_gen_pos into contiguous execution
+ * segments. Every prompt position must belong to exactly one modality. */
+int vcpm_build_prompt_segments(const int32_t *text_mask, const int32_t *audio_mask,
+                               int first_gen_pos, vcpm_prompt_segment *segments,
+                               int segment_capacity);
+
 /* Per-layer KV cache unit used by generate state */
 typedef struct vcpm_gen_cache_unit {
     struct ggml_tensor *k;
@@ -180,15 +197,13 @@ typedef struct vcpm_generate_state {
     vcpm_audio_vae_config vae_cfg;
     vcpm_audio_vae_v2_config vae_v2_cfg; /* V2 decoder config */
 
-    /* Reference audio latents (VAE-encoded, for voice cloning).
-     * Set before calling gen_run / gen_prompt_eval for reference sequences.
-     * Each latent vector has ref_feat_dim floats.
-     * ref_latent_data is external (not owned by state). */
-    const float *ref_latent_data; /* [n_ref_latents * ref_feat_dim] VAE-encoded reference latents */
-    int n_ref_latents;            /* number of reference latent vectors */
-    int ref_feat_dim;             /* dimension of each reference latent (typically latent_dim) */
-    int ref_first_pos;            /* sequence position where reference features start */
-    int ref_n_seq_positions;      /* number of sequence positions for reference features */
+    /* Ordered clone conditioning patches. Reference patches (right padded)
+     * precede prompt/continuation patches (left padded), matching Python.
+     * The data is external and remains owned by vcpm_generate(). */
+    const float *conditioning_latent_data; /* [n_conditioning_patches][patch_size][feat_dim] */
+    int n_conditioning_patches;
+    int conditioning_patch_size;
+    int conditioning_feat_dim;
 
     /* Opaque model pointer for weight loading */
     const struct vcpm_model *model;
@@ -254,8 +269,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state *state, const int32_t *token_ids, 
  */
 vcpm_status vcpm_gen_run(vcpm_generate_state *state, const int32_t *token_ids,
                          const int32_t *text_mask, const int32_t *audio_mask, int seq_len,
-                         float *latent_out, int *n_patches_out, int max_patches,
-                         const vcpm_generation_params *gen_params);
+                         int first_gen_pos, float *latent_out, int *n_patches_out,
+                         int max_patches, const vcpm_generation_params *gen_params);
 
 /*
  * Decode generated latents to audio waveform via AudioVAE.
@@ -301,6 +316,9 @@ struct ggml_tensor *gen_forward_ralm(vcpm_generate_state *state, struct ggml_con
  * Defined in gen_prompt.c, called by gen_run.c. */
 int gen_prompt_eval(vcpm_generate_state *state, struct ggml_context *ctx, struct ggml_cgraph *graph,
                     const int32_t *token_ids, int n_text_tokens);
+int gen_prompt_eval_range(vcpm_generate_state *state, struct ggml_context *ctx,
+                          struct ggml_cgraph *graph, const int32_t *token_ids,
+                          int pos_start, int n_text_tokens);
 
 /* LM update: encode prev_patch, run base_lm forward_step, FSQ, RALM forward_step.
  *

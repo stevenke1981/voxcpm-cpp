@@ -27,5 +27,9 @@ vcpm_status vcpm_clone_encode_samples(const vcpm_model *model, const float *samp
                                       vcpm_clone_padding padding,
                                       vcpm_conditioning_audio *output, char *error,
                                       size_t error_size);
+vcpm_status vcpm_clone_encode_audio(const vcpm_model *model, const char *wav_path,
+                                    vcpm_clone_padding padding,
+                                    vcpm_conditioning_audio *output, char *error,
+                                    size_t error_size);
 
 #endif

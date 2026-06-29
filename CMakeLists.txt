@@ -186,6 +186,12 @@ if(VCPM_BUILD_TESTS)
     add_test(NAME clone_padding COMMAND test_clone_padding)
     set_tests_properties(clone_padding PROPERTIES LABELS "unit")
 
+    add_executable(test_clone_prompt_plan tests/test_clone_prompt_plan.c)
+    target_include_directories(test_clone_prompt_plan PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_clone_prompt_plan PRIVATE voxcpm)
+    add_test(NAME clone_prompt_plan COMMAND test_clone_prompt_plan)
+    set_tests_properties(clone_prompt_plan PROPERTIES LABELS "unit")
+
     add_executable(test_stop tests/test_stop.c)
     target_include_directories(test_stop PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
     target_link_libraries(test_stop PRIVATE voxcpm)

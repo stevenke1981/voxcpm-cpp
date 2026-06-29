@@ -168,3 +168,45 @@ vcpm_status vcpm_clone_encode_samples(const vcpm_model *model, const float *samp
     ggml_free(ctx);
     return VCPM_OK;
 }
+
+vcpm_status vcpm_clone_encode_audio(const vcpm_model *model, const char *wav_path,
+                                    vcpm_clone_padding padding,
+                                    vcpm_conditioning_audio *output, char *error,
+                                    size_t error_size) {
+    if (!model || !wav_path || !wav_path[0] || !output)
+        return clone_error(error, error_size, VCPM_ERR_INVALID_ARG,
+                           "invalid clone WAV input");
+
+    float *interleaved = NULL;
+    int sample_rate = 0;
+    int channels = 0;
+    int64_t n_frames =
+        vcpm_read_wav_f32(wav_path, &interleaved, &sample_rate, &channels);
+    if (n_frames <= 0 || !interleaved || channels <= 0)
+        return clone_error(error, error_size, VCPM_ERR_IO,
+                           "failed to read clone WAV");
+
+    float *mono = interleaved;
+    if (channels > 1) {
+        mono = (float *) malloc((size_t) n_frames * sizeof(float));
+        if (!mono) {
+            free(interleaved);
+            return clone_error(error, error_size, VCPM_ERR_OOM,
+                               "out of memory for clone mono audio");
+        }
+        for (int64_t frame = 0; frame < n_frames; frame++) {
+            double sum = 0.0;
+            for (int channel = 0; channel < channels; channel++)
+                sum += interleaved[(size_t) frame * channels + channel];
+            mono[frame] = (float) (sum / channels);
+        }
+    }
+
+    vcpm_status status =
+        vcpm_clone_encode_samples(model, mono, n_frames, sample_rate, padding,
+                                  output, error, error_size);
+    if (mono != interleaved)
+        free(mono);
+    free(interleaved);
+    return status;
+}

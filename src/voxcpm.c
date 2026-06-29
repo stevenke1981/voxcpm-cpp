@@ -3,6 +3,7 @@
 #include "tokenizer.h"
 #include "sequence.h"
 #include "generate.h"
+#include "clone_audio.h"
 #include "audio_vae_v2.h"
 #include "debug_dump.h"
 
@@ -245,251 +246,6 @@ vcpm_status vcpm_generate(vcpm_context *ctx, const vcpm_generation_params *param
     }
     memset(out_audio, 0, sizeof(*out_audio));
 
-    int is_reference = (params->reference_audio_path && params->reference_audio_path[0]);
-    int is_prompt_audio = (params->prompt_audio_path && params->prompt_audio_path[0]);
-    float *ref_latents = NULL;
-    int n_ref_latents = 0;
-    int ref_latent_dim = 0;
-
-    if (params->denoise && is_prompt_audio && !ctx->denoiser_loaded) {
-        vcpm_set_error(ctx,
-                       "denoise requested, but Python ZipEnhancer denoiser is not implemented in "
-                       "the C runtime; pre-denoise prompt/reference audio or disable --denoise");
-        return VCPM_ERR_NOT_IMPLEMENTED;
-    }
-
-    if (is_reference) {
-        if (!params->consent_confirmed) {
-            vcpm_set_error(ctx, "reference audio generation requires consent confirmation");
-            return VCPM_ERR_INVALID_ARG;
-        }
-        if (!vcpm_path_exists(params->reference_audio_path)) {
-            vcpm_set_error(ctx, "reference audio file not found");
-            return VCPM_ERR_INVALID_ARG;
-        }
-        if (params->denoise && !ctx->denoiser_loaded) {
-            vcpm_set_error(
-                ctx, "denoise requested, but Python ZipEnhancer denoiser is not implemented in the "
-                     "C runtime; pre-denoise prompt/reference audio or disable --denoise");
-            return VCPM_ERR_NOT_IMPLEMENTED;
-        }
-
-        /* ---- Read reference WAV ---- */
-        float *ref_wav = NULL;
-        int ref_sr = 0, ref_ch = 0;
-        int64_t ref_n = vcpm_read_wav_f32(params->reference_audio_path, &ref_wav, &ref_sr, &ref_ch);
-        if (ref_n <= 0 || !ref_wav) {
-            vcpm_set_error(ctx, "failed to read reference audio WAV");
-            return VCPM_ERR_IO;
-        }
-        /* ---- Convert to mono ---- */
-        float *ref_mono = ref_wav;
-        int64_t ref_mono_n = ref_n;
-        int ref_wav_owned = 1; /* ref_wav needs explicit free unless already freed below */
-        if (ref_ch > 1) {
-            ref_mono = (float *) malloc((size_t) ref_n * sizeof(float));
-            if (!ref_mono) {
-                free(ref_wav);
-                return VCPM_ERR_OOM;
-            }
-            int64_t per_ch = ref_n / ref_ch;
-            for (int64_t i = 0; i < per_ch; i++) {
-                double sum = 0.0;
-                for (int c = 0; c < ref_ch; c++) {
-                    sum += ref_wav[(size_t) i * ref_ch + c];
-                }
-                ref_mono[i] = (float) (sum / ref_ch);
-            }
-            ref_mono_n = per_ch;
-            free(ref_wav);
-            ref_wav_owned = 0;
-        }
-
-        /* ---- Resample to VAE sample rate (16kHz) ---- */
-        float *ref_16k = ref_mono;
-        int64_t ref_16k_n = ref_mono_n;
-        int vae_sr = ctx->model->config.vae_sample_rate;
-        if (vae_sr <= 0)
-            vae_sr = 16000;
-        if (ref_sr != vae_sr) {
-            ref_16k_n = vcpm_resample_f32(ref_mono, ref_mono_n, ref_sr, vae_sr, &ref_16k);
-            if (ref_mono != ref_wav)
-                free(ref_mono);
-        }
-        if (ref_16k_n <= 0 || !ref_16k) {
-            if (ref_16k && ref_16k != ref_wav)
-                free(ref_16k);
-            vcpm_set_error(ctx, "reference audio resampling failed");
-            return VCPM_ERR_IO;
-        }
-
-        /* ---- VAE-encode reference audio ---- */
-        int latent_dim =
-            ctx->model->config.vae_latent_dim > 0 ? ctx->model->config.vae_latent_dim : 64;
-
-        /* Estimate VAE encoder ggml context memory.
-         * Peak tensor is encoder_dim * N * 4 (block.0 output),
-         * with substantial overhead for residual intermediates. */
-        size_t vae_enc_mem = (size_t) ref_16k_n * 2048 * 4 * 30;
-        /* ggml stores every encoder intermediate in this no_alloc=false
-         * context,
-         * including causal-padding and Snake temporaries. */
-        vae_enc_mem += 256ULL * 1024 * 1024;
-        if (vae_enc_mem < 1024ULL * 1024 * 1024)
-            vae_enc_mem = 1024ULL * 1024 * 1024;
-        if (vae_enc_mem > 4ULL * 1024 * 1024 * 1024)
-            vae_enc_mem = 4ULL * 1024 * 1024 * 1024;
-        struct ggml_init_params vae_enc_params = {
-            .mem_size = vae_enc_mem,
-            .mem_buffer = NULL,
-            .no_alloc = false,
-        };
-        struct ggml_context *vae_enc_ctx = ggml_init(vae_enc_params);
-        if (!vae_enc_ctx) {
-            if (ref_16k != ref_wav)
-                free(ref_16k);
-            if (ref_wav_owned)
-                free(ref_wav);
-            vcpm_set_error(ctx, "out of memory for VAE encoder");
-            return VCPM_ERR_OOM;
-        }
-        struct ggml_cgraph *vae_enc_graph = ggml_new_graph_custom(vae_enc_ctx, 65536, false);
-        if (!vae_enc_graph) {
-            ggml_free(vae_enc_ctx);
-            if (ref_16k != ref_wav)
-                free(ref_16k);
-            if (ref_wav_owned)
-                free(ref_wav);
-            vcpm_set_error(ctx, "out of memory for VAE encoder graph");
-            return VCPM_ERR_OOM;
-        }
-
-        /* Runtime Conv1d uses [time, channels] = [N_samples, 1].
-         * Python's logical tensor
-         * is [batch, channels, time], but passing
-         * [1, N_samples] here swaps
-         * time/channels and breaks channel-wise
-         * Snake broadcasting in the first encoder
-         * residual block. */
-        struct ggml_tensor *audio_t =
-            ggml_new_tensor_2d(vae_enc_ctx, GGML_TYPE_F32, (int) ref_16k_n, 1);
-        if (!audio_t || !audio_t->data) {
-            ggml_free(vae_enc_ctx);
-            if (ref_16k != ref_wav)
-                free(ref_16k);
-            if (ref_wav_owned)
-                free(ref_wav);
-            vcpm_set_error(ctx, "out of memory for VAE encoder input");
-            return VCPM_ERR_OOM;
-        }
-        memcpy(audio_t->data, ref_16k, (size_t) ref_16k_n * sizeof(float));
-        ggml_set_name(audio_t, "ref_audio_input");
-
-        /* Get VAE V2 config from default + model overrides */
-        vcpm_audio_vae_v2_config vae_enc_cfg;
-        {
-            int default_enc_rates[4] = {2, 5, 8, 8};
-            vcpm_audio_vae_v2_config_fill(&vae_enc_cfg, ctx->model->config.vae_latent_dim, 128,
-                                          2048, ctx->model->config.vae_decoder_rates,
-                                          default_enc_rates, ctx->model->config.vae_sample_rate,
-                                          ctx->model->config.vae_out_sample_rate);
-        }
-
-        struct ggml_tensor *logvar = NULL;
-        struct ggml_tensor *mean = vcpm_vae_v2_encode(vae_enc_ctx, vae_enc_graph, audio_t,
-                                                      ctx->model, &vae_enc_cfg, &logvar);
-
-        if (!mean) {
-            ggml_free(vae_enc_ctx);
-            if (ref_16k != ref_wav)
-                free(ref_16k);
-            if (ref_wav_owned)
-                free(ref_wav);
-            vcpm_set_error(ctx, "VAE encoder failed");
-            return VCPM_ERR_BACKEND;
-        }
-
-        ggml_build_forward_expand(vae_enc_graph, mean);
-        if (logvar)
-            ggml_build_forward_expand(vae_enc_graph, logvar);
-
-        struct ggml_cplan vae_enc_plan = ggml_graph_plan(vae_enc_graph, 1, NULL);
-        void *vae_enc_work = malloc(vae_enc_plan.work_size);
-        if (!vae_enc_work) {
-            ggml_free(vae_enc_ctx);
-            if (ref_16k != ref_wav)
-                free(ref_16k);
-            if (ref_wav_owned)
-                free(ref_wav);
-            vcpm_set_error(ctx, "out of memory for VAE encoder work buffer");
-            return VCPM_ERR_OOM;
-        }
-        vae_enc_plan.work_data = (uint8_t *) vae_enc_work;
-        ggml_graph_compute(vae_enc_graph, &vae_enc_plan);
-        free(vae_enc_work);
-
-        /* Extract reference latents from mean tensor */
-        if (!mean->data) {
-            ggml_free(vae_enc_ctx);
-            if (ref_16k != ref_wav)
-                free(ref_16k);
-            if (ref_wav_owned)
-                free(ref_wav);
-            vcpm_set_error(ctx, "VAE encoder produced empty output");
-            return VCPM_ERR_BACKEND;
-        }
-
-        /* Encoder tensors use ggml [time, channels]. The autoregressive
-         * conditioner
-         * consumes contiguous [time][latent_dim] patches. */
-        n_ref_latents = (int) mean->ne[0];
-        ref_latent_dim = (int) mean->ne[1];
-        if (n_ref_latents <= 0 || ref_latent_dim != latent_dim) {
-            ggml_free(vae_enc_ctx);
-            if (ref_16k != ref_wav)
-                free(ref_16k);
-            if (ref_wav_owned)
-                free(ref_wav);
-            vcpm_set_error(ctx, "VAE encoder produced invalid shape");
-            return VCPM_ERR_BACKEND;
-        }
-
-        ref_latents =
-            (float *) malloc((size_t) n_ref_latents * (size_t) ref_latent_dim * sizeof(float));
-        if (!ref_latents) {
-            ggml_free(vae_enc_ctx);
-            if (ref_16k != ref_wav)
-                free(ref_16k);
-            if (ref_wav_owned)
-                free(ref_wav);
-            vcpm_set_error(ctx, "out of memory for reference latents");
-            return VCPM_ERR_OOM;
-        }
-        if (vcpm_vae_copy_latents_time_major((const float *) mean->data, n_ref_latents,
-                                             ref_latent_dim, ref_latents) != 0) {
-            free(ref_latents);
-            ref_latents = NULL;
-            ggml_free(vae_enc_ctx);
-            if (ref_16k != ref_wav)
-                free(ref_16k);
-            if (ref_wav_owned)
-                free(ref_wav);
-            vcpm_set_error(ctx, "VAE encoder latent layout conversion failed");
-            return VCPM_ERR_BACKEND;
-        }
-
-        ggml_free(vae_enc_ctx);
-        if (ref_16k != ref_wav)
-            free(ref_16k);
-        if (ref_wav_owned)
-            free(ref_wav);
-
-        if (vcpm_debug_env()) {
-            fprintf(stderr, "VCPM_DEBUG reference audio: %d latents, dim=%d, audio_len=%lld\n",
-                    n_ref_latents, ref_latent_dim, (long long) ref_16k_n);
-        }
-    }
-
     if (!ctx->model_loaded) {
         vcpm_set_error(ctx, "model not loaded");
         return VCPM_ERR_MODEL_FORMAT;
@@ -500,15 +256,84 @@ vcpm_status vcpm_generate(vcpm_context *ctx, const vcpm_generation_params *param
         return VCPM_ERR_MODEL_FORMAT;
     }
 
-    /* Tokenize text */
+    int is_reference = params->reference_audio_path && params->reference_audio_path[0];
+    int is_prompt_audio = params->prompt_audio_path && params->prompt_audio_path[0];
+    int is_clone = is_reference || is_prompt_audio;
+    vcpm_conditioning_audio reference = {0};
+    vcpm_conditioning_audio prompt = {0};
+
+    if (is_clone && !params->consent_confirmed) {
+        vcpm_set_error(ctx, "voice clone generation requires consent confirmation");
+        return VCPM_ERR_INVALID_ARG;
+    }
+    if ((is_reference && !vcpm_path_exists(params->reference_audio_path)) ||
+        (is_prompt_audio && !vcpm_path_exists(params->prompt_audio_path))) {
+        vcpm_set_error(ctx, "clone conditioning audio file not found");
+        return VCPM_ERR_INVALID_ARG;
+    }
+    if (params->denoise && is_clone && !ctx->denoiser_loaded) {
+        vcpm_set_error(ctx,
+                       "denoise requested, but Python ZipEnhancer denoiser is not implemented in "
+                       "the C runtime; pre-denoise prompt/reference audio or disable --denoise");
+        return VCPM_ERR_NOT_IMPLEMENTED;
+    }
+
+    char clone_error[512] = {0};
+    vcpm_status clone_status = VCPM_OK;
+    if (is_reference) {
+        clone_status = vcpm_clone_encode_audio(ctx->model, params->reference_audio_path,
+                                               VCPM_CLONE_PAD_RIGHT, &reference,
+                                               clone_error, sizeof(clone_error));
+    }
+    if (clone_status == VCPM_OK && is_prompt_audio) {
+        clone_status = vcpm_clone_encode_audio(ctx->model, params->prompt_audio_path,
+                                               VCPM_CLONE_PAD_LEFT, &prompt,
+                                               clone_error, sizeof(clone_error));
+    }
+    if (clone_status != VCPM_OK) {
+        vcpm_conditioning_audio_free(&reference);
+        vcpm_conditioning_audio_free(&prompt);
+        vcpm_set_error(ctx, clone_error[0] ? clone_error : "clone audio encoding failed");
+        return clone_status;
+    }
+
+    /* Python tokenizes prompt_text + target_text as one UTF-8 string so BPE
+     * merges at the boundary remain identical. */
+    char *token_text_owned = NULL;
+    const char *token_text = params->text;
+    if (is_prompt_audio) {
+        const char *prompt_text = params->prompt_text ? params->prompt_text : "";
+        size_t prompt_bytes = strlen(prompt_text);
+        size_t target_bytes = strlen(params->text);
+        if (prompt_bytes > SIZE_MAX - target_bytes - 1) {
+            vcpm_conditioning_audio_free(&reference);
+            vcpm_conditioning_audio_free(&prompt);
+            vcpm_set_error(ctx, "prompt and target text are too long");
+            return VCPM_ERR_INVALID_ARG;
+        }
+        token_text_owned = (char *) malloc(prompt_bytes + target_bytes + 1);
+        if (!token_text_owned) {
+            vcpm_conditioning_audio_free(&reference);
+            vcpm_conditioning_audio_free(&prompt);
+            vcpm_set_error(ctx, "out of memory for clone prompt text");
+            return VCPM_ERR_OOM;
+        }
+        memcpy(token_text_owned, prompt_text, prompt_bytes);
+        memcpy(token_text_owned + prompt_bytes, params->text, target_bytes + 1);
+        token_text = token_text_owned;
+    }
+
     int32_t token_ids[8192];
-    int n_tokens = vcpm_tokenizer_encode(&ctx->tokenizer, params->text, token_ids, 8192);
+    int n_tokens = vcpm_tokenizer_encode(&ctx->tokenizer, token_text, token_ids, 8192);
+    free(token_text_owned);
     if (n_tokens <= 0) {
+        vcpm_conditioning_audio_free(&reference);
+        vcpm_conditioning_audio_free(&prompt);
         vcpm_set_error(ctx, "tokenization failed");
         return VCPM_ERR_INVALID_ARG;
     }
 
-    /* Build sequence (zero-shot or reference) */
+    /* Build zero-shot or one of the three Python clone layouts. */
     vcpm_seq_builder builder;
     vcpm_seq_builder_init(
         &builder, ctx->model->config.audio_start_token, ctx->model->config.audio_end_token,
@@ -517,53 +342,98 @@ vcpm_status vcpm_generate(vcpm_context *ctx, const vcpm_generation_params *param
 
     vcpm_sequence seq;
     int ret;
-    if (is_reference) {
-        int n_ref_patches = (n_ref_latents + builder.patch_size - 1) / builder.patch_size;
-        ret = vcpm_seq_build_reference(&builder, token_ids, n_tokens, n_ref_patches, &seq);
+    if (is_clone) {
+        vcpm_clone_sequence_params clone_seq = {
+            .target_token_ids = token_ids,
+            .n_target_tokens = n_tokens,
+            .n_reference_patches = reference.n_patches,
+            .n_prompt_patches = prompt.n_patches,
+        };
+        ret = vcpm_seq_build_clone(&builder, &clone_seq, &seq);
         if (vcpm_debug_env()) {
-            fprintf(stderr, "VCPM_DEBUG reference sequence: len=%d audio_start=%d n_ref_pos=%d\n",
-                    seq.length, seq.audio_start_pos, n_ref_patches);
+            fprintf(stderr,
+                    "VCPM_DEBUG clone sequence: len=%d first_gen=%d ref=%d prompt=%d\n",
+                    seq.length, seq.first_gen_pos, reference.n_patches, prompt.n_patches);
         }
     } else {
         ret = vcpm_seq_build_zero_shot(&builder, token_ids, n_tokens, &seq);
     }
     if (ret != 0) {
+        vcpm_conditioning_audio_free(&reference);
+        vcpm_conditioning_audio_free(&prompt);
         vcpm_set_error(ctx, "sequence building failed");
         return VCPM_ERR_INVALID_ARG;
     }
 
     int requested_patches = params->max_len > 0 ? params->max_len : ctx->model->config.patch_size;
     if (vcpm_sequence_extend_audio(&seq, &builder, requested_patches) != 0) {
+        vcpm_conditioning_audio_free(&reference);
+        vcpm_conditioning_audio_free(&prompt);
         vcpm_set_error(ctx, "sequence exceeds maximum length");
         return VCPM_ERR_INVALID_ARG;
     }
 
     if (!vcpm_generation_weights_ready(ctx)) {
+        vcpm_conditioning_audio_free(&reference);
+        vcpm_conditioning_audio_free(&prompt);
         return VCPM_ERR_MODEL_FORMAT;
     }
+
+    int patch_size = ctx->model->config.patch_size > 0 ? ctx->model->config.patch_size : 1;
+    int latent_dim = ctx->model->config.feat_dim > 0 ? ctx->model->config.feat_dim : 64;
+    int total_conditioning_patches = reference.n_patches + prompt.n_patches;
+    float *conditioning_latents = NULL;
+    if (total_conditioning_patches > 0) {
+        if ((reference.n_patches > 0 &&
+             (reference.patch_size != patch_size || reference.feat_dim != latent_dim)) ||
+            (prompt.n_patches > 0 &&
+             (prompt.patch_size != patch_size || prompt.feat_dim != latent_dim))) {
+            vcpm_conditioning_audio_free(&reference);
+            vcpm_conditioning_audio_free(&prompt);
+            vcpm_set_error(ctx, "clone conditioning shape does not match generation model");
+            return VCPM_ERR_MODEL_FORMAT;
+        }
+        size_t patch_elements = (size_t) patch_size * latent_dim;
+        conditioning_latents =
+            (float *) malloc((size_t) total_conditioning_patches * patch_elements *
+                             sizeof(float));
+        if (!conditioning_latents) {
+            vcpm_conditioning_audio_free(&reference);
+            vcpm_conditioning_audio_free(&prompt);
+            vcpm_set_error(ctx, "out of memory for clone conditioning");
+            return VCPM_ERR_OOM;
+        }
+        size_t ref_elements = (size_t) reference.n_patches * patch_elements;
+        size_t prompt_elements = (size_t) prompt.n_patches * patch_elements;
+        if (ref_elements > 0)
+            memcpy(conditioning_latents, reference.data, ref_elements * sizeof(float));
+        if (prompt_elements > 0)
+            memcpy(conditioning_latents + ref_elements, prompt.data,
+                   prompt_elements * sizeof(float));
+    }
+    vcpm_conditioning_audio_free(&reference);
+    vcpm_conditioning_audio_free(&prompt);
 
     /* ---- Full model inference pipeline ---- */
     vcpm_generate_state *gen_state =
         vcpm_gen_init(ctx->model, ctx->params.backend, ctx->params.n_threads, 0);
     if (!gen_state) {
+        free(conditioning_latents);
         vcpm_set_error(ctx, "failed to initialize generation state");
         return VCPM_ERR_BACKEND;
     }
 
-    /* Set reference audio latents if cloning */
-    if (is_reference && ref_latents && n_ref_latents > 0) {
-        gen_state->ref_latent_data = ref_latents;
-        gen_state->n_ref_latents = n_ref_latents;
-        gen_state->ref_feat_dim = ref_latent_dim;
-    }
+    gen_state->conditioning_latent_data = conditioning_latents;
+    gen_state->n_conditioning_patches = total_conditioning_patches;
+    gen_state->conditioning_patch_size = patch_size;
+    gen_state->conditioning_feat_dim = latent_dim;
 
     int max_patches = params->max_len > 0 ? params->max_len : 4096;
-    int latent_dim = ctx->model->config.feat_dim > 0 ? ctx->model->config.feat_dim : 64;
-    int patch_size = ctx->model->config.patch_size > 0 ? ctx->model->config.patch_size : 1;
     /* Each patch produces patch_size latent vectors of latent_dim each */
     float *latent_buffer = (float *) malloc((size_t) max_patches * (size_t) latent_dim *
                                             (size_t) patch_size * sizeof(float));
     if (!latent_buffer) {
+        free(conditioning_latents);
         vcpm_gen_free(gen_state);
         vcpm_set_error(ctx, "out of memory");
         return VCPM_ERR_OOM;
@@ -571,7 +441,10 @@ vcpm_status vcpm_generate(vcpm_context *ctx, const vcpm_generation_params *param
 
     int n_patches = 0;
     vcpm_status st = vcpm_gen_run(gen_state, seq.token_ids, seq.text_mask, seq.audio_mask,
-                                  seq.length, latent_buffer, &n_patches, max_patches, params);
+                                  seq.length, seq.first_gen_pos, latent_buffer, &n_patches,
+                                  max_patches, params);
+    free(conditioning_latents);
+    gen_state->conditioning_latent_data = NULL;
     if (st != VCPM_OK) {
         free(latent_buffer);
         vcpm_gen_free(gen_state);
