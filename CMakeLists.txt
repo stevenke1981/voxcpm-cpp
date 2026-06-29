@@ -91,6 +91,7 @@ add_library(voxcpm STATIC
     src/audio_vae_v2_encoder.c
     src/audio_vae_v2_decoder.c
     src/clone_audio.c
+    src/text_control.c
     src/gen_init.c
     src/gen_prompt.c
     src/gen_step.c
@@ -191,6 +192,12 @@ if(VCPM_BUILD_TESTS)
     target_link_libraries(test_clone_prompt_plan PRIVATE voxcpm)
     add_test(NAME clone_prompt_plan COMMAND test_clone_prompt_plan)
     set_tests_properties(clone_prompt_plan PROPERTIES LABELS "unit")
+
+    add_executable(test_text_control tests/test_text_control.c)
+    target_include_directories(test_text_control PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_text_control PRIVATE voxcpm)
+    add_test(NAME text_control COMMAND test_text_control)
+    set_tests_properties(text_control PROPERTIES LABELS "unit")
 
     add_executable(test_stop tests/test_stop.c)
     target_include_directories(test_stop PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
