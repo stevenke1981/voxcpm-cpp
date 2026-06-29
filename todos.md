@@ -121,7 +121,9 @@
 - [x] VAE decoder per-time-step matches Python: cos=0.9999786 for known latent.
 - [x] VAE encoder/decoder memory now scales with input size (commit 6c00b92).
 - [x] VAE split into encoder/decoder/shared (commit f0c3ef0).
-- [ ] **Test encode WAV fixture** — encoder structural code exists but hasn't been run end-to-end.
+- [x] **Test encode WAV fixture** — deterministic 220 Hz WAV produces 25 latent
+  frames in Python and C; cosine `0.999998719`, RMSE `0.002795445`, protected by
+  `vae_encoder_parity`.
 - [ ] Implement streaming decoder state.
 
 ## 11. Full Generation

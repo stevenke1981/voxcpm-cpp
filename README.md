@@ -1,6 +1,8 @@
-# VoxCPM-C Reimplementation Handoff Pack
+# VoxCPM-C
 
-這個 zip 是給 Codex / OpenCode / C 開發團隊使用的「VoxCPM2 以 C 語言重寫」完整實作文件包。目標是參考 OpenBMB/VoxCPM 的 Python/PyTorch 推理流程，改寫成 C runtime，底層張量計算優先採用 ggml / GGUF / ggml backend。
+VoxCPM2 的 C11／ggml／GGUF 推論 runtime，提供 TTS、文字式聲音控制、
+stream callback 與需要明確同意的 voice clone CLI/C API。最終執行檔不依賴
+Python runtime；Python 工具只用於模型轉換與 parity fixture。
 
 ## 重要結論
 
@@ -46,9 +48,9 @@ WAV writer / streaming chunks
 9. `final.md`：交付準則、風險、驗收門檻。
 10. `AGENTS.md`：給 Codex/OpenCode 的執行規則。
 
-## Starter skeleton
+## 專案結構
 
-本包也附上一個可編譯的 C 專案骨架：
+主要程式：
 
 ```text
 include/voxcpm.h
@@ -60,18 +62,59 @@ CMakeLists.txt
 tests/test_smoke.c
 ```
 
-它目前是 runtime 骨架，不包含真正模型 operator 實作與權重。真正推理需要依照 `todos.md` 補齊：GGUF loader、MiniCPM4、LocEnc、FSQ、RALM、LocDiT/CFM、AudioVAE V2。
+GGUF loader、MiniCPM4、LocEnc、FSQ、RALM、LocDiT/CFM、AudioVAE V2
+encoder/decoder 均已有實作與測試。仍在進行的數值 parity 與 true streaming
+項目列於 `todos.md`。
 
-## 不在此 zip 內的內容
+## 不隨原始碼與 release package 提供
 
 - VoxCPM2 模型權重。
-- ggml 原始碼。
-- 已完成的可產生語音 runtime。
+- ggml 原始碼（預設由 CMake `FetchContent` 取得）。
 - 商業部署安全審核資料。
 
-## 目標 CLI
+## 建置與測試
 
-完成後預期：
+Windows MSVC CPU release：
+
+```powershell
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVCPM_BUILD_TESTS=ON
+cmake --build build --config Release -j 8
+ctest --test-dir build -C Release --output-on-failure -L unit
+```
+
+要註冊需要真實模型的 CTest，必須在 configure 前設定：
+
+```powershell
+$env:VCPM_MODEL = (Resolve-Path .\voxcpm2_f16.gguf).Path
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVCPM_BUILD_TESTS=ON
+cmake --build build --config Release -j 8
+ctest --test-dir build -C Release --output-on-failure
+```
+
+## Windows release package
+
+以下命令會使用隔離的 `build-release/` 編譯、執行所有已註冊測試，並輸出
+`dist/voxcpm-c-windows-x64.zip`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Clean
+```
+
+若要將模型測試納入 release gate：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 `
+  -Clean -Model .\voxcpm2_f16.gguf
+```
+
+package 僅包含 `voxcpm-c.exe`、`voxcpm.lib`、public header 與使用／第三方
+授權文件；不包含 GGUF、WAV、fixture 或 debug dump。第三方來源與授權見
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。本專案自身採用何種
+license 仍需由 repository owner 決定。
+
+## CLI 使用方式
+
+主要命令：
 
 ```bash
 voxcpm-c tts   --model ./models/voxcpm2-f16.gguf   --text "(young warm female voice)你好，這是 VoxCPM2 C runtime 測試。"   --cfg 2.0   --steps 10   --out output.wav
@@ -100,3 +143,11 @@ Current verified baseline:
 - `clone` 與 C API 已支援 reference-only、prompt-only continuation、combined 三種 Python-compatible conditioning 模式；所有模式都要求明確 consent。
 - Prompt 模式會以 `prompt_text + target_text` 單次 tokenize，reference WAV 右補零、prompt WAV 左補零；完整語意與驗證結果見 [`docs/voice-clone-python-parity-2026-06-29.md`](docs/voice-clone-python-parity-2026-06-29.md)。
 - Native ZipEnhancer denoiser 尚未實作；要求 `--denoise` 時會明確失敗，不會靜默略過。
+
+## 安全限制
+
+- Voice clone 僅可處理已取得合法授權的聲音；CLI 強制要求
+  `--i-have-consent`。
+- 生成音訊可能不準確、帶有偏差或被濫用，不應冒充真人或作為身分驗證。
+- Release package 不含模型；使用者必須遵守下載模型所附的授權與使用條款。
+- `stream` 目前仍是一階段 callback，不宣稱為低延遲串流。

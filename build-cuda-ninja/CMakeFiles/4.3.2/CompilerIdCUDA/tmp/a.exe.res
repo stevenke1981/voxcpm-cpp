@@ -1,1 +1,0 @@
--D__CUDA_ARCH_LIST__=750 -nologo "D:\voxcpm-cpp\build-cuda-ninja\CMakeFiles\4.3.2\CompilerIdCUDA\tmp\a_dlink.obj" "D:\voxcpm-cpp\build-cuda-ninja\CMakeFiles\4.3.2\CompilerIdCUDA\tmp\CMakeCUDACompilerId.obj" -link -INCREMENTAL:NO   "/LIBPATH:C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.2/bin/../lib/x64"  cudadevrt.lib  cudart.lib

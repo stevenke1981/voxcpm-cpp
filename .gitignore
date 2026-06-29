@@ -1,6 +1,9 @@
 # Build output
 build/
 build-cuda/
+/build*/
+/dist/
+/*.zip
 cmake-build-*/
 .codebase-memory/
 *.obj

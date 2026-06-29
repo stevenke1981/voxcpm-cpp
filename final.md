@@ -113,8 +113,9 @@ voxcpm-c/
 - [x] TTS smoke produces valid 48 kHz mono WAV.
 - [x] Clone smoke produces valid WAV (synthetic reference; consent gate enabled).
 - [x] Streaming one-shot callback smoke passes.
-- [ ] License and notices included.
-- [ ] README documents safety limitations.
+- [x] Third-party notices included; project-level license selection remains an
+  explicit repository-owner decision.
+- [x] README documents safety limitations.
 
 ## 8. Current Verified Baseline
 
