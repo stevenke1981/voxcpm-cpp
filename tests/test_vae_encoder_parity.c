@@ -1,7 +1,9 @@
 /* AudioVAE encoder parity against a deterministic upstream Python fixture. */
 
 #include "audio_vae_v2.h"
+#include "clone_audio.h"
 #include "model_loader.h"
+#include "voxcpm.h"
 
 #include "ggml.h"
 #include "ggml-cpu.h"
@@ -60,7 +62,28 @@ static int join_path(char *dst, size_t dst_size, const char *dir, const char *na
     return written > 0 && (size_t) written < dst_size;
 }
 
+static double clone_role_cosine(const vcpm_conditioning_audio *actual, const float *expected,
+                                int latent_length) {
+    double dot = 0.0, actual_sq = 0.0, expected_sq = 0.0;
+    for (int t = 0; t < latent_length; t++) {
+        int patch = t / actual->patch_size;
+        int within = t % actual->patch_size;
+        for (int channel = 0; channel < actual->feat_dim; channel++) {
+            float a = actual->data[((size_t) patch * actual->patch_size + within) *
+                                       actual->feat_dim +
+                                   channel];
+            float b = expected[(size_t) channel * latent_length + t];
+            dot += (double) a * b;
+            actual_sq += (double) a * a;
+            expected_sq += (double) b * b;
+        }
+    }
+    return dot / (sqrt(actual_sq) * sqrt(expected_sq));
+}
+
 int main(int argc, char **argv) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
     if (argc != 3) {
         fprintf(stderr, "usage: test_vae_encoder_parity <model.gguf> <fixture-dir>\n");
         return 2;
@@ -184,6 +207,51 @@ int main(int argc, char **argv) {
     if (!passed)
         fprintf(stderr, "FAIL: encoder parity requires cosine >= 0.999 and RMSE <= 0.10\n");
 
+    char clone_input_path[1024], right_path[1024], left_path[1024];
+    join_path(clone_input_path, sizeof(clone_input_path), argv[2], "clone_sine_input.npy");
+    join_path(right_path, sizeof(right_path), argv[2], "clone_sine_right_latent.npy");
+    join_path(left_path, sizeof(left_path), argv[2], "clone_sine_left_latent.npy");
+    float *clone_input = read_npy_f32(clone_input_path, 16001);
+    float *right_expected = read_npy_f32(right_path, 64 * 28);
+    float *left_expected = read_npy_f32(left_path, 64 * 28);
+    vcpm_conditioning_audio right = {0}, left = {0};
+    char clone_error[512] = {0};
+    if (!clone_input || !right_expected || !left_expected) {
+        fprintf(stderr, "failed to load clone role fixtures\n");
+        passed = 0;
+        goto clone_cleanup;
+    }
+    printf("Encoding right-padded clone fixture...\n");
+    if (vcpm_clone_encode_samples(model, clone_input, 16001, 16000, VCPM_CLONE_PAD_RIGHT,
+                                  &right, clone_error, sizeof(clone_error)) != VCPM_OK) {
+        fprintf(stderr, "right-padded clone encode failed: %s\n", clone_error);
+        passed = 0;
+        goto clone_cleanup;
+    }
+    printf("Encoding left-padded clone fixture...\n");
+    if (vcpm_clone_encode_samples(model, clone_input, 16001, 16000, VCPM_CLONE_PAD_LEFT,
+                                  &left, clone_error, sizeof(clone_error)) != VCPM_OK) {
+        fprintf(stderr, "left-padded clone encode failed: %s\n", clone_error);
+        passed = 0;
+        goto clone_cleanup;
+    }
+    if (right.n_patches != 7 || left.n_patches != 7) {
+        fprintf(stderr, "clone patch count mismatch: right=%d left=%d expected=7\n",
+                right.n_patches, left.n_patches);
+        passed = 0;
+        goto clone_cleanup;
+    }
+    double right_cosine = clone_role_cosine(&right, right_expected, 28);
+    double left_cosine = clone_role_cosine(&left, left_expected, 28);
+    printf("Clone role parity: right=%.9f left=%.9f\n", right_cosine, left_cosine);
+    passed = passed && right_cosine >= 0.999 && left_cosine >= 0.999;
+
+clone_cleanup:
+    vcpm_conditioning_audio_free(&right);
+    vcpm_conditioning_audio_free(&left);
+    free(clone_input);
+    free(right_expected);
+    free(left_expected);
     ggml_free(ctx);
     vcpm_model_free(model);
     free(input);

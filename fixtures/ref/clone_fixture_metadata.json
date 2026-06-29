@@ -1,0 +1,66 @@
+{
+  "arrays": {
+    "clone_sine_input.npy": {
+      "dtype": "float32",
+      "mean": -1.863943626892135e-09,
+      "rms": 0.05656677401107111,
+      "sha256": "752cd50b4354d3ee2946f31d1e69b2902f865c88f09e45b5a6404c9d33d995e3",
+      "shape": [
+        1,
+        1,
+        16001
+      ]
+    },
+    "clone_sine_left_audio.npy": {
+      "dtype": "float32",
+      "mean": -1.6643393958650142e-09,
+      "rms": 0.05345224762675959,
+      "sha256": "f9dc06637d43a90c1234434564010c0e6a2c22b3770595e85d9d0bd9cf2929cf",
+      "shape": [
+        1,
+        1,
+        17920
+      ]
+    },
+    "clone_sine_left_latent.npy": {
+      "dtype": "float32",
+      "mean": 0.023138088282004383,
+      "rms": 1.6838099243988043,
+      "sha256": "3811099d60f8fa1760ce64518c9f275db5e73c425d375cfb1a2fa09e66ac7b5f",
+      "shape": [
+        1,
+        64,
+        28
+      ]
+    },
+    "clone_sine_right_audio.npy": {
+      "dtype": "float32",
+      "mean": -1.6643393958650142e-09,
+      "rms": 0.05345224762675959,
+      "sha256": "8b9963847687d7e7bbfdfb0562c9b8be4d76d3677f124f099a105b0c1a951a12",
+      "shape": [
+        1,
+        1,
+        17920
+      ]
+    },
+    "clone_sine_right_latent.npy": {
+      "dtype": "float32",
+      "mean": 0.01535329707985511,
+      "rms": 1.6771261216798106,
+      "sha256": "d57f5e2847aa5f1c006c8d672211b904c854803542eee116626eea7dd9958a16",
+      "shape": [
+        1,
+        64,
+        28
+      ]
+    }
+  },
+  "input_samples": 16001,
+  "padding_samples": 1919,
+  "patch_len": 2560,
+  "patch_size": 4,
+  "sample_rate": 16000,
+  "source": "upstream VoxCPM2 _encode_wav role semantics",
+  "vae_hop_length": 640
+}
