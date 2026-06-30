@@ -202,6 +202,13 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
 
 - [x] Graph memory reuse: step_ctx 14 GB → 256 MB.
 - [x] KV cache in dedicated `kv_ctx` (persistent across steps).
+- [x] KV cache 按 request sequence 以 128 起跳倍增，並由 `vcpm_context`
+  跨 generation 重用；不再每次配置完整 8192 positions。
+- [x] Prompt 4 GiB、CFM 3/2 GiB 與 batch VAE 4 GiB 下限已移除；
+  production non-stream decode 改走固定 patch incremental VAE。
+- [x] Clone encoder 使用四 patch causal overlap + 一 patch payload 的固定視窗，
+  長 reference 不再建立與完整輸入等長的 graph。
+- [x] Non-stream WAV buffer 依實際 patch 數計算，移除固定 30 秒裁切上限。
 - [x] CUDA GPU backend with weight offload (`ggml-cuda`, commit c258207).
 - [x] `voxcpm-c bench` command with RTF measurement.
 - [x] Q8_0 quantization (45% size reduction, 2.44 GB).
@@ -209,7 +216,7 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
 - [x] **CUDA Base LM prompt parity** — CPU/CUDA cosine `0.999956`; registered
   as a CUDA-labelled model CTest.
 - [x] Add CPU thread setting (`--threads N`).
-- [ ] Reuse KV cache across generations.
+- [x] Reuse KV cache across generations.
 - [ ] Compare RTF: CPU vs CUDA vs Q8_0-CUDA.
 
 ## 13. Quality and Safety

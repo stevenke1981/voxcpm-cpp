@@ -141,4 +141,7 @@ voxcpm-c/
   preceding input timestep for all six transposed convolutions. Each callback
   decodes only the new patch, while the F16 integration gate keeps concatenated
   PCM within `1e-6` of the batch decoder.
-- Generation memory uses a large 6 GiB arena; long-form output still needs graph allocator reuse and memory growth tests.
+- Generation state and request-sized KV tensors are reused by `vcpm_context`;
+  prompt/CFM arenas are bounded, non-stream output uses incremental VAE decode,
+  and clone encoding uses a fixed causal-overlap window. Memory/reset tests are
+  documented in `docs/runtime-memory-2026-06-30.md`.

@@ -19,6 +19,18 @@ static vcpm_status clone_error(char *error, size_t error_size, vcpm_status statu
     return status;
 }
 
+size_t vcpm_clone_encoder_arena_bytes(int64_t n_samples) {
+    if (n_samples < 1)
+        n_samples = 1;
+    uint64_t bytes = 288ULL * 1024ULL * 1024ULL +
+                     (uint64_t)n_samples * 96ULL * 1024ULL;
+    if (bytes < 896ULL * 1024ULL * 1024ULL)
+        bytes = 896ULL * 1024ULL * 1024ULL;
+    if (bytes > 2ULL * 1024ULL * 1024ULL * 1024ULL)
+        bytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
+    return (size_t)bytes;
+}
+
 int64_t vcpm_clone_pad_audio(const float *input, int64_t n_samples, int patch_len,
                              vcpm_clone_padding mode, float **output) {
     if (!input || !output || n_samples <= 0 || patch_len <= 0)
@@ -48,6 +60,87 @@ void vcpm_conditioning_audio_free(vcpm_conditioning_audio *audio) {
         return;
     free(audio->data);
     memset(audio, 0, sizeof(*audio));
+}
+
+static vcpm_status clone_encode_window(
+    const vcpm_model *model, const vcpm_audio_vae_v2_config *config,
+    const float *samples, int64_t n_samples, float **latents,
+    int *n_latents, int *feat_dim, char *error, size_t error_size) {
+    size_t context_mem = vcpm_clone_encoder_arena_bytes(n_samples);
+    struct ggml_init_params init = {
+        .mem_size = context_mem,
+        .mem_buffer = NULL,
+        .no_alloc = false,
+    };
+    struct ggml_context *ctx = ggml_init(init);
+    struct ggml_cgraph *graph =
+        ctx ? ggml_new_graph_custom(ctx, 65536, false) : NULL;
+    if (!ctx || !graph) {
+        if (ctx)
+            ggml_free(ctx);
+        return clone_error(error, error_size, VCPM_ERR_OOM,
+                           "out of memory for clone VAE encoder");
+    }
+
+    struct ggml_tensor *audio =
+        ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_samples, 1);
+    if (!audio || !audio->data) {
+        ggml_free(ctx);
+        return clone_error(error, error_size, VCPM_ERR_OOM,
+                           "out of memory for clone VAE input");
+    }
+    memcpy(audio->data, samples, (size_t)n_samples * sizeof(float));
+
+    struct ggml_tensor *logvar = NULL;
+    struct ggml_tensor *mean =
+        vcpm_vae_v2_encode(ctx, graph, audio, model, config, &logvar);
+    if (!mean) {
+        ggml_free(ctx);
+        return clone_error(error, error_size, VCPM_ERR_BACKEND,
+                           "clone VAE encoder graph failed");
+    }
+    ggml_build_forward_expand(graph, mean);
+    if (logvar)
+        ggml_build_forward_expand(graph, logvar);
+    if (ggml_graph_compute_with_ctx(ctx, graph, 1) !=
+            GGML_STATUS_SUCCESS ||
+        !mean->data) {
+        ggml_free(ctx);
+        return clone_error(error, error_size, VCPM_ERR_BACKEND,
+                           "clone VAE encoder compute failed");
+    }
+
+    int window_latents = (int)mean->ne[0];
+    int window_feat_dim = (int)mean->ne[1];
+    if (window_latents <= 0 ||
+        window_feat_dim != model->config.vae_latent_dim) {
+        ggml_free(ctx);
+        return clone_error(
+            error, error_size, VCPM_ERR_BACKEND,
+            "clone VAE encoder produced invalid window shape");
+    }
+    float *window_data = (float *)malloc(
+        (size_t)window_latents * (size_t)window_feat_dim *
+        sizeof(float));
+    if (!window_data) {
+        ggml_free(ctx);
+        return clone_error(error, error_size, VCPM_ERR_OOM,
+                           "out of memory for clone window latents");
+    }
+    if (vcpm_vae_copy_latents_time_major(
+            (const float *)mean->data, window_latents,
+            window_feat_dim, window_data) != 0) {
+        free(window_data);
+        ggml_free(ctx);
+        return clone_error(error, error_size, VCPM_ERR_BACKEND,
+                           "clone latent layout conversion failed");
+    }
+
+    ggml_free(ctx);
+    *latents = window_data;
+    *n_latents = window_latents;
+    *feat_dim = window_feat_dim;
+    return VCPM_OK;
 }
 
 vcpm_status vcpm_clone_encode_samples(const vcpm_model *model, const float *samples,
@@ -88,85 +181,84 @@ vcpm_status vcpm_clone_encode_samples(const vcpm_model *model, const float *samp
         return clone_error(error, error_size, VCPM_ERR_OOM,
                            "clone audio padding failed");
 
-    size_t context_mem = (size_t) padded_n * 2048 * 4 * 30 + 256ULL * 1024 * 1024;
-    if (context_mem < 1024ULL * 1024 * 1024)
-        context_mem = 1024ULL * 1024 * 1024;
-    if (context_mem > 4ULL * 1024 * 1024 * 1024)
-        context_mem = 4ULL * 1024 * 1024 * 1024;
-    struct ggml_init_params init = {
-        .mem_size = context_mem,
-        .mem_buffer = NULL,
-        .no_alloc = false,
-    };
-    struct ggml_context *ctx = ggml_init(init);
-    struct ggml_cgraph *graph = ctx ? ggml_new_graph_custom(ctx, 65536, false) : NULL;
-    if (!ctx || !graph) {
-        if (ctx)
-            ggml_free(ctx);
-        free(padded);
-        return clone_error(error, error_size, VCPM_ERR_OOM,
-                           "out of memory for clone VAE encoder");
-    }
-
-    struct ggml_tensor *audio = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, padded_n, 1);
-    if (!audio || !audio->data) {
-        ggml_free(ctx);
-        free(padded);
-        return clone_error(error, error_size, VCPM_ERR_OOM,
-                           "out of memory for clone VAE input");
-    }
-    memcpy(audio->data, padded, (size_t) padded_n * sizeof(float));
-    free(padded);
-
     vcpm_audio_vae_v2_config config;
     vcpm_audio_vae_v2_config_fill(
         &config, model->config.vae_latent_dim, 128, 2048, model->config.vae_decoder_rates,
         encoder_rates, vae_sample_rate, model->config.vae_out_sample_rate);
-    struct ggml_tensor *logvar = NULL;
-    struct ggml_tensor *mean =
-        vcpm_vae_v2_encode(ctx, graph, audio, model, &config, &logvar);
-    if (!mean) {
-        ggml_free(ctx);
-        return clone_error(error, error_size, VCPM_ERR_BACKEND,
-                           "clone VAE encoder graph failed");
+    if (padded_n / hop_length > INT32_MAX) {
+        free(padded);
+        return clone_error(error, error_size, VCPM_ERR_INVALID_ARG,
+                           "clone audio is too long");
     }
-    ggml_build_forward_expand(graph, mean);
-    if (logvar)
-        ggml_build_forward_expand(graph, logvar);
-    if (ggml_graph_compute_with_ctx(ctx, graph, 1) != 0 || !mean->data) {
-        ggml_free(ctx);
+    int total_latents = (int)(padded_n / hop_length);
+    int feat_dim = model->config.vae_latent_dim;
+    if (total_latents <= 0 || total_latents % patch_size != 0) {
+        free(padded);
         return clone_error(error, error_size, VCPM_ERR_BACKEND,
-                           "clone VAE encoder compute failed");
+                           "clone VAE input produced invalid patch shape");
     }
-
-    int n_latents = (int) mean->ne[0];
-    int feat_dim = (int) mean->ne[1];
-    if (n_latents <= 0 || feat_dim != model->config.vae_latent_dim ||
-        n_latents % patch_size != 0) {
-        ggml_free(ctx);
-        return clone_error(error, error_size, VCPM_ERR_BACKEND,
-                           "clone VAE encoder produced invalid patch shape");
-    }
-
-    float *data = (float *) malloc((size_t) n_latents * feat_dim * sizeof(float));
+    float *data = (float *)malloc(
+        (size_t)total_latents * (size_t)feat_dim * sizeof(float));
     if (!data) {
-        ggml_free(ctx);
+        free(padded);
         return clone_error(error, error_size, VCPM_ERR_OOM,
                            "out of memory for clone latents");
     }
-    if (vcpm_vae_copy_latents_time_major((const float *) mean->data, n_latents, feat_dim, data) !=
-        0) {
+
+    /* Encoder receptive field is below four patches (10240 input samples).
+     * Every window is aligned to patch_len, so downsampling phase remains
+     * identical. Retain only the new patch latents after the overlap. */
+    const int64_t history_samples = (int64_t)patch_len * 4;
+    int output_latent = 0;
+    for (int64_t offset = 0; offset < padded_n;
+         offset += patch_len) {
+        int64_t history =
+            offset < history_samples ? offset : history_samples;
+        int64_t window_start = offset - history;
+        int64_t window_samples = history + patch_len;
+        float *window_latents = NULL;
+        int window_n_latents = 0;
+        int window_feat_dim = 0;
+        vcpm_status status = clone_encode_window(
+            model, &config, padded + window_start, window_samples,
+            &window_latents, &window_n_latents, &window_feat_dim,
+            error, error_size);
+        if (status != VCPM_OK) {
+            free(window_latents);
+            free(data);
+            free(padded);
+            return status;
+        }
+        int discard_latents = (int)(history / hop_length);
+        if (window_feat_dim != feat_dim ||
+            discard_latents + patch_size > window_n_latents ||
+            output_latent + patch_size > total_latents) {
+            free(window_latents);
+            free(data);
+            free(padded);
+            return clone_error(
+                error, error_size, VCPM_ERR_BACKEND,
+                "clone VAE window produced invalid patch shape");
+        }
+        memcpy(
+            data + (size_t)output_latent * (size_t)feat_dim,
+            window_latents +
+                (size_t)discard_latents * (size_t)feat_dim,
+            (size_t)patch_size * (size_t)feat_dim * sizeof(float));
+        output_latent += patch_size;
+        free(window_latents);
+    }
+    free(padded);
+    if (output_latent != total_latents) {
         free(data);
-        ggml_free(ctx);
         return clone_error(error, error_size, VCPM_ERR_BACKEND,
-                           "clone latent layout conversion failed");
+                           "clone VAE window count mismatch");
     }
 
     output->data = data;
-    output->n_patches = n_latents / patch_size;
+    output->n_patches = total_latents / patch_size;
     output->patch_size = patch_size;
     output->feat_dim = feat_dim;
-    ggml_free(ctx);
     return VCPM_OK;
 }
 

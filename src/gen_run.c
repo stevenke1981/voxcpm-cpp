@@ -8,6 +8,7 @@
 #include "generate.h"
 #include "model_loader.h"
 #include "audio_vae.h"
+#include "audio_vae_stream.h"
 #include "audio_vae_v2.h"
 #include "log.h"
 #include "debug_dump.h"
@@ -80,17 +81,17 @@ static vcpm_status vcpm_gen_run_impl(
     int n_patches = 0;
     state->ar_step_counter = 0;
 
-    /* Reset KV caches and prev_patch */
-    for (int i = 0; i < state->n_base_layers; i++)
-        state->base_kv_cache[i].n_used = 0;
-    for (int i = 0; i < state->res_n_layers; i++)
-        state->ralm_kv_cache[i].n_used = 0;
-    if (state->prev_patch) {
-        int prev_patch_dim = state->enc_feat_dim * patch_size;
-        memset(state->prev_patch, 0, (size_t) prev_patch_dim * sizeof(float));
-    }
-    if (state->last_lm_hidden)
-        memset(state->last_lm_hidden, 0, (size_t) state->hidden_size * sizeof(float));
+    /* Reset reusable runtime buffers while preserving conditioning owned by
+     * the current caller. */
+    const float *conditioning_data = state->conditioning_latent_data;
+    int conditioning_patches = state->n_conditioning_patches;
+    int conditioning_patch_size = state->conditioning_patch_size;
+    int conditioning_feat_dim = state->conditioning_feat_dim;
+    vcpm_gen_reset(state);
+    state->conditioning_latent_data = conditioning_data;
+    state->n_conditioning_patches = conditioning_patches;
+    state->conditioning_patch_size = conditioning_patch_size;
+    state->conditioning_feat_dim = conditioning_feat_dim;
 
     struct ggml_cgraph *graph = state->step_graph;
 
@@ -117,7 +118,8 @@ static vcpm_status vcpm_gen_run_impl(
     for (int segment_index = 0; segment_index < n_segments; segment_index++) {
         vcpm_prompt_segment segment = segments[segment_index];
         if (segment.type == VCPM_PROMPT_SEGMENT_TEXT) {
-            size_t prompt_mem = 4ULL * 1024 * 1024 * 1024;
+            size_t prompt_mem =
+                vcpm_gen_prompt_arena_bytes(segment.length);
             struct ggml_init_params prompt_params = {
                 .mem_size = prompt_mem,
                 .mem_buffer = NULL,
@@ -283,17 +285,10 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state *state, const float *latent, int
                 n_patches, patch_size, n_timesteps, latent_dim);
     }
 
-    /* Estimate VAE decoder ggml context memory.
-     * The decoder builds 6 upconv blocks + 3 residual units each, creating many
-     * large intermediate tensors. Peak memory scales with n_timesteps:
-     *   ~64 MB per timestep (empirical: T=256 needs ~18 GB),
-     *   plus ~4 GB fixed overhead for graph plan work buffers.
-     * Cap at 28 GB, minimum 4 GB. */
-    size_t vae_mem = (size_t) n_timesteps * 128ULL * 1024 * 1024 + 2048ULL * 1024 * 1024;
-    if (vae_mem < 4ULL * 1024 * 1024 * 1024)
-        vae_mem = 4ULL * 1024 * 1024 * 1024;
-    if (vae_mem > 28ULL * 1024 * 1024 * 1024)
-        vae_mem = 28ULL * 1024 * 1024 * 1024;
+    /* VAE weights are persistent F32 model tensors. This arena now contains
+     * graph metadata and activations only, so the old 4 GiB floor is no
+     * longer required. */
+    size_t vae_mem = vcpm_gen_vae_arena_bytes(n_timesteps);
     struct ggml_init_params vae_params = {
         .mem_size = vae_mem,
         .mem_buffer = NULL,
@@ -489,5 +484,52 @@ vcpm_status vcpm_gen_decode(vcpm_generate_state *state, const float *latent, int
     ggml_free(vae_ctx);
 
     *n_samples_out = n_samples;
+    return VCPM_OK;
+}
+
+vcpm_status vcpm_gen_decode_incremental(
+    vcpm_generate_state *state, const float *latent, int n_patches,
+    float *audio_out, int max_samples, int *n_samples_out) {
+    if (!state || !latent || !audio_out || !n_samples_out ||
+        n_patches <= 0 || max_samples <= 0)
+        return VCPM_ERR_INVALID_ARG;
+    *n_samples_out = 0;
+
+    int patch_size =
+        state->model && state->model->config.patch_size > 0
+            ? state->model->config.patch_size
+            : 1;
+    int latent_dim = state->vae_v2_cfg.latent_dim;
+    if (latent_dim <= 0)
+        return VCPM_ERR_MODEL_FORMAT;
+
+    vcpm_vae_stream_state *decoder = vcpm_vae_stream_create(
+        state->model, &state->vae_v2_cfg, patch_size);
+    if (!decoder)
+        return VCPM_ERR_OOM;
+    int patch_samples = vcpm_vae_stream_patch_samples(decoder);
+    if (patch_samples <= 0 ||
+        n_patches > max_samples / patch_samples) {
+        vcpm_vae_stream_free(decoder);
+        return VCPM_ERR_INVALID_ARG;
+    }
+
+    size_t patch_elements =
+        (size_t)patch_size * (size_t)latent_dim;
+    int output_offset = 0;
+    for (int patch = 0; patch < n_patches; patch++) {
+        int decoded = 0;
+        vcpm_status status = vcpm_vae_stream_decode(
+            decoder, latent + (size_t)patch * patch_elements,
+            patch_size, audio_out + output_offset,
+            max_samples - output_offset, &decoded);
+        if (status != VCPM_OK || decoded != patch_samples) {
+            vcpm_vae_stream_free(decoder);
+            return status == VCPM_OK ? VCPM_ERR_BACKEND : status;
+        }
+        output_offset += decoded;
+    }
+    vcpm_vae_stream_free(decoder);
+    *n_samples_out = output_offset;
     return VCPM_OK;
 }

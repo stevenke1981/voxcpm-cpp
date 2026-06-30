@@ -145,6 +145,9 @@ Current verified baseline:
 - Incomplete/mock GGUFs fail `tts` with a missing tensor diagnostic instead of dummy audio.
 - `clone` 與 C API 已支援 reference-only、prompt-only continuation、combined 三種 Python-compatible conditioning 模式；所有模式都要求明確 consent。
 - Prompt 模式會以 `prompt_text + target_text` 單次 tokenize，reference WAV 右補零、prompt WAV 左補零；完整語意與驗證結果見 [`docs/voice-clone-python-parity-2026-06-29.md`](docs/voice-clone-python-parity-2026-06-29.md)。
+- 長音訊的 non-stream decode、clone encoder、KV cache 與 CFM/prompt arena
+  已改為 bounded/reusable 設計；配置界線與測試見
+  [`docs/runtime-memory-2026-06-30.md`](docs/runtime-memory-2026-06-30.md)。
 - 純 C `native-dsp-v1` denoiser 可處理 prompt/reference：
   `--denoise --denoiser-model native-dsp-v1`。ModelScope ZipEnhancer 是獨立神經網路，
   權重不在 VoxCPM GGUF；選它仍會明確回傳 not-implemented。

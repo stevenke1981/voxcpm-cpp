@@ -22,6 +22,7 @@ typedef struct vcpm_conditioning_audio {
 int64_t vcpm_clone_pad_audio(const float *input, int64_t n_samples, int patch_len,
                              vcpm_clone_padding mode, float **output);
 void vcpm_conditioning_audio_free(vcpm_conditioning_audio *audio);
+size_t vcpm_clone_encoder_arena_bytes(int64_t n_samples);
 vcpm_status vcpm_clone_encode_samples(const vcpm_model *model, const float *samples,
                                       int64_t n_samples, int sample_rate,
                                       vcpm_clone_padding padding,

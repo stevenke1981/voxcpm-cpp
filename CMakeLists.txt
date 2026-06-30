@@ -231,6 +231,12 @@ if(VCPM_BUILD_TESTS)
     add_test(NAME vae_stream_state COMMAND test_vae_stream_state)
     set_tests_properties(vae_stream_state PROPERTIES LABELS "unit")
 
+    add_executable(test_generation_memory tests/test_generation_memory.c)
+    target_include_directories(test_generation_memory PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_generation_memory PRIVATE voxcpm)
+    add_test(NAME generation_memory COMMAND test_generation_memory)
+    set_tests_properties(generation_memory PROPERTIES LABELS "unit")
+
     add_executable(test_minicpm4 tests/test_minicpm4.c)
     target_include_directories(test_minicpm4 PRIVATE
         ${VCPM_TEST_PRIVATE_INCLUDES}

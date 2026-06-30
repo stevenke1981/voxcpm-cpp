@@ -315,7 +315,7 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
      * (saved from previous step or prompt eval), BEFORE running CFM.
      * The LM update happens AFTER CFM.
      */
-    size_t scratch_mem = 3ULL * 1024 * 1024 * 1024;
+    size_t scratch_mem = 256ULL * 1024 * 1024;
     struct ggml_init_params scratch_params = {
         .mem_size   = scratch_mem,
         .mem_buffer = NULL,
@@ -475,8 +475,8 @@ vcpm_status vcpm_gen_step(vcpm_generate_state * state,
     int use_cfg = (cfg_value != 1.0f && mu_data != NULL);
     int zero_star_steps = vcpm_cfm_zero_star_steps(n_steps);
 
-    /* Batch-2 graph (cond + uncond) needs ~2× scratch memory */
-    size_t sub_mem = use_cfg ? (2ULL * 1024 * 1024 * 1024) : (1ULL * 1024 * 1024 * 1024);
+    /* Batch-2 graph (cond + uncond) needs about twice the activation arena. */
+    size_t sub_mem = vcpm_gen_cfm_arena_bytes(use_cfg);
 
     /*
      * PERSISTENT CFM LOOP: Build the DiT computation graph ONCE,

@@ -407,6 +407,10 @@ segment。F16 model smoke 的三種模式皆產生 30720 個 48 kHz finite sampl
 實作資料流、sequence layout、數值 gate、安全限制與 CLI 範例記錄於
 [`voice-clone-python-parity-2026-06-29.md`](voice-clone-python-parity-2026-06-29.md)。
 
+長 reference 的 encoder 現以四 patch causal history 加一 patch payload 的固定
+視窗執行；視窗對齊 640-sample hop 並丟棄 overlap latents。重新執行 Python
+fixture 後，right/left padding cosine 分別為 `0.999998629`、`0.999998547`。
+
 ## 18. Recurrence / CFM backend-correct parity（2026-06-30）
 
 完整 recurrence 的最初基準在 AR4 出現：

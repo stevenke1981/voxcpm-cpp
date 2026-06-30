@@ -25,6 +25,7 @@ struct vcpm_context {
     char *denoiser_model_path;
     vcpm_model_params params;
     vcpm_model *model;
+    vcpm_generate_state *gen_state;
     vcpm_tokenizer tokenizer;
     int tokenizer_loaded;
     int model_loaded;
@@ -485,15 +486,31 @@ static vcpm_status vcpm_generate_impl(
     vcpm_conditioning_audio_free(&reference);
     vcpm_conditioning_audio_free(&prompt);
 
-    /* ---- Full model inference pipeline ---- */
-    vcpm_generate_state *gen_state =
-        vcpm_gen_init(ctx->model, ctx->params.backend, ctx->params.n_threads, 0);
+    /* ---- Full model inference pipeline ----
+     * Keep the generation state and KV tensors on the loaded context. Grow the
+     * cache geometrically only when a later request needs a longer sequence. */
+    int cache_capacity = vcpm_gen_round_cache_capacity(
+        seq.length, ctx->model->config.max_seq_len);
+    if (cache_capacity <= 0) {
+        free(conditioning_latents);
+        vcpm_set_error(ctx, "sequence exceeds KV cache capacity");
+        return VCPM_ERR_INVALID_ARG;
+    }
+    if (!ctx->gen_state ||
+        ctx->gen_state->cache_capacity < cache_capacity) {
+        vcpm_gen_free(ctx->gen_state);
+        ctx->gen_state = vcpm_gen_init_ex(
+            ctx->model, ctx->params.backend, ctx->params.n_threads,
+            0, cache_capacity);
+    }
+    vcpm_generate_state *gen_state = ctx->gen_state;
     if (!gen_state) {
         free(conditioning_latents);
         vcpm_set_error(ctx, "failed to initialize generation state");
         return VCPM_ERR_BACKEND;
     }
 
+    vcpm_gen_reset(gen_state);
     gen_state->conditioning_latent_data = conditioning_latents;
     gen_state->n_conditioning_patches = total_conditioning_patches;
     gen_state->conditioning_patch_size = patch_size;
@@ -505,7 +522,7 @@ static vcpm_status vcpm_generate_impl(
                                             (size_t) patch_size * sizeof(float));
     if (!latent_buffer) {
         free(conditioning_latents);
-        vcpm_gen_free(gen_state);
+        gen_state->conditioning_latent_data = NULL;
         vcpm_set_error(ctx, "out of memory");
         return VCPM_ERR_OOM;
     }
@@ -525,7 +542,6 @@ static vcpm_status vcpm_generate_impl(
             free(latent_buffer);
             free(conditioning_latents);
             gen_state->conditioning_latent_data = NULL;
-            vcpm_gen_free(gen_state);
             vcpm_set_error(ctx, "failed to initialize streaming VAE state");
             return VCPM_ERR_OOM;
         }
@@ -539,7 +555,6 @@ static vcpm_status vcpm_generate_impl(
             free(latent_buffer);
             free(conditioning_latents);
             gen_state->conditioning_latent_data = NULL;
-            vcpm_gen_free(gen_state);
             vcpm_set_error(
                 ctx, "out of memory for streaming VAE output");
             return VCPM_ERR_OOM;
@@ -565,7 +580,6 @@ static vcpm_status vcpm_generate_impl(
         free(stream_state.decoded_chunk);
         vcpm_vae_stream_free(stream_state.decoder);
         free(latent_buffer);
-        vcpm_gen_free(gen_state);
         vcpm_set_error(
             ctx, stream_state.callback_failed
                      ? "stream callback failed"
@@ -576,7 +590,6 @@ static vcpm_status vcpm_generate_impl(
         free(stream_state.decoded_chunk);
         vcpm_vae_stream_free(stream_state.decoder);
         free(latent_buffer);
-        vcpm_gen_free(gen_state);
         vcpm_set_error(ctx, "generation produced no latent patches");
         return VCPM_ERR_MODEL_FORMAT;
     }
@@ -585,24 +598,41 @@ static vcpm_status vcpm_generate_impl(
         free(stream_state.decoded_chunk);
         vcpm_vae_stream_free(stream_state.decoder);
         free(latent_buffer);
-        vcpm_gen_free(gen_state);
         return VCPM_OK;
     }
 
-    size_t max_audio_samples = (size_t) output_sample_rate * 30; /* 30 sec max */
+    size_t samples_per_patch = (size_t)patch_size;
+    for (int i = 0; i < VCPM_VAE_V2_N_DECODER_BLOCKS; i++) {
+        int stride = gen_state->vae_v2_cfg.decoder_rates[i];
+        if (stride <= 0 ||
+            samples_per_patch > SIZE_MAX / (size_t)stride) {
+            free(latent_buffer);
+            vcpm_set_error(ctx, "invalid AudioVAE output length");
+            return VCPM_ERR_MODEL_FORMAT;
+        }
+        samples_per_patch *= (size_t)stride;
+    }
+    if ((size_t)n_patches > SIZE_MAX / samples_per_patch ||
+        (size_t)n_patches * samples_per_patch >
+            (size_t)INT_MAX) {
+        free(latent_buffer);
+        vcpm_set_error(ctx, "generated audio is too long");
+        return VCPM_ERR_INVALID_ARG;
+    }
+    size_t max_audio_samples =
+        (size_t)n_patches * samples_per_patch;
     float *audio_buf = (float *) malloc(max_audio_samples * sizeof(float));
     if (!audio_buf) {
         free(latent_buffer);
-        vcpm_gen_free(gen_state);
         vcpm_set_error(ctx, "out of memory");
         return VCPM_ERR_OOM;
     }
 
     int n_samples = 0;
-    st = vcpm_gen_decode(gen_state, latent_buffer, n_patches, audio_buf, (int) max_audio_samples,
-                         &n_samples);
+    st = vcpm_gen_decode_incremental(
+        gen_state, latent_buffer, n_patches, audio_buf,
+        (int)max_audio_samples, &n_samples);
     free(latent_buffer);
-    vcpm_gen_free(gen_state);
 
     if (st != VCPM_OK || n_samples <= 0) {
         free(audio_buf);
@@ -774,6 +804,7 @@ void vcpm_free(vcpm_context *ctx) {
     free(ctx->model_path);
     free(ctx->denoiser_model_path);
     vcpm_tokenizer_free(&ctx->tokenizer);
+    vcpm_gen_free(ctx->gen_state);
     if (ctx->model)
         vcpm_model_free(ctx->model);
     free(ctx);

@@ -42,12 +42,12 @@
 - Modify: `README.md`
 - Modify: `todos.md`
 
-- [ ] Write failing reset/reuse and allocation-bound tests.
-- [ ] Add explicit generation reset and context-owned reusable state.
-- [ ] Size KV storage from the supported runtime capacity.
-- [ ] Reuse model-level F32 AudioVAE weights and right-size temporary arenas.
-- [ ] Run repeated long-generation tests and the full CPU suite.
-- [ ] Update documentation, inspect the diff, commit, and push.
+- [x] Write failing reset/reuse and allocation-bound tests.
+- [x] Add explicit generation reset and context-owned reusable state.
+- [x] Size KV storage from the supported runtime capacity.
+- [x] Reuse model-level F32 AudioVAE weights and right-size temporary arenas.
+- [x] Run repeated long-generation tests and the full CPU suite.
+- [x] Update documentation, inspect the diff, commit, and push.
 
 ### Task 3: CUDA/Q8 matrix and MinGW CI
 

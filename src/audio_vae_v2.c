@@ -21,6 +21,8 @@
         (void) (t);                                                                                \
     } while (0)
 #include "audio_vae_v2.h"
+#include "debug_dump.h"
+#include "log.h"
 #include "model_loader.h"
 
 #include "ggml.h"
@@ -551,6 +553,8 @@ static struct ggml_tensor *snapshot_tensor(struct ggml_context *ctx, struct ggml
  * so it's computed during graph execution. */
 void vcpm_vae_save_snapshot(struct ggml_context *ctx, struct ggml_cgraph *graph,
                             struct ggml_tensor *t) {
+    if (!vcpm_debug_shapes_env())
+        return;
     if (g_dbg_snap_count >= 40)
         return;
     struct ggml_tensor *s = snapshot_tensor(ctx, graph, t);

@@ -67,6 +67,7 @@ typedef struct vcpm_generate_state {
     int intermediate_size;
     float rms_norm_eps;
     int max_seq_len;
+    int cache_capacity;
     int vocab_size;
     int rope_theta;
     float scale_depth;     /* DeepNorm scale for base LM (from GGUF) */
@@ -188,6 +189,7 @@ typedef struct vcpm_generate_state {
     struct ggml_context *step_ctx;
     struct ggml_cgraph *step_graph;
     size_t step_mem_size;
+    size_t persistent_bytes;
 
     /* Backend (CPU / CUDA / Metal / Vulkan) */
     vcpm_backend backend;
@@ -226,6 +228,16 @@ typedef struct vcpm_generate_state {
  */
 vcpm_generate_state *vcpm_gen_init(const struct vcpm_model *model, int backend_type, int n_threads,
                                    size_t step_mem);
+vcpm_generate_state *vcpm_gen_init_ex(const struct vcpm_model *model, int backend_type,
+                                      int n_threads, size_t step_mem, int cache_capacity);
+void vcpm_gen_reset(vcpm_generate_state *state);
+int vcpm_gen_round_cache_capacity(int required, int model_max);
+size_t vcpm_gen_kv_data_bytes(int n_base_layers, int n_res_layers, int head_dim,
+                              int n_base_kv_heads, int n_res_kv_heads,
+                              int cache_capacity);
+size_t vcpm_gen_prompt_arena_bytes(int sequence_length);
+size_t vcpm_gen_cfm_arena_bytes(int use_cfg);
+size_t vcpm_gen_vae_arena_bytes(int n_timesteps);
 
 /*
  * Run one autoregressive step: predict next latent patch.
@@ -297,6 +309,9 @@ vcpm_status vcpm_gen_run_stream(vcpm_generate_state *state, const int32_t *token
  */
 vcpm_status vcpm_gen_decode(vcpm_generate_state *state, const float *latent, int n_patches,
                             float *audio_out, int max_samples, int *n_samples_out);
+vcpm_status vcpm_gen_decode_incremental(vcpm_generate_state *state, const float *latent,
+                                        int n_patches, float *audio_out,
+                                        int max_samples, int *n_samples_out);
 
 /*
  * Free generation state and all associated resources.

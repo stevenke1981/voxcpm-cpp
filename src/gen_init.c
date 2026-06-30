@@ -112,9 +112,102 @@ static int fill_dit_weights(const struct vcpm_model * model,
 
 /* ---- Main API ---- */
 
-vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
-                                     int backend_type, int n_threads,
-                                     size_t step_mem) {
+int vcpm_gen_round_cache_capacity(int required, int model_max) {
+    if (required <= 0 || model_max <= 0 || required > model_max)
+        return 0;
+    int capacity = 128;
+    while (capacity < required) {
+        if (capacity > model_max / 2) {
+            capacity = model_max;
+            break;
+        }
+        capacity *= 2;
+    }
+    return capacity <= model_max ? capacity : model_max;
+}
+
+size_t vcpm_gen_kv_data_bytes(int n_base_layers, int n_res_layers,
+                              int head_dim, int n_base_kv_heads,
+                              int n_res_kv_heads, int cache_capacity) {
+    if (n_base_layers < 0 || n_res_layers < 0 || head_dim <= 0 ||
+        n_base_kv_heads <= 0 || n_res_kv_heads <= 0 ||
+        cache_capacity <= 0)
+        return 0;
+    size_t base_elements =
+        (size_t)n_base_layers * 2U * (size_t)head_dim *
+        (size_t)n_base_kv_heads * (size_t)cache_capacity;
+    size_t residual_elements =
+        (size_t)n_res_layers * 2U * (size_t)head_dim *
+        (size_t)n_res_kv_heads * (size_t)cache_capacity;
+    if (base_elements > (SIZE_MAX / sizeof(float)) - residual_elements)
+        return 0;
+    return (base_elements + residual_elements) * sizeof(float);
+}
+
+size_t vcpm_gen_prompt_arena_bytes(int sequence_length) {
+    if (sequence_length < 1)
+        sequence_length = 1;
+    size_t bytes = 256ULL * 1024ULL * 1024ULL +
+                   (size_t)sequence_length * 2ULL * 1024ULL * 1024ULL;
+    if (bytes < 512ULL * 1024ULL * 1024ULL)
+        bytes = 512ULL * 1024ULL * 1024ULL;
+    if (bytes > 1024ULL * 1024ULL * 1024ULL)
+        bytes = 1024ULL * 1024ULL * 1024ULL;
+    return bytes;
+}
+
+size_t vcpm_gen_cfm_arena_bytes(int use_cfg) {
+    return use_cfg ? 1024ULL * 1024ULL * 1024ULL
+                   : 512ULL * 1024ULL * 1024ULL;
+}
+
+size_t vcpm_gen_vae_arena_bytes(int n_timesteps) {
+    if (n_timesteps < 1)
+        n_timesteps = 1;
+    size_t bytes = 1536ULL * 1024ULL * 1024ULL +
+                   (size_t)n_timesteps * 16ULL * 1024ULL * 1024ULL;
+    if (bytes < 1792ULL * 1024ULL * 1024ULL)
+        bytes = 1792ULL * 1024ULL * 1024ULL;
+    if (bytes > 8ULL * 1024ULL * 1024ULL * 1024ULL)
+        bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL;
+    return bytes;
+}
+
+void vcpm_gen_reset(vcpm_generate_state *state) {
+    if (!state)
+        return;
+    for (int i = 0; i < state->n_base_layers; i++)
+        state->base_kv_cache[i].n_used = 0;
+    for (int i = 0; i < state->res_n_layers; i++)
+        state->ralm_kv_cache[i].n_used = 0;
+    int patch_size =
+        state->model && state->model->config.patch_size > 0
+            ? state->model->config.patch_size
+            : 1;
+    if (state->prev_patch && state->enc_feat_dim > 0)
+        memset(state->prev_patch, 0,
+               (size_t)state->enc_feat_dim * (size_t)patch_size *
+                   sizeof(float));
+    if (state->lm_hidden_state && state->hidden_size > 0)
+        memset(state->lm_hidden_state, 0,
+               (size_t)state->hidden_size * sizeof(float));
+    if (state->residual_hidden_state && state->res_hidden_size > 0)
+        memset(state->residual_hidden_state, 0,
+               (size_t)state->res_hidden_size * sizeof(float));
+    if (state->last_lm_hidden && state->hidden_size > 0)
+        memset(state->last_lm_hidden, 0,
+               (size_t)state->hidden_size * sizeof(float));
+    state->conditioning_latent_data = NULL;
+    state->n_conditioning_patches = 0;
+    state->conditioning_patch_size = 0;
+    state->conditioning_feat_dim = 0;
+    state->seq_len = 0;
+    state->ar_step_counter = 0;
+}
+
+vcpm_generate_state *vcpm_gen_init_ex(
+    const struct vcpm_model *model, int backend_type, int n_threads,
+    size_t step_mem, int cache_capacity) {
     if (!model) return NULL;
 
     vcpm_generate_state * s = (vcpm_generate_state *)calloc(1, sizeof(vcpm_generate_state));
@@ -163,7 +256,15 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     s->head_dim           = cfg->head_dim;
     s->intermediate_size  = cfg->intermediate_size;
     s->rms_norm_eps       = cfg->rms_norm_eps;
-    s->max_seq_len        = cfg->max_seq_len;
+    if (cache_capacity <= 0)
+        cache_capacity = cfg->max_seq_len;
+    if (cache_capacity > cfg->max_seq_len) {
+        vcpm_backend_free(&s->backend);
+        free(s);
+        return NULL;
+    }
+    s->max_seq_len        = cache_capacity;
+    s->cache_capacity     = cache_capacity;
     s->vocab_size         = cfg->vocab_size;
     s->rope_theta         = cfg->rope_theta;
     s->scale_depth        = cfg->scale_depth;
@@ -395,19 +496,17 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     }
 
     if (vcpm_debug_env()) fprintf(stderr, "VCPM_DEBUG: AudioVAE config done, creating KV ctx\n");
-    /* Create kv_ctx for long-lived KV cache tensors.
-     * Base LM: 28 * 2 * 128 * 2 * 32768 * 4 = ~1.79 GiB
-     * RALM: 8 * 2 * 128 * 4 * 32768 * 4 = ~1.0 GiB
-     * Total: ~2.79 GiB. Add 256 MB overhead. */
-    size_t kv_mem_base =
-        (size_t)s->n_base_layers * 2 *
-        (size_t)s->head_dim * (size_t)s->n_base_kv_heads * (size_t)s->max_seq_len *
-        sizeof(float);
-    size_t kv_mem_ralm =
-        (size_t)s->res_n_layers * 2 *
-        (size_t)s->head_dim * (size_t)s->res_n_kv_heads * (size_t)s->max_seq_len *
-        sizeof(float);
-    size_t kv_mem = kv_mem_base + kv_mem_ralm + 256ULL * 1024 * 1024;
+    /* Create kv_ctx for long-lived KV tensors at the request-sized cache
+     * capacity. Four MiB covers tensor metadata and alignment. */
+    size_t kv_data_bytes = vcpm_gen_kv_data_bytes(
+        s->n_base_layers, s->res_n_layers, s->head_dim,
+        s->n_base_kv_heads, s->res_n_kv_heads, s->max_seq_len);
+    if (kv_data_bytes == 0) {
+        vcpm_backend_free(&s->backend);
+        free(s);
+        return NULL;
+    }
+    size_t kv_mem = kv_data_bytes + 4ULL * 1024 * 1024;
 
     struct ggml_init_params kv_params = {
         .mem_size   = kv_mem,
@@ -418,8 +517,10 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     if (!s->kv_ctx) { free(s); return NULL; }
     s->backend.kv_cache_ctx = s->kv_ctx;
 
-    size_t step_mem_actual = 256ULL * 1024 * 1024;
+    size_t step_mem_actual =
+        step_mem > 0 ? step_mem : 256ULL * 1024 * 1024;
     s->step_mem_size = step_mem_actual;
+    s->persistent_bytes = kv_mem + step_mem_actual;
 
     struct ggml_init_params params = {
         .mem_size   = step_mem_actual,
@@ -504,6 +605,14 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
 
     s->seq_len = 0;
     return s;
+}
+
+vcpm_generate_state *vcpm_gen_init(const struct vcpm_model *model,
+                                   int backend_type, int n_threads,
+                                   size_t step_mem) {
+    return vcpm_gen_init_ex(
+        model, backend_type, n_threads, step_mem,
+        model ? model->config.max_seq_len : 0);
 }
 
 void vcpm_gen_free(vcpm_generate_state * state) {
