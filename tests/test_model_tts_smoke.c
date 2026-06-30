@@ -147,8 +147,23 @@ int main(int argc, char ** argv) {
     assert(cap.stats.peak < 1.5f);
     assert(cap.stats.rms > 0.001);
     assert(cap.stats.clip_count == 0);
-    for (size_t i = 0; i < expected_samples; i++)
-        assert(fabsf(cap.samples[i] - expected_audio[i]) < 1e-6f);
+    float max_stream_diff = 0.0f;
+    size_t max_stream_diff_index = 0;
+    for (size_t i = 0; i < expected_samples; i++) {
+        float diff = fabsf(cap.samples[i] - expected_audio[i]);
+        if (diff > max_stream_diff) {
+            max_stream_diff = diff;
+            max_stream_diff_index = i;
+        }
+    }
+    if (max_stream_diff >= 1e-6f) {
+        fprintf(stderr,
+                "stream parity: max_diff=%g at sample=%zu batch=%g stream=%g\n",
+                max_stream_diff, max_stream_diff_index,
+                expected_audio[max_stream_diff_index],
+                cap.samples[max_stream_diff_index]);
+    }
+    assert(max_stream_diff < 1e-6f);
     printf("PASS: model stream smoke (%zu samples, %d Hz)\n",
            cap.n_samples, cap.sample_rate);
     free(cap.samples);

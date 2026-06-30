@@ -129,11 +129,15 @@ vcpm_generate_state * vcpm_gen_init(const struct vcpm_model * model,
     s->backend_initialized = 1;
     fprintf(stderr, "vcpm_gen_init: backend=%s\n", vcpm_backend_type_name(&s->backend));
 
-    /* Create F32 copies of norm/bias/scale/offset tensors before offload.
-     * This avoids ggml_cast from Q8_0/F16 → F32 on backends (CUDA) that
-     * do not support it. */
-    if (!ggml_backend_is_cpu(s->backend.backend)) {
-        vcpm_model_ensure_f32((struct vcpm_model *)model);
+    /* Create one shared CPU-accessible F32 copy of AudioVAE and scalar
+     * tensors before resolving weights or offloading. Batch and streaming
+     * VAE decoding must use the same weights, and keeping the copies on the
+     * model avoids rebuilding hundreds of megabytes in every graph arena. */
+    if (vcpm_model_ensure_f32((struct vcpm_model *)model) != 0) {
+        fprintf(stderr, "error: failed to create shared F32 model tensors\n");
+        vcpm_backend_free(&s->backend);
+        free(s);
+        return NULL;
     }
 
     /* Pre-copy weight tensors to GPU device memory for non-CPU backends.

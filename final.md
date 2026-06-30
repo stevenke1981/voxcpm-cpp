@@ -137,6 +137,8 @@ voxcpm-c/
 - Upstream Python parity fixtures for tokenizer, sequence, Base LM, LocEnc/FSQ/RALM, LocDiT/CFM, and AudioVAE are still required before declaring semantic parity.
 - TTS currently passes objective WAV sanity only; intelligibility/voice quality still needs listening review and fixture parity.
 - Reference cloning is not implemented beyond the CLI safety gate.
-- Streaming currently recomputes the complete causal VAE prefix per patch;
-  per-layer convolution-state caching remains a performance optimization.
+- Streaming keeps causal history for all 20 temporal convolutions and the
+  preceding input timestep for all six transposed convolutions. Each callback
+  decodes only the new patch, while the F16 integration gate keeps concatenated
+  PCM within `1e-6` of the batch decoder.
 - Generation memory uses a large 6 GiB arena; long-form output still needs graph allocator reuse and memory growth tests.

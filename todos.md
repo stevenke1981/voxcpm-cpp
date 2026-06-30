@@ -190,8 +190,10 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
 
 - [x] True chunked callback streaming：每個 AR patch 生成後回呼 160 ms PCM，
   串接結果與 non-stream decode 在 `1e-6` 內逐 sample 等價。
-- [ ] 將 correctness-first 完整 causal-prefix VAE 重算優化成逐層 convolution state，
-  降低長音訊的二次計算量。
+- [x] AudioVAE streaming 改為逐層 convolution state：model.0/model.9 與
+  18 個 dilated residual conv 保存 causal history，6 個 transposed conv 保存
+  前一 timestep；每個 callback 只建立固定新 patch graph，移除長音訊 O(n²)
+  prefix decode。
 - [ ] `design` CLI (voice design with control prefix).
 - [ ] `batch` CLI (batch generation from text file).
 - [ ] Sidecar JSON metadata for AI-generated content labeling.
@@ -254,13 +256,13 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
 2. **完整 recurrence acceptance runner** — 保留 per-AR fixture noise，
    逐步記錄 trajectory 與 next-state cosine，避免只看最終 WAV。
 
-### P1 (下一階段)
-3. **Streaming decoder 效能** — 多 callback 與 non-streaming PCM 等價已完成；
-   下一步以逐層 causal-conv state 取代完整 prefix 重算。
+### P1 (已完成)
+3. **Streaming decoder 效能** — 多 callback 與 non-streaming PCM 等價；
+   per-layer causal-conv/upconv state 已移除每 patch 完整 prefix 重算。
 
 ### P2
 4. **選配：轉換並實作 ModelScope ZipEnhancer 神經網路 backend**。
-5. **VAE streaming decoder state parity**。
+5. **[DONE] VAE streaming decoder state parity**。
 
 ### P3
 6. **CI matrix** (Linux/macOS/MinGW)。

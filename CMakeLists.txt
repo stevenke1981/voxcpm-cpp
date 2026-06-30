@@ -90,6 +90,7 @@ add_library(voxcpm STATIC
     src/audio_vae_v2.c
     src/audio_vae_v2_encoder.c
     src/audio_vae_v2_decoder.c
+    src/audio_vae_stream.c
     src/clone_audio.c
     src/denoiser.c
     src/text_control.c
@@ -223,6 +224,12 @@ if(VCPM_BUILD_TESTS)
     target_link_libraries(test_vae_layout PRIVATE voxcpm)
     add_test(NAME vae_layout COMMAND test_vae_layout)
     set_tests_properties(vae_layout PROPERTIES LABELS "unit")
+
+    add_executable(test_vae_stream_state tests/test_vae_stream_state.c)
+    target_include_directories(test_vae_stream_state PRIVATE ${VCPM_TEST_PRIVATE_INCLUDES})
+    target_link_libraries(test_vae_stream_state PRIVATE voxcpm)
+    add_test(NAME vae_stream_state COMMAND test_vae_stream_state)
+    set_tests_properties(vae_stream_state PROPERTIES LABELS "unit")
 
     add_executable(test_minicpm4 tests/test_minicpm4.c)
     target_include_directories(test_minicpm4 PRIVATE

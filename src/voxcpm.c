@@ -6,6 +6,7 @@
 #include "clone_audio.h"
 #include "text_control.h"
 #include "audio_vae_v2.h"
+#include "audio_vae_stream.h"
 #include "denoiser.h"
 #include "debug_dump.h"
 
@@ -240,9 +241,10 @@ vcpm_context *vcpm_load_model(const char *gguf_path, const vcpm_model_params *pa
 typedef struct vcpm_stream_decode_state {
     vcpm_stream_cb callback;
     void *user_data;
-    float *decoded_prefix;
+    vcpm_vae_stream_state *decoder;
+    float *decoded_chunk;
     size_t capacity;
-    size_t emitted_samples;
+    int decoded_patches;
     int sample_rate;
     int callback_failed;
 } vcpm_stream_decode_state;
@@ -260,53 +262,34 @@ static vcpm_status vcpm_decode_stream_prefix(
         state->model && state->model->config.patch_size > 0
             ? state->model->config.patch_size
             : 1;
-    int upsample = 1;
-    for (int i = 0; i < VCPM_VAE_V2_N_DECODER_BLOCKS; i++) {
-        int stride = state->vae_v2_cfg.decoder_rates[i];
-        if (stride <= 0 || upsample > INT_MAX / stride)
-            return VCPM_ERR_MODEL_FORMAT;
-        upsample *= stride;
-    }
-    size_t required =
-        (size_t)n_patches * (size_t)patch_size * (size_t)upsample;
-    size_t max_stream_samples = (size_t)stream->sample_rate * 30U;
-    if (required > max_stream_samples)
-        required = max_stream_samples;
-    if (required <= stream->emitted_samples)
-        return VCPM_OK;
-
-    if (required > stream->capacity) {
-        float *next =
-            (float *)realloc(stream->decoded_prefix,
-                             required * sizeof(float));
-        if (!next)
-            return VCPM_ERR_OOM;
-        stream->decoded_prefix = next;
-        stream->capacity = required;
-    }
-
-    int decoded_samples = 0;
-    vcpm_status status = vcpm_gen_decode(
-        state, latent_prefix, n_patches, stream->decoded_prefix,
-        (int)required, &decoded_samples);
-    if (status != VCPM_OK)
-        return status;
-    if (decoded_samples < 0 ||
-        (size_t)decoded_samples < stream->emitted_samples)
+    int latent_dim = state->vae_v2_cfg.latent_dim;
+    if (!stream->decoder || !stream->decoded_chunk ||
+        latent_dim <= 0 || n_patches != stream->decoded_patches + 1)
         return VCPM_ERR_BACKEND;
 
-    size_t new_samples =
-        (size_t)decoded_samples - stream->emitted_samples;
-    if (new_samples > 0) {
-        int callback_status = stream->callback(
-            stream->decoded_prefix + stream->emitted_samples,
-            new_samples, stream->sample_rate, stream->user_data);
-        if (callback_status != 0) {
-            stream->callback_failed = 1;
-            return VCPM_ERR_BACKEND;
-        }
-        stream->emitted_samples = (size_t)decoded_samples;
+    int decoded_samples = 0;
+    size_t patch_elements =
+        (size_t)patch_size * (size_t)latent_dim;
+    const float *new_patch =
+        latent_prefix + (size_t)(n_patches - 1) * patch_elements;
+    vcpm_status status = vcpm_vae_stream_decode(
+        stream->decoder, new_patch, patch_size,
+        stream->decoded_chunk, (int)stream->capacity,
+        &decoded_samples);
+    if (status != VCPM_OK)
+        return status;
+    if (decoded_samples <= 0 ||
+        (size_t)decoded_samples > stream->capacity)
+        return VCPM_ERR_BACKEND;
+
+    int callback_status = stream->callback(
+        stream->decoded_chunk, (size_t)decoded_samples,
+        stream->sample_rate, stream->user_data);
+    if (callback_status != 0) {
+        stream->callback_failed = 1;
+        return VCPM_ERR_BACKEND;
     }
+    stream->decoded_patches = n_patches;
     return VCPM_OK;
 }
 
@@ -535,6 +518,33 @@ static vcpm_status vcpm_generate_impl(
     stream_state.callback = stream_cb;
     stream_state.user_data = stream_user_data;
     stream_state.sample_rate = output_sample_rate;
+    if (stream_cb) {
+        stream_state.decoder = vcpm_vae_stream_create(
+            gen_state->model, &gen_state->vae_v2_cfg, patch_size);
+        if (!stream_state.decoder) {
+            free(latent_buffer);
+            free(conditioning_latents);
+            gen_state->conditioning_latent_data = NULL;
+            vcpm_gen_free(gen_state);
+            vcpm_set_error(ctx, "failed to initialize streaming VAE state");
+            return VCPM_ERR_OOM;
+        }
+        stream_state.capacity =
+            (size_t)vcpm_vae_stream_patch_samples(
+                stream_state.decoder);
+        stream_state.decoded_chunk = (float *)malloc(
+            stream_state.capacity * sizeof(float));
+        if (!stream_state.decoded_chunk) {
+            vcpm_vae_stream_free(stream_state.decoder);
+            free(latent_buffer);
+            free(conditioning_latents);
+            gen_state->conditioning_latent_data = NULL;
+            vcpm_gen_free(gen_state);
+            vcpm_set_error(
+                ctx, "out of memory for streaming VAE output");
+            return VCPM_ERR_OOM;
+        }
+    }
 
     int n_patches = 0;
     vcpm_status st;
@@ -552,7 +562,8 @@ static vcpm_status vcpm_generate_impl(
     free(conditioning_latents);
     gen_state->conditioning_latent_data = NULL;
     if (st != VCPM_OK) {
-        free(stream_state.decoded_prefix);
+        free(stream_state.decoded_chunk);
+        vcpm_vae_stream_free(stream_state.decoder);
         free(latent_buffer);
         vcpm_gen_free(gen_state);
         vcpm_set_error(
@@ -562,7 +573,8 @@ static vcpm_status vcpm_generate_impl(
         return st;
     }
     if (n_patches <= 0) {
-        free(stream_state.decoded_prefix);
+        free(stream_state.decoded_chunk);
+        vcpm_vae_stream_free(stream_state.decoder);
         free(latent_buffer);
         vcpm_gen_free(gen_state);
         vcpm_set_error(ctx, "generation produced no latent patches");
@@ -570,7 +582,8 @@ static vcpm_status vcpm_generate_impl(
     }
 
     if (stream_cb) {
-        free(stream_state.decoded_prefix);
+        free(stream_state.decoded_chunk);
+        vcpm_vae_stream_free(stream_state.decoder);
         free(latent_buffer);
         vcpm_gen_free(gen_state);
         return VCPM_OK;

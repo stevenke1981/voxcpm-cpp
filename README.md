@@ -138,8 +138,10 @@ Current verified baseline:
 - `VCPM_MODEL=models/voxcpm2-f16.gguf` registers and passes `vae_only` plus `model_tts_smoke`.
 - A 10-step TTS smoke writes 48 kHz mono WAV with non-zero finite samples.
 - `--control` 已接入 TSLM tokenizer prefix，並透過 FSQ/fusion 間接影響 RALM；語意、參數責任與試聽數據見 [`docs/tslm-ralm-control.md`](docs/tslm-ralm-control.md)。
-- `stream` 會在每個 AR latent patch 生成後回呼一次；預設每塊為 7680 samples／160 ms，串接 PCM 與一次性 causal VAE decode 等價。
-- 目前以完整 causal prefix 重算換取正確性與無限歷史；逐層 convolution-state cache 是後續效能優化。
+- `stream` 會在每個 AR latent patch 生成後回呼一次；預設每塊為 7680 samples／160 ms。
+  AudioVAE 保存 20 組 causal-conv history 與 6 組 transposed-conv 前一步輸入，
+  每次只解碼新 patch，不再重算完整 latent prefix；串接 PCM 與一次性 decode
+  在 F16 model gate 的逐 sample `1e-6` 容差內等價。
 - Incomplete/mock GGUFs fail `tts` with a missing tensor diagnostic instead of dummy audio.
 - `clone` 與 C API 已支援 reference-only、prompt-only continuation、combined 三種 Python-compatible conditioning 模式；所有模式都要求明確 consent。
 - Prompt 模式會以 `prompt_text + target_text` 單次 tokenize，reference WAV 右補零、prompt WAV 左補零；完整語意與驗證結果見 [`docs/voice-clone-python-parity-2026-06-29.md`](docs/voice-clone-python-parity-2026-06-29.md)。

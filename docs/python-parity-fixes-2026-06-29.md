@@ -391,7 +391,9 @@ faster-whisper large-v3-turbo CUDA = 你好,这是测试
   這不是 C-only defect，不能用 CUDA 終態 bit-exact 當 CPU runtime 的完成條件。
 - production Gaussian PRNG 不與 PyTorch bit-exact；數值 parity 應繼續使用已匯出的
   per-AR fixture noise。
-- streaming 語義已完成；逐層 convolution-state cache 仍是長音訊效能工作。
+- streaming 語義與效能均已完成：20 組 causal-conv history 加上 6 組
+  transposed-conv 前一步輸入讓每次只解碼新 patch；F16 batch/stream PCM
+  維持逐 sample `1e-6` gate。
 
 ## 17. 三模式語音 Clone 對齊
 
