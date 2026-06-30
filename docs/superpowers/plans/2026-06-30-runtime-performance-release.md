@@ -4,7 +4,7 @@
 
 **Goal:** Finish the remaining non-GUI performance, memory, backend, converter, CI, and licensing work in five independently verified commits.
 
-**Architecture:** Add a stateful causal AudioVAE decoder beside the batch reference, reuse resettable generation/KV resources from the public context, and turn backend/converter assumptions into executable validation gates. Licensing remains an owner decision.
+**Architecture:** Add a stateful causal AudioVAE decoder beside the batch reference, reuse resettable generation/KV resources from the public context, and turn backend/converter assumptions into executable validation gates. The repository owner selected Apache-2.0 for original project code.
 
 **Tech Stack:** C11, ggml, CMake/CTest, Python 3 converter tests, PowerShell benchmark tooling, GitHub Actions.
 
@@ -92,8 +92,8 @@
 - Modify: `THIRD_PARTY_NOTICES.md`
 - Modify: `final.md`
 
-- [ ] Search history and owner-authored metadata for an explicit license choice.
-- [ ] If no choice exists, stop and request one owner decision.
-- [ ] Add the exact selected license text and documentation references.
-- [ ] Run repository-hygiene and packaging checks.
-- [ ] Inspect the diff, commit, and push.
+- [x] Search history and owner-authored metadata for an explicit license choice.
+- [x] If no choice exists, stop and request one owner decision.
+- [x] Add the exact selected license text and documentation references.
+- [x] Run repository-hygiene and packaging checks.
+- [x] Inspect the diff, commit, and push.

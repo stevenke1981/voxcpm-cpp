@@ -160,9 +160,10 @@ where the ZIP is written.
 
 - [ ] **Step 2: Correct stale status**
 
-Mark VAE encoder fixture parity and stop predictor parity complete. Record that
-project-level license selection remains an owner decision; third-party notices
-are included without silently relicensing original code.
+Mark VAE encoder fixture parity and stop predictor parity complete. Third-party
+notices are included without altering their licenses. The repository owner
+subsequently selected Apache-2.0 for original project code in the runtime
+performance/release plan.
 
 ### Task 5: Verify a clean checkout and publish the stage
 

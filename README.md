@@ -107,10 +107,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 
   -Clean -Model .\voxcpm2_f16.gguf
 ```
 
-package 僅包含 `voxcpm-c.exe`、`voxcpm.lib`、public header 與使用／第三方
-授權文件；不包含 GGUF、WAV、fixture 或 debug dump。第三方來源與授權見
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。本專案自身採用何種
-license 仍需由 repository owner 決定。
+package 僅包含 `voxcpm-c.exe`、`voxcpm.lib`、public header、`LICENSE`
+與使用／第三方授權文件；不包含 GGUF、WAV、fixture 或 debug dump。
 
 ## CLI 使用方式
 
@@ -167,3 +165,11 @@ Current verified baseline:
 - 生成音訊可能不準確、帶有偏差或被濫用，不應冒充真人或作為身分驗證。
 - Release package 不含模型；使用者必須遵守下載模型所附的授權與使用條款。
 - callback 的 samples 僅在呼叫期間有效；回傳非 0 會立即取消後續生成。
+
+## License
+
+本專案原始程式碼採用
+[Apache License 2.0](LICENSE)。第三方程式碼、依賴與模型權重仍各自適用其
+原始授權；詳見
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。Release package
+會一併包含完整 `LICENSE`。

@@ -24,8 +24,9 @@ ggml is resolved by CMake, normally through `FetchContent`, and is not copied
 into this repository's source tree. The license shipped by the resolved ggml
 revision is authoritative.
 
-## Project License Status
+## Project License
 
-This notice records third-party licensing only. It does not select or change the
-license for original `voxcpm-cpp` code; that project-level licensing decision
-must be made by the repository owner.
+Original `voxcpm-cpp` code is licensed under the Apache License 2.0. The full
+project license is distributed in [`LICENSE`](LICENSE). This notice does not
+replace or modify that license, and the third-party components listed above
+remain governed by their respective licenses.

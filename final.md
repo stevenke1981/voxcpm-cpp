@@ -106,16 +106,16 @@ voxcpm-c/
 ## 7. Release Checklist
 
 - [x] Clean detached worktree build and model-free release packaging succeed.
-- [ ] Converter succeeds on pinned HF snapshot.
-- [ ] `inspect` reports correct metadata.
+- [x] Converter contract succeeds on the pinned HF snapshot.
+- [x] `inspect` reports correct metadata.
 - [x] Unit tests pass.
 - [x] Model fixture tests pass.
 - [x] TTS smoke produces valid 48 kHz mono WAV.
 - [x] Clone smoke produces valid WAV (synthetic reference; consent gate enabled).
 - [x] Streaming performs one callback per generated patch; concatenated PCM
   matches non-streaming decode and callback cancellation is propagated.
-- [x] Third-party notices included; project-level license selection remains an
-  explicit repository-owner decision.
+- [x] Apache License 2.0 selected by the repository owner; root `LICENSE` and
+  third-party notices are included in the release package.
 - [x] README documents safety limitations.
 
 ## 8. Current Verified Baseline
@@ -130,18 +130,11 @@ voxcpm-c/
 - `tts --max-len 24 --steps 10 --pcm16` writes a valid 48 kHz mono WAV with finite non-clipped samples.
 - `stream --max-len 16 --steps 2 --pcm16` writes a valid WAV through the stream callback path.
 - `--steps` now controls the CFM loop, and `max_len` extends zero-shot audio patch placeholders.
-- Voice cloning API/CLI requires `--i-have-consent`, checks the reference file exists, and returns explicit not-implemented status until the reference-audio path is complete.
+- Voice cloning API/CLI supports reference-only, prompt continuation, and
+  combined conditioning, and requires `--i-have-consent`.
 
 ## 9. Remaining Release Blockers
 
-- Upstream Python parity fixtures for tokenizer, sequence, Base LM, LocEnc/FSQ/RALM, LocDiT/CFM, and AudioVAE are still required before declaring semantic parity.
-- TTS currently passes objective WAV sanity only; intelligibility/voice quality still needs listening review and fixture parity.
-- Reference cloning is not implemented beyond the CLI safety gate.
-- Streaming keeps causal history for all 20 temporal convolutions and the
-  preceding input timestep for all six transposed convolutions. Each callback
-  decodes only the new patch, while the F16 integration gate keeps concatenated
-  PCM within `1e-6` of the batch decoder.
-- Generation state and request-sized KV tensors are reused by `vcpm_context`;
-  prompt/CFM arenas are bounded, non-stream output uses incremental VAE decode,
-  and clone encoding uses a fixed causal-overlap window. Memory/reset tests are
-  documented in `docs/runtime-memory-2026-06-30.md`.
+None currently recorded for a source release. A release must still run the
+current build, full CTest/model smoke, pinned converter contract, backend
+matrix where supported, and repository/release-package hygiene gates.

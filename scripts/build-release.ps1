@@ -126,7 +126,12 @@ New-Item -ItemType Directory -Path $includeDir -Force | Out-Null
 Copy-Item -LiteralPath $exe.FullName -Destination (Join-Path $packageRoot 'voxcpm-c.exe')
 Copy-Item -LiteralPath $library.FullName -Destination (Join-Path $packageRoot 'voxcpm.lib')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'include\voxcpm.h') -Destination $includeDir
-foreach ($document in @('README.md', 'c_api.md', 'THIRD_PARTY_NOTICES.md')) {
+foreach ($document in @(
+    'LICENSE',
+    'README.md',
+    'c_api.md',
+    'THIRD_PARTY_NOTICES.md'
+)) {
     Copy-Item -LiteralPath (Join-Path $repoRoot $document) -Destination $packageRoot
 }
 

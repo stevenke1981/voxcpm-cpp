@@ -20,12 +20,32 @@ if ($trackedBuildFiles.Count -ne 0) {
 }
 
 foreach ($required in @(
+    'LICENSE',
     'THIRD_PARTY_NOTICES.md',
     'scripts/build-release.ps1'
 )) {
     if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $required))) {
         throw "missing release artifact: $required"
     }
+}
+
+$licensePath = Join-Path $repoRoot 'LICENSE'
+$licenseText = Get-Content -LiteralPath $licensePath -Raw
+foreach ($marker in @(
+    'Apache License',
+    'Version 2.0, January 2004',
+    'http://www.apache.org/licenses/',
+    'END OF TERMS AND CONDITIONS'
+)) {
+    if (-not $licenseText.Contains($marker)) {
+        throw "LICENSE is not the complete Apache License 2.0 text: missing '$marker'"
+    }
+}
+
+$releaseScript = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'scripts\build-release.ps1') -Raw
+if ($releaseScript -notmatch "'LICENSE'") {
+    throw 'release package does not include LICENSE'
 }
 
 foreach ($generatedPath in @(
