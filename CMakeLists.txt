@@ -237,6 +237,17 @@ if(VCPM_BUILD_TESTS)
     add_test(NAME generation_memory COMMAND test_generation_memory)
     set_tests_properties(generation_memory PROPERTIES LABELS "unit")
 
+    if(WIN32)
+        find_program(POWERSHELL_EXECUTABLE NAMES pwsh powershell)
+        if(POWERSHELL_EXECUTABLE)
+            add_test(
+                NAME backend_matrix_report
+                COMMAND ${POWERSHELL_EXECUTABLE} -NoProfile -ExecutionPolicy Bypass
+                        -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_backend_matrix_report.ps1")
+            set_tests_properties(backend_matrix_report PROPERTIES LABELS "unit")
+        endif()
+    endif()
+
     add_executable(test_minicpm4 tests/test_minicpm4.c)
     target_include_directories(test_minicpm4 PRIVATE
         ${VCPM_TEST_PRIVATE_INCLUDES}

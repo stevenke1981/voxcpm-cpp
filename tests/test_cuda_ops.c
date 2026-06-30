@@ -415,6 +415,7 @@ static void test_attention(void) {
     const int n_heads = 4;
     const int n_kv_heads = 2;
     const int head_dim = 4;  /* hidden_size / n_heads = 4 */
+    const int kv_size = n_kv_heads * head_dim;
     const int n_tokens = 3;
     const int pos = 0;
 
@@ -439,8 +440,8 @@ static void test_attention(void) {
 
     /* Allocate on heap to avoid stack overflow */
     float * q_w = (float *)calloc((size_t)hidden_size * hidden_size, sizeof(float));
-    float * k_w = (float *)calloc((size_t)hidden_size * hidden_size, sizeof(float));
-    float * v_w = (float *)calloc((size_t)hidden_size * hidden_size, sizeof(float));
+    float * k_w = (float *)calloc((size_t)hidden_size * kv_size, sizeof(float));
+    float * v_w = (float *)calloc((size_t)hidden_size * kv_size, sizeof(float));
     float * o_w = (float *)calloc((size_t)hidden_size * hidden_size, sizeof(float));
 
     if (!q_w || !k_w || !v_w || !o_w) {
@@ -453,9 +454,11 @@ static void test_attention(void) {
     /* Identity-like: diagonal of 1.0 */
     for (int i = 0; i < hidden_size; i++) {
         q_w[i * hidden_size + i] = 1.0f;
+        o_w[i * hidden_size + i] = 1.0f;
+    }
+    for (int i = 0; i < kv_size; i++) {
         k_w[i * hidden_size + i] = 1.0f;
         v_w[i * hidden_size + i] = 0.5f;  /* half-scale to keep values small */
-        o_w[i * hidden_size + i] = 1.0f;
     }
 
     /* Build attention graph for CPU */
@@ -472,10 +475,10 @@ static void test_attention(void) {
 
     struct ggml_tensor * q_w_t = ggml_new_tensor_2d(cpu_ctx, GGML_TYPE_F32, hidden_size, hidden_size);
     memcpy(q_w_t->data, q_w, (size_t)hidden_size * hidden_size * sizeof(float));
-    struct ggml_tensor * k_w_t = ggml_new_tensor_2d(cpu_ctx, GGML_TYPE_F32, hidden_size, hidden_size);
-    memcpy(k_w_t->data, k_w, (size_t)hidden_size * hidden_size * sizeof(float));
-    struct ggml_tensor * v_w_t = ggml_new_tensor_2d(cpu_ctx, GGML_TYPE_F32, hidden_size, hidden_size);
-    memcpy(v_w_t->data, v_w, (size_t)hidden_size * hidden_size * sizeof(float));
+    struct ggml_tensor * k_w_t = ggml_new_tensor_2d(cpu_ctx, GGML_TYPE_F32, hidden_size, kv_size);
+    memcpy(k_w_t->data, k_w, (size_t)hidden_size * kv_size * sizeof(float));
+    struct ggml_tensor * v_w_t = ggml_new_tensor_2d(cpu_ctx, GGML_TYPE_F32, hidden_size, kv_size);
+    memcpy(v_w_t->data, v_w, (size_t)hidden_size * kv_size * sizeof(float));
     struct ggml_tensor * o_w_t = ggml_new_tensor_2d(cpu_ctx, GGML_TYPE_F32, hidden_size, hidden_size);
     memcpy(o_w_t->data, o_w, (size_t)hidden_size * hidden_size * sizeof(float));
 
@@ -511,10 +514,10 @@ static void test_attention(void) {
     memcpy(x_cu->data, input, input_nbytes);
     struct ggml_tensor * q_w_cu = ggml_new_tensor_2d(cuda_ctx, GGML_TYPE_F32, hidden_size, hidden_size);
     memcpy(q_w_cu->data, q_w, (size_t)hidden_size * hidden_size * sizeof(float));
-    struct ggml_tensor * k_w_cu = ggml_new_tensor_2d(cuda_ctx, GGML_TYPE_F32, hidden_size, hidden_size);
-    memcpy(k_w_cu->data, k_w, (size_t)hidden_size * hidden_size * sizeof(float));
-    struct ggml_tensor * v_w_cu = ggml_new_tensor_2d(cuda_ctx, GGML_TYPE_F32, hidden_size, hidden_size);
-    memcpy(v_w_cu->data, v_w, (size_t)hidden_size * hidden_size * sizeof(float));
+    struct ggml_tensor * k_w_cu = ggml_new_tensor_2d(cuda_ctx, GGML_TYPE_F32, hidden_size, kv_size);
+    memcpy(k_w_cu->data, k_w, (size_t)hidden_size * kv_size * sizeof(float));
+    struct ggml_tensor * v_w_cu = ggml_new_tensor_2d(cuda_ctx, GGML_TYPE_F32, hidden_size, kv_size);
+    memcpy(v_w_cu->data, v_w, (size_t)hidden_size * kv_size * sizeof(float));
     struct ggml_tensor * o_w_cu = ggml_new_tensor_2d(cuda_ctx, GGML_TYPE_F32, hidden_size, hidden_size);
     memcpy(o_w_cu->data, o_w, (size_t)hidden_size * hidden_size * sizeof(float));
 

@@ -1,6 +1,6 @@
 # CI workflow for VoxCPM-C
-# Builds and tests on Ubuntu, Windows, and macOS.
-# Supports CPU backend only (CUDA/Metal/Vulkan require additional setup).
+# Builds and tests on Ubuntu, Windows (MSVC and MinGW), and macOS.
+# CUDA/Metal/Vulkan require separate hardware validation.
 name: CI
 
 on:
@@ -59,6 +59,44 @@ jobs:
             build/*/voxcpm-c*
             build/*/voxcpm.*
           retention-days: 7
+
+  mingw:
+    name: windows-2022 (MinGW-w64)
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install MinGW-w64 toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Configure CMake
+        shell: msys2 {0}
+        run: >
+          cmake -S . -B build-mingw -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DVCPM_BUILD_TESTS=ON
+          -DVCPM_GGML_FETCH=ON
+          -DCMAKE_C_COMPILER=gcc
+          -DCMAKE_CXX_COMPILER=g++
+
+      - name: Build
+        shell: msys2 {0}
+        run: cmake --build build-mingw -j 4
+
+      - name: Run unit tests
+        shell: msys2 {0}
+        run: ctest --test-dir build-mingw --output-on-failure -L unit
 
   # Integration tests with model fixture (Ubuntu only, needs GGUF download)
   integration-test:

@@ -53,17 +53,17 @@
 
 **Files:**
 - Create: `scripts/validate-backend-matrix.ps1`
-- Create: `tests/test_backend_report.ps1`
+- Create: `tests/test_backend_matrix_report.ps1`
 - Modify: `.github/workflows/ci.yml`
 - Modify: `README.md`
 - Modify: `todos.md`
 
-- [ ] Write a failing report-schema test.
-- [ ] Implement CPU/CUDA F16/Q8 validation and RTF reporting.
-- [ ] Run the available local matrix and record unsupported combinations honestly.
-- [ ] Add a MinGW configure/build/unit-test job.
-- [ ] Run workflow syntax/static checks and local regression tests.
-- [ ] Update documentation, inspect the diff, commit, and push.
+- [x] Write a failing report-schema test.
+- [x] Implement CPU/CUDA F16/Q8 validation and RTF reporting.
+- [x] Run the available local matrix and record unsupported combinations honestly.
+- [x] Add a MinGW configure/build/unit-test job.
+- [x] Run workflow syntax/static checks and local regression tests.
+- [x] Update documentation, inspect the diff, commit, and push.
 
 ### Task 4: Pinned converter and GGUF contract automation
 

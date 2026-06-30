@@ -139,8 +139,15 @@ struct ggml_tensor * vcpm_rms_norm(struct ggml_context * ctx,
     minicpm_debug_tensor_shape("minicpm.rms.x", x);
     minicpm_debug_tensor_shape("minicpm.rms.y", y);
     minicpm_debug_tensor_shape("minicpm.rms.weight", weight);
-    /* Multiply by weight (cast to f32 if quantized) */
-    y = ggml_mul(ctx, y, ggml_cast(ctx, weight, GGML_TYPE_F32));
+    /* Runtime scale tensors are normally materialized as F32 even when the
+     * source GGUF is quantized. Avoid a redundant CPY/CAST node for that path;
+     * in particular, this keeps Q8 CUDA RMSNorm on the native F32 multiply
+     * kernel. Retain the fallback for direct callers with non-F32 weights. */
+    struct ggml_tensor * scale = weight;
+    if (weight->type != GGML_TYPE_F32) {
+        scale = ggml_cast(ctx, weight, GGML_TYPE_F32);
+    }
+    y = ggml_mul(ctx, y, scale);
     return minicpm_bf16_round(ctx, y);
 }
 

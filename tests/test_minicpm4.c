@@ -134,6 +134,19 @@ static void test_rms_norm(void) {
     struct ggml_tensor * y = vcpm_rms_norm(ctx, x, weight, 1e-6f);
     ggml_build_forward_expand(graph, y);
 
+    /* F32 scale tensors are the canonical runtime representation, including
+     * for Q8 models.  Do not insert a redundant CAST node: CUDA used to route
+     * this through a backend-dependent cast kernel. */
+    int casts_f32_weight = 0;
+    for (int i = 0; i < ggml_graph_n_nodes(graph); i++) {
+        struct ggml_tensor * node = ggml_graph_node(graph, i);
+        if (node->op == GGML_OP_CPY && node->src[0] == weight) {
+            casts_f32_weight++;
+        }
+    }
+    TEST_ASSERT(casts_f32_weight == 0,
+                "rmsnorm F32 weight does not create CAST node");
+
     /* Compute using ggml_graph_compute_with_ctx (auto-allocates work buffer) */
     int ret = ggml_graph_compute_with_ctx(ctx, graph, 1);
     TEST_ASSERT(ret == 0, "rmsnorm graph compute");

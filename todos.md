@@ -217,7 +217,8 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
   as a CUDA-labelled model CTest.
 - [x] Add CPU thread setting (`--threads N`).
 - [x] Reuse KV cache across generations.
-- [ ] Compare RTF: CPU vs CUDA vs Q8_0-CUDA.
+- [x] Compare RTF: CPU vs CUDA vs Q8_0-CUDA；短矩陣與限制見
+  `docs/backend-matrix-2026-06-30.md`。
 
 ## 13. Quality and Safety
 
@@ -243,14 +244,17 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
 - [x] **Autoregressive loop ordering inverted (F4)**: Reordered to mu→CFM→LM→FSQ→RALM (matching Python).
 - [x] **LocEnc architecture mismatch (F4)**: Rewrote to all-P parallel + CLS prepend + bidirectional.
 - [x] **Q8_0 embed_tokens → F16 read mismatch (F2)**: `base_lm.embed_tokens.weight` stored as Q8_0 in GGUF (34-byte blocks: scale + 32 int8) but C code reads it as F16 via `(const ggml_fp16_t *)state->base_embed_tokens->data`. Produces garbage → 100% NaN in all pipeline stages. Fixed by dequantizing embed_tokens + all norm/bias tensors from Q8_0 → F16. See `tools/fix_q8_model2.py`. Also: `tools/bisect_q8.py` binary search confirmed embed_tokens is the sole NaN source.
-- [x] **RMSNorm `ggml_cast` of Q8_0 weight (F4)**: `minicpm4.c` RMSNorm fused scale uses `ggml_cast(ctx, weight, GGML_TYPE_F32)` — crashes on CUDA when weight is Q8_0 because `ggml_cuda_can_mul_mat` fails and `ggml_cuda_compute_forward` may not handle cast ops. Fixed on CPU by dequantizing norm weights to F16 in the GGUF. CUDA path still needs `ggml_cast` CUDA kernel implementation or an F16-native RMSNorm variant.
+- [x] **RMSNorm `ggml_cast` of Q8_0 weight (F4)**: Q8 loader 將 norm/bias
+  materialize 為 runtime F32；`vcpm_rms_norm()` 對 F32 scale 直接 multiply，
+  不再插入多餘 CPY/cast node。CUDA weighted RMSNorm cosine=1.0，
+  Q8 prompt CPU/CUDA cosine=0.999840。
 
 ## 15. CI
 
 - [x] Linux gcc (via GitHub Actions, `.github/workflows/ci.yml`).
 - [x] Linux clang (via GitHub Actions).
 - [x] Windows MSVC (local + GitHub Actions).
-- [ ] Windows MinGW.
+- [x] Windows MinGW（GitHub Actions MSYS2 MINGW64 + GCC/CMake/Ninja unit gate）。
 - [x] macOS clang (via GitHub Actions).
 - [x] Unit tests without model weights (7 tests: smoke, wav, wav_writer, sequence, minicpm4, phase5, model_loader_tensors).
 - [x] Optional model fixture tests behind `VCPM_MODEL` env var.
@@ -272,5 +276,5 @@ CUDA and `VCPM_MODEL` are enabled. A short CUDA TTS smoke also writes a finite
 5. **[DONE] VAE streaming decoder state parity**。
 
 ### P3
-6. **CI matrix** (Linux/macOS/MinGW)。
+6. **[DONE] CI matrix** (Linux/macOS/MSVC/MinGW)。
 7. **Design / batch CLI**。
