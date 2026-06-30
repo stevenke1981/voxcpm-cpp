@@ -270,6 +270,17 @@ if(VCPM_BUILD_TESTS)
     add_test(NAME model_loader_tensors COMMAND test_model_loader_tensors)
     set_tests_properties(model_loader_tensors PROPERTIES LABELS "unit")
 
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME converter_contract
+            COMMAND ${Python3_EXECUTABLE}
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/converter/test_converter_contract.py")
+        set_tests_properties(converter_contract PROPERTIES
+            LABELS "converter"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
+
     # ---- Integration tests (require GGUF model file) ----
     set(VCPM_MODEL_FIXTURE "$ENV{VCPM_MODEL}")
     add_executable(test_tokenizer_parity tests/test_tokenizer_parity.c)

@@ -35,7 +35,8 @@
 - [x] Add Q8_0 quantization tool (`tools/quantize.c`, commit 45f9340).
   - [x] 664/813 tensors quantized, 149 skipped (small non-divisible dims).
   - [x] Source 4.44 GB (F16 mixed) → Q8_0 2.44 GB (45% reduction).
-- [ ] Add converter smoke tests (minor — converter is already verified working).
+- [x] Add pinned-snapshot converter smoke and GGUF metadata/name/type/shape
+  contract tests（`docs/converter-contract-2026-06-30.md`）。
 
 ## 3. Model Loader
 

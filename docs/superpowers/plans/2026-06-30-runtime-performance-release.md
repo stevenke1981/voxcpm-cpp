@@ -77,12 +77,12 @@
 - Modify: `README.md`
 - Modify: `todos.md`
 
-- [ ] Write a failing synthetic pinned-snapshot contract test.
-- [ ] Add deterministic manifest and contract validation support.
-- [ ] Validate metadata, required tensor families, names, types, and shapes.
-- [ ] Register the weight-free converter test in CTest and CI.
-- [ ] Run converter, inspector, and full regression tests.
-- [ ] Update documentation, inspect the diff, commit, and push.
+- [x] Write a failing synthetic pinned-snapshot contract test.
+- [x] Add deterministic manifest and contract validation support.
+- [x] Validate metadata, required tensor families, names, types, and shapes.
+- [x] Register the weight-free converter test in CTest and CI.
+- [x] Run converter, inspector, and full regression tests.
+- [x] Update documentation, inspect the diff, commit, and push.
 
 ### Task 5: Project license
 

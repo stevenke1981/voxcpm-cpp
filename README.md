@@ -152,6 +152,10 @@ Current verified baseline:
   四組皆產生 finite、non-empty、無 clipping 的 PCM。Q8 CUDA 的 F32
   RMSNorm scale 不再建立多餘 cast，實測與重現方式見
   [`docs/backend-matrix-2026-06-30.md`](docs/backend-matrix-2026-06-30.md)。
+- Converter 以固定 Hugging Face commit 與 SHA-256 lock 驗證輸入，並由
+  weight-free CI 實際寫出 GGUF、檢查 metadata/tensor 名稱、type、shape；
+  更新流程見
+  [`docs/converter-contract-2026-06-30.md`](docs/converter-contract-2026-06-30.md)。
 - 純 C `native-dsp-v1` denoiser 可處理 prompt/reference：
   `--denoise --denoiser-model native-dsp-v1`。ModelScope ZipEnhancer 是獨立神經網路，
   權重不在 VoxCPM GGUF；選它仍會明確回傳 not-implemented。

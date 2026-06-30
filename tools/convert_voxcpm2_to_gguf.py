@@ -7,7 +7,10 @@ audiovae.pth), maps tensor names to canonical GGUF names, and writes a
 single .gguf file.
 """
 
+from __future__ import annotations
+
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -18,8 +21,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import gguf
 import numpy as np
-import torch
 from safetensors import safe_open
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 log = logging.getLogger(__name__)
 
@@ -137,7 +144,7 @@ def load_safetensors_index(hf_dir: Path) -> Dict[str, str]:
 
     weight_map = {}
     for sf_path in safetensors_files:
-        with safe_open(sf_path, framework="pt") as sf:
+        with safe_open(sf_path, framework="numpy") as sf:
             for key in sf.keys():
                 weight_map[key] = sf_path.name
     return weight_map
@@ -206,14 +213,31 @@ def value_from_config(cfg: dict, *keys: str, default=0):
     return default
 
 
-def write_gguf_metadata(writer: gguf.GGUFWriter, cfg: dict):
+def write_gguf_metadata(
+    writer: gguf.GGUFWriter,
+    cfg: dict,
+    outtype: str,
+    source: Optional[dict] = None,
+):
     """Write all GGUF metadata keys from HF config."""
     # General (architecture is already set by GGUFWriter constructor)
     writer.add_string("general.name", value_from_config(cfg, "_name_or_path", default="VoxCPM2"))
     writer.add_string("general.description",
                       "VoxCPM2 TTS model converted to GGUF")
-    writer.add_int32("general.file_type", gguf.GGMLQuantizationType.F16.value)
+    file_type = (
+        gguf.GGMLQuantizationType.F16
+        if outtype == "f16"
+        else gguf.GGMLQuantizationType.F32
+    )
+    writer.add_int32("general.file_type", file_type.value)
     writer.add_string("general.converted_by", "voxcpm-c/convert_voxcpm2_to_gguf.py")
+    if source:
+        writer.add_string(
+            "voxcpm.source_repo", str(source.get("repo_id", ""))
+        )
+        writer.add_string(
+            "voxcpm.source_revision", str(source.get("revision", ""))
+        )
 
     # Audio dimensions (from top-level or audio_vae_config)
     writer.add_int32("voxcpm.patch_size", value_from_config(cfg, "patch_size"))
@@ -246,6 +270,11 @@ def write_gguf_metadata(writer: gguf.GGUFWriter, cfg: dict):
     writer.add_int32("voxcpm.num_kv_heads", value_from_config(cfg,
                       "lm_num_key_value_heads", "lm_num_kv_heads"))
     writer.add_int32("voxcpm.intermediate_size", value_from_config(cfg, "lm_intermediate_size"))
+    writer.add_int32("voxcpm.head_dim", value_from_config(
+                     cfg, "lm_kv_channels",
+                     default=(value_from_config(cfg, "lm_hidden_size") //
+                              max(value_from_config(
+                                  cfg, "lm_num_attention_heads", default=1), 1))))
     writer.add_float32("voxcpm.rms_norm_eps", float(value_from_config(cfg,
                         "lm_rms_norm_eps", default=1e-5)))
     writer.add_int32("voxcpm.rope_theta", value_from_config(cfg, "lm_rope_theta"))
@@ -256,8 +285,15 @@ def write_gguf_metadata(writer: gguf.GGUFWriter, cfg: dict):
                        float(cfg.get("lm_scale_depth", 0.0)))
 
     # Residual LM
+    writer.add_int32("voxcpm.res_hidden_size",
+                     value_from_config(cfg, "lm_hidden_size"))
     writer.add_int32("voxcpm.res_num_layers", value_from_config(cfg,
                       "residual_lm_num_layers"))
+    writer.add_int32("voxcpm.res_num_heads",
+                     value_from_config(cfg, "lm_num_attention_heads"))
+    writer.add_int32("voxcpm.res_num_kv_heads",
+                     value_from_config(cfg, "lm_num_key_value_heads",
+                                       "lm_num_kv_heads"))
     writer.add_bool("voxcpm.res_no_rope",
                     bool(cfg.get("residual_lm_no_rope", False)))
     # RALM copies lm_config (including scale_depth) from model setup
@@ -418,6 +454,10 @@ def add_tensor_to_writer(writer: gguf.GGUFWriter,
 
 def load_audiovae_pth(pth_path: Path) -> Dict[str, torch.Tensor]:
     """Load audiovae.pth, convert weight_norm → plain weight, canonicalize names."""
+    if torch is None:
+        raise RuntimeError(
+            "PyTorch is required only when converting audiovae.pth"
+        )
     log.info("Loading audiovae.pth: %s", pth_path)
     ckpt = torch.load(pth_path, map_location="cpu", weights_only=True)
     sd = ckpt.get("state_dict", ckpt)
@@ -472,6 +512,48 @@ def write_shape_manifest(mapping: Dict[str, Dict], out_path: str):
     log.info("Wrote shape manifest: %s (%d entries)", out_path, len(mapping))
 
 
+def gguf_shape(shape: Tuple[int, ...]) -> List[int]:
+    """Return ggml/GGUF dimension order for a row-major source array."""
+    if len(shape) <= 1:
+        return list(shape)
+    return list(reversed(shape))
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_snapshot_lock(hf_dir: Path, lock_path: Path) -> dict:
+    """Verify that converter inputs exactly match a pinned snapshot lock."""
+    with lock_path.open("r", encoding="utf-8") as stream:
+        lock = json.load(stream)
+    if lock.get("schema_version") != 1:
+        raise ValueError("snapshot lock schema_version must be 1")
+    files = lock.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("snapshot lock must contain non-empty files")
+    for relative, expected in files.items():
+        path = hf_dir / relative
+        if not path.is_file():
+            raise FileNotFoundError(f"snapshot lock file is missing: {path}")
+        actual = file_sha256(path)
+        if actual.lower() != str(expected).lower():
+            raise ValueError(
+                f"SHA-256 mismatch for {relative}: "
+                f"expected {expected}, got {actual}"
+            )
+    source = lock.get("derived_from", lock.get("source", {}))
+    if not source.get("repo_id") or not source.get("revision"):
+        raise ValueError(
+            "snapshot lock must identify source/derived_from repo_id and revision"
+        )
+    return source
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Convert VoxCPM2 HF snapshot to GGUF")
@@ -486,20 +568,44 @@ def main() -> int:
                         help="Optional path for shapes.json manifest")
     parser.add_argument("--dry-run", action="store_true",
                         help="List tensor mappings without writing GGUF")
+    parser.add_argument("--contract-only", action="store_true",
+                        help="Validate the pinned snapshot and mappings without writing GGUF")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Verbose logging")
     parser.add_argument("--audiovae-pth", default=None,
                         help="Path to audiovae.pth (optional)")
+    parser.add_argument("--snapshot-lock", default=None,
+                        help="JSON lock with source revision and input SHA-256 values")
+    parser.add_argument("--allow-unmapped", action="store_true",
+                        help="Allow generic/fallthrough tensor names")
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s: %(message)s")
 
+    if args.outtype.startswith("q"):
+        log.error(
+            "Direct quantized GGUF writing is not implemented by this "
+            "converter; convert to f16/f32 first, then use the native "
+            "quantize tool"
+        )
+        return 1
+
     hf_dir = Path(args.hf_dir)
     if not hf_dir.is_dir():
         log.error("HF dir not found: %s", hf_dir)
         return 1
+
+    source = None
+    if args.snapshot_lock:
+        try:
+            source = validate_snapshot_lock(
+                hf_dir, Path(args.snapshot_lock).resolve()
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            log.error("Snapshot lock validation failed: %s", exc)
+            return 1
 
     # ---- Load config ----
     cfg = load_config(hf_dir)
@@ -523,6 +629,14 @@ def main() -> int:
         if was_fallthrough:
             unmapped.append(upstream_name)
 
+        if canonical in mapped:
+            log.error(
+                "Duplicate canonical tensor name %s from %s and %s",
+                canonical,
+                mapped[canonical]["source_name"],
+                upstream_name,
+            )
+            return 1
         mapped[canonical] = {
             "source_name": upstream_name,
             "source_file": file_name,
@@ -538,12 +652,18 @@ def main() -> int:
             log.warning("  %s", name)
         if len(unmapped) > 10:
             log.warning("  ... and %d more", len(unmapped) - 10)
+        if not args.allow_unmapped:
+            log.error(
+                "Refusing to continue with unmapped tensors; "
+                "use --allow-unmapped only for deliberate compatibility work"
+            )
+            return 1
 
     log.info("Mapped %d safetensors (of %d total)",
              len(mapped), len(weight_map))
 
     # ---- Load audiovae.pth (optional, auto-detected in standard HF snapshot) ----
-    audiovae_tensors: Dict[str, torch.Tensor] = {}
+    audiovae_tensors: Dict[str, Any] = {}
     av_path = Path(args.audiovae_pth) if args.audiovae_pth else (hf_dir / "audiovae.pth")
     if av_path.exists():
         av_raw = load_audiovae_pth(av_path)
@@ -560,7 +680,7 @@ def main() -> int:
                     "source_name": upstream_name,
                     "source_file": "audiovae.pth",
                     "source_shape": list(arr.shape),
-                    "gguf_shape": list(arr.shape),
+                    "gguf_shape": gguf_shape(tuple(arr.shape)),
                     "dtype": str(arr.dtype),
                     "quantized": False,
                 }
@@ -571,8 +691,9 @@ def main() -> int:
         log.warning("No audiovae.pth found under HF dir; generated GGUF will not support TTS decode")
 
     # ---- Dry run ----
-    if args.dry_run:
-        print(f"\n=== Dry Run: {args.hf_dir} → {args.out} ===")
+    if args.dry_run or args.contract_only:
+        mode = "Dry Run" if args.dry_run else "Contract Check"
+        print(f"\n=== {mode}: {args.hf_dir} → {args.out} ===")
         print(f"Output type: {args.outtype}")
         print(f"Total safetensors: {len(weight_map)}")
         print(f"Mapped tensors (safetensors): {len(mapped)}")
@@ -582,11 +703,12 @@ def main() -> int:
             print(f"\nUnmapped tensors ({len(unmapped)}):")
             for name in unmapped[:10]:
                 print(f"  {name}")
-        print("\nCanonical tensor names:")
-        for cname in sorted(mapped.keys()):
-            info = mapped[cname]
-            print(f"  {cname}  ← {info['source_name']}")
-        print("\nDry run complete. No file written.")
+        if args.dry_run:
+            print("\nCanonical tensor names:")
+            for cname in sorted(mapped.keys()):
+                info = mapped[cname]
+                print(f"  {cname}  ← {info['source_name']}")
+        print(f"\n{mode} complete. No file written.")
         return 0
 
     # ---- Write GGUF ----
@@ -594,7 +716,7 @@ def main() -> int:
     writer = gguf.GGUFWriter(args.out, "voxcpm2")
 
     # Metadata
-    write_gguf_metadata(writer, cfg)
+    write_gguf_metadata(writer, cfg, args.outtype, source)
     write_tokenizer(writer, hf_dir, cfg)
 
     # Read safetensors and write tensors
@@ -649,7 +771,10 @@ def main() -> int:
                 continue
             try:
                 # Use PyTorch backend for bfloat16 support
-                read_files[source_file] = safe_open(str(sf_path), framework="pt")
+                framework = "pt" if torch is not None else "numpy"
+                read_files[source_file] = safe_open(
+                    str(sf_path), framework=framework
+                )
             except Exception as e:
                 log.error("Cannot open %s: %s", sf_path, e)
                 n_skipped += 1
@@ -670,8 +795,10 @@ def main() -> int:
             continue
 
         # Convert to numpy (bfloat16 → float32 first)
-        if tensor.dtype == torch.bfloat16:
+        if torch is not None and tensor.dtype == torch.bfloat16:
             arr = tensor.cpu().float().numpy()
+        elif isinstance(tensor, np.ndarray):
+            arr = tensor
         else:
             arr = tensor.cpu().numpy()
 
@@ -680,12 +807,7 @@ def main() -> int:
         info["dtype"] = str(arr.dtype)
 
         # GGUF tensor layout: ne[0]=innermost dim
-        if arr.ndim == 2:
-            info["gguf_shape"] = [arr.shape[1], arr.shape[0]]
-        elif arr.ndim == 1:
-            info["gguf_shape"] = [arr.shape[0]]
-        else:
-            info["gguf_shape"] = list(arr.shape)
+        info["gguf_shape"] = gguf_shape(tuple(arr.shape))
 
         # Convert dtype
         data = convert_to_dtype(arr, canonical_name, args.outtype)
@@ -693,6 +815,7 @@ def main() -> int:
         # Add to GGUF
         add_tensor_to_writer(writer, canonical_name, data, args.outtype,
                              tensor_dtype_map)
+        info["gguf_type"] = tensor_dtype_map[canonical_name]
         n_written += 1
 
         if n_written % 50 == 0:
@@ -707,6 +830,8 @@ def main() -> int:
         data = convert_to_dtype(arr, canonical_name, args.outtype)
         add_tensor_to_writer(writer, canonical_name, data, args.outtype,
                              tensor_dtype_map)
+        mapped[canonical_name]["gguf_shape"] = gguf_shape(tuple(arr.shape))
+        mapped[canonical_name]["gguf_type"] = tensor_dtype_map[canonical_name]
         n_written += 1
         log.info("  Wrote audiovae tensor: %s [%s]", canonical_name, list(arr.shape))
 
